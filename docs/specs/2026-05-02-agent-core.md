@@ -187,11 +187,11 @@ loop {
     new_messages.extend(follow_ups);
     continue  // restart inner loop
   }
-
-  break
 }
 
 emit_event(&config, AgentEnd { messages })
+// Emit observation hooks via HookDispatcher
+config.hook_dispatcher.on_agent_end(&AgentEndCtx { messages: messages.clone() }).await;
 return Ok(new_messages)
 ```
 
@@ -227,6 +227,9 @@ messages.push(assistant_msg.clone())
 tool_calls = extract_tool_calls(&assistant_msg.content)
 if tool_calls.is_empty() {
   emit_event(config, TurnEnd { turn_index: *turn_index, messages: messages.clone() })
+  config.hook_dispatcher.on_turn_end(&TurnEndCtx {
+      turn_index: *turn_index, messages: messages.clone()
+  }).await;
   return TurnResult::Stop
 }
 
@@ -238,6 +241,10 @@ for result in &tool_results {
 }
 
 emit_event(config, TurnEnd { turn_index: *turn_index, messages: messages.clone() })
+// Extension-level observation hook
+config.hook_dispatcher.on_turn_end(&TurnEndCtx {
+    turn_index: *turn_index, messages: messages.clone()
+}).await;
 
 if assistant_msg.stop_reason == StopReason::ToolUse {
   return TurnResult::ToolUse  // expect another turn
@@ -412,6 +419,7 @@ pub struct SessionActor {
     // State
     model: String,
     system_prompt: String,
+    stream_options: StreamOptions,
     tools: Vec<AgentToolRef>,
     messages: Vec<AgentMessage>,
     is_streaming: bool,
@@ -444,7 +452,8 @@ impl SessionActor {
         hook_dispatcher: Arc<dyn HookDispatcher>,
         tools: Vec<AgentToolRef>,
     ) -> Self;
-    // 内部: steer_queue = Arc::new(Mutex::new(Vec::new()))
+    // 内部: stream_options = StreamOptions::default()
+    //       steer_queue = Arc::new(Mutex::new(Vec::new()))
     //       follow_up_queue = Arc::new(Mutex::new(Vec::new()))
 
     /// Send a user message and run the agent loop.
@@ -507,7 +516,7 @@ async fn run_with_messages(&mut self, add_user_msg: Option<String>)
         hook_dispatcher: self.hook_dispatcher.clone(),
         tools: self.tools.clone(),
         system_prompt: Some(self.system_prompt.clone()),
-        stream_options: StreamOptions::default(),
+        stream_options: self.stream_options.clone(),
         max_retries: 3,
         event_listeners: self.event_listeners.clone(),
         steer_queue: self.steer_queue.clone(),
@@ -524,7 +533,8 @@ async fn run_with_messages(&mut self, add_user_msg: Option<String>)
             self.is_streaming = false;
             Err(e)
         }
-    }
+    };
+    new_msgs
 }
 ```
 
