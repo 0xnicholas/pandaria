@@ -244,20 +244,47 @@ fn emit_event(config: &AgentLoopConfig, event: AgentEvent) {
 }
 ```
 
+#### Data types
+
+```rust
+enum TurnResult {
+    ToolUse,           // more tool calls expected
+    Stop,              // no more tool calls, final
+    Error(AgentError),
+}
+
+fn extract_tool_calls(content: &[Content]) -> Vec<&ToolCall> {
+    content.iter().filter_map(|c| match c {
+        Content::ToolCall(tc) => Some(tc),
+        _ => None,
+    }).collect()
+}
+```
+
 ### 2.3 LLM 调用 + 指数退避重试
 
 ```
-call_llm_with_retry(ctx, config, signal) → AssistantMessage
+call_llm_with_retry(ctx, config, message_index, signal) → AssistantMessage
 
 for attempt in 0..config.max_retries:
-  result = config.provider.stream(model, ctx, stream_options, signal.child_token())
+  result = config.provider.stream(model, ctx.clone(), stream_options, signal.child_token())
 
   match result:
     Ok(stream) => {
       // Consume stream → AssistantMessage
-      // Emit MessageStart on first delta
-      // Emit MessageUpdate on each text_delta
-      return parse_stream_response(stream, signal)
+      emit_event(config, MessageStart { message_index })
+      for each delta in stream:
+        match delta:
+          TextDelta(text) => {
+            emit_event(config, MessageUpdate { message_index, content_delta: text })
+            accumulate text into content
+          }
+          ToolCallDelta(tc) => accumulate tc into content
+          Done { content, api, usage, stop_reason } => {
+            return AssistantMessage { content, api, usage, stop_reason, ... }
+          }
+          Error { message } => return Err(AgentError::LlmError(...))
+      }
     }
     Err(RateLimited | Overloaded) if attempt < config.max_retries - 1 => {
       sleep(2^attempt * 100ms)
@@ -269,7 +296,8 @@ for attempt in 0..config.max_retries:
 重试策略：
 - 仅对 `RateLimited` 和 `Overloaded` 重试
 - 后退间隔: 100ms → 200ms → 400ms
-- 跨重次 trace span 记录 `retry_count`
+- 每次重试需要 clone ctx（ctx 被 stream() 消耗）
+- 跨重试 span 记录 `retry_count`
 
 ---
 
@@ -316,7 +344,7 @@ async fn execute_single_tool(
     config: &AgentLoopConfig,
     signal: &CancellationToken,
 ) -> ToolResultMessage {
-    emit_event(ToolExecutionStart { tool_call_id: tc.id.clone(), tool_name: tc.name.clone() });
+    emit_event(config, ToolExecutionStart { tool_call_id: tc.id.clone(), tool_name: tc.name.clone() });
 
     let tool = config.tools.iter().find(|t| t.name() == tc.name).cloned();
     let result = match tool {
@@ -339,7 +367,7 @@ async fn execute_single_tool(
         },
     };
 
-    emit_event(ToolExecutionEnd { tool_call_id: tc.id.clone(), result: result_msg.clone() });
+    emit_event(config, ToolExecutionEnd { tool_call_id: tc.id.clone(), result: result_msg.clone() });
     result_msg
 }
 ```
@@ -464,6 +492,8 @@ async fn run_with_messages(&mut self, add_user_msg: Option<String>)
     Ok(new_msgs)
 }
 ```
+// Note: is_streaming must be reset on error path too.
+// Use a Drop guard or explicit `self.is_streaming = false` before `?`.
 
 ---
 
