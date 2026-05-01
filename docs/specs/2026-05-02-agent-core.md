@@ -38,6 +38,8 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 | `TurnEndCtx` | `agent_core::context` | `turn_index: u64`, `messages: Vec<AgentMessage>` |
 | `AgentEndCtx` | `agent_core::context` | `messages: Vec<AgentMessage>` |
 | `SessionCtx` | `agent_core::context` | `system_prompt: String`, `tools: Vec<Value>` |
+| `ToolCallCtx` | `agent_core::context` | `tool_name: String`, `tool_call_id: String`, `input: Value` |
+| `ToolResultCtx` | `agent_core::context` | `tool_name: String`, `tool_call_id: String`, `input: Value`, `content: Vec<Content>`, `details: Option<Value>`, `is_error: bool` |
 
 ---
 
