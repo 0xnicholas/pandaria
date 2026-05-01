@@ -84,6 +84,7 @@ use async_trait::async_trait;
 pub trait AgentEventListener: Send + Sync {
     /// Called for every agent event.
     /// Listener errors are logged but not propagated to the agent loop.
+    /// **Constraint (v0.1):** listeners must not panic. v0.2 will add catch_unwind.
     async fn on_event(&self, event: &AgentEvent);
 }
 ```
@@ -91,6 +92,8 @@ pub trait AgentEventListener: Send + Sync {
 ### 1.3 AgentLoopConfig (`src/loop.rs` — 重构)
 
 ```rust
+use std::sync::{Arc, Mutex};
+
 pub struct AgentLoopConfig {
     pub model: String,
     pub provider: Arc<dyn LlmProvider>,
@@ -100,10 +103,12 @@ pub struct AgentLoopConfig {
     pub stream_options: StreamOptions,
     pub max_retries: u32,
     pub event_listeners: Vec<Arc<dyn AgentEventListener>>,
-    /// Called before each outer loop iteration to drain steer queue
-    pub pull_steer: Option<Box<dyn FnMut() -> Vec<AgentMessage> + Send>>,
-    /// Called after agent would stop to drain follow_up queue
-    pub pull_follow_up: Option<Box<dyn FnMut() -> Vec<AgentMessage> + Send>>,
+    /// Steer queue — drained before each outer loop iteration.
+    /// Shared with SessionActor via Arc.
+    pub steer_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    /// Follow-up queue — drained after agent would stop.
+    /// Shared with SessionActor via Arc.
+    pub follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
 }
 ```
 
@@ -118,73 +123,81 @@ run(config, initial_messages, signal) → Vec<AgentMessage>
 
 messages = initial_messages
 new_messages = []
+turn_index: u64 = 0
+message_index: u64 = 0
 
 emit_event(AgentStart)
 
 loop {
-  // —— pull steer queue ——
-  if let Some(ref mut pull) = config.pull_steer {
-    messages.extend(pull())
+  // —— drain steer queue ——
+  {
+    let mut q = config.steer_queue.lock().unwrap();
+    messages.extend(q.drain(..));
   }
 
   // —— inner turn loop ——
   loop {
-    result = run_turn(&mut messages, &mut new_messages, config, signal)
+    result = run_turn(&mut messages, &mut new_messages, &mut turn_index,
+                      &mut message_index, &config, signal)
     match result {
       TurnResult::ToolUse => continue,  // more tool calls expected
       TurnResult::Stop => break,
       TurnResult::Error(e) => {
-        emit_event(Error { error: e.clone() })
+        emit_event(&config, Error { error: e.clone() })
         return Err(e)
       }
     }
   }
 
-  // —— pull follow_up queue ——
-  if let Some(ref mut pull) = config.pull_follow_up {
-    let follow_ups = pull()
+  // —— drain follow_up queue ——
+  {
+    let mut q = config.follow_up_queue.lock().unwrap();
+    let follow_ups: Vec<_> = q.drain(..).collect();
     if follow_ups.is_empty() { break }
-    messages.extend(follow_ups)
-    new_messages.extend(follow_ups)
+    messages.extend(follow_ups);
+    new_messages.extend(follow_ups);
     continue  // restart inner loop
   }
 
   break
 }
 
-emit_event(AgentEnd { messages })
+emit_event(&config, AgentEnd { messages })
 return Ok(new_messages)
 ```
 
 ### 2.2 内层 — turn
 
 ```
-run_turn(messages, new_messages, config, signal) → TurnResult
+run_turn(messages, new_messages, turn_index, message_index, config, signal) → TurnResult
 
-turn_index++
+*turn_index += 1
+
+emit_event(config, TurnStart { turn_index: *turn_index })
 
 // 1. Transform context via hook chain
-transformed = hook_dispatcher.on_context(messages.clone())
+transformed = config.hook_dispatcher.on_context(messages.clone())
 
 // 2. Build LlmContext
 ctx = LlmContext {
   system_prompt: config.system_prompt,
   messages: transformed,
-  tools: build_tool_defs(config.tools),
+  tools: build_tool_defs(&config.tools),
 }
 
 // 3. Call LLM with retry
-assistant_msg = call_llm_with_retry(ctx, config, signal)?
+assistant_msg = call_llm_with_retry(ctx, config, *message_index, signal)?
 
 // 4. Emit message_end
-emit_event(MessageEnd { message: assistant_msg.clone() })
+*message_index += 1
+emit_event(config, MessageEnd { message: assistant_msg.clone() })
 new_messages.push(assistant_msg.clone())
 messages.push(assistant_msg.clone())
 
 // 5. Extract ToolCalls
 tool_calls = extract_tool_calls(&assistant_msg.content)
 if tool_calls.is_empty() {
-  emit_event(TurnEnd { turn_index, messages: messages.clone() })
+  emit_event(config, TurnEnd { turn_index: *turn_index, messages: messages.clone() })
   return TurnResult::Stop
 }
 
@@ -195,12 +208,39 @@ for result in &tool_results {
   messages.push(AgentMessage::ToolResult(result.clone()))
 }
 
-emit_event(TurnEnd { turn_index, messages: messages.clone() })
+emit_event(config, TurnEnd { turn_index: *turn_index, messages: messages.clone() })
 
 if assistant_msg.stop_reason == StopReason::ToolUse {
   return TurnResult::ToolUse  // expect another turn
 } else {
   return TurnResult::Stop
+}
+```
+
+#### Helper: `build_tool_defs`
+
+```rust
+fn build_tool_defs(tools: &[AgentToolRef]) -> Option<Vec<llm_client::ToolDef>> {
+    if tools.is_empty() {
+        return None;
+    }
+    Some(tools.iter().map(|t| llm_client::ToolDef {
+        name: t.name().to_string(),
+        description: t.description().to_string(),
+        parameters: t.parameters(),
+    }).collect())
+}
+```
+
+#### Helper: `emit_event`
+
+```rust
+/// Emit an event to all registered listeners.
+/// Errors from individual listeners are logged and swallowed.
+fn emit_event(config: &AgentLoopConfig, event: AgentEvent) {
+    for listener in &config.event_listeners {
+        let _ = listener.on_event(&event).await;
+    }
 }
 ```
 
@@ -323,9 +363,9 @@ pub struct SessionActor {
     provider: Arc<dyn LlmProvider>,
     hook_dispatcher: Arc<dyn HookDispatcher>,
 
-    // Queues
-    steer_queue: Vec<AgentMessage>,
-    follow_up_queue: Vec<AgentMessage>,
+    // Queues — shared with AgentLoopConfig via Arc
+    steer_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
 
     // Control
     abort_token: CancellationToken,
@@ -347,6 +387,8 @@ impl SessionActor {
         hook_dispatcher: Arc<dyn HookDispatcher>,
         tools: Vec<AgentToolRef>,
     ) -> Self;
+    // 内部: steer_queue = Arc::new(Mutex::new(Vec::new()))
+    //       follow_up_queue = Arc::new(Mutex::new(Vec::new()))
 
     /// Send a user message and run the agent loop.
     /// Returns all NEW messages generated this run (excludes prior history).
@@ -362,10 +404,12 @@ impl SessionActor {
     pub fn abort(&self);
 
     // --- Message injection ---
-    /// Queue a message to inject before the next LLM call in the current run
+    /// Queue a message to inject before the next LLM call in the current run.
+    /// Pushes to steer_queue (Arc<Mutex<Vec>>), shared with AgentLoopConfig.
     pub fn steer(&mut self, message: AgentMessage);
 
-    /// Queue a message to inject after agent would stop (triggers new outer loop)
+    /// Queue a message to inject after agent would stop (triggers new outer loop).
+    /// Pushes to follow_up_queue (Arc<Mutex<Vec>>), shared with AgentLoopConfig.
     pub fn follow_up(&mut self, message: AgentMessage);
 
     // --- State management ---
@@ -400,7 +444,7 @@ async fn run_with_messages(&mut self, add_user_msg: Option<String>)
         self.messages.push(user_msg.clone());
     }
 
-    let mut config = AgentLoopConfig {
+    let config = AgentLoopConfig {
         model: self.model.clone(),
         provider: self.provider.clone(),
         hook_dispatcher: self.hook_dispatcher.clone(),
@@ -409,8 +453,8 @@ async fn run_with_messages(&mut self, add_user_msg: Option<String>)
         stream_options: StreamOptions::default(),
         max_retries: 3,
         event_listeners: self.event_listeners.clone(),
-        pull_steer: Some(Box::new(|| self.steer_queue.drain(..).collect())),
-        pull_follow_up: Some(Box::new(|| self.follow_up_queue.drain(..).collect())),
+        steer_queue: self.steer_queue.clone(),
+        follow_up_queue: self.follow_up_queue.clone(),
     };
 
     let new_msgs = AgentLoop::run(config, self.messages.clone(), self.abort_token.child_token()).await?;
@@ -428,7 +472,8 @@ async fn run_with_messages(&mut self, add_user_msg: Option<String>)
 ```rust
 /// Simple token-based message truncation.
 /// v0.1 uses character count estimation (1 token ≈ 4 chars).
-/// Future versions: LLM-based summarization.
+/// FIXME: `{:?}` debug format includes type names and field labels,
+/// overestimating token count ~3x. Replace with Display impl or real tokenizer.
 pub struct CompactionActor;
 
 impl CompactionActor {
