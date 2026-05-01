@@ -28,12 +28,16 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 | `LlmProvider` | `llm_client` | `stream(model, context, options, signal)` → `AssistantMessageEventStream` |
 | `StreamOptions` | `llm_client` | `max_tokens`, `temperature`, `top_p` |
 | `LlmError` | `llm_client` | `RateLimited`, `Overloaded`, `InvalidRequest`, `ProviderError`, `Timeout`, `Cancelled`, `Serialization` |
-| `HookDispatcher` trait | `agent_core::hook_dispatcher` | `on_tool_call()`, `on_tool_result()`, `on_context()`, `on_turn_end()`, `on_agent_end()`, `on_session_start()` |
+| `HookDispatcher` trait | `agent_core::hook_dispatcher` | `on_tool_call(&ToolCallCtx)` → `HookDecision`; `on_tool_result(&ToolResultCtx)` → `ToolResultMutation`; `on_context(Vec<AgentMessage>)` → `Vec<AgentMessage>`; `on_turn_end(&TurnEndCtx)`, `on_agent_end(&AgentEndCtx)`, `on_session_start(&SessionCtx)` |
 | `HookDecision` | `agent_core::mutations` | `Continue`, `Block { reason }` |
 | `ToolResultMutation` | `agent_core::mutations` | `content: Option<Vec<Content>>`, `details: Option<Value>`, `is_error: Option<bool>` |
 | `ToolExecutor` | `agent_core::tool` | `new(Arc<HookDispatcher>, AgentToolRef)`, `execute_tool_call(&ToolCall)` → `Result<ToolResultMessage, AgentError>` |
 | `AgentError` | `agent_core::error` | `ToolNotFound`, `ToolExecutionFailed`, `HookDispatchError`, `LlmError`, `Cancelled` |
 | `CancellationToken` | `tokio_util::sync` | `new()`, `child_token()`, `cancel()`, `is_cancelled()` |
+| `ContextCtx` | `agent_core::context` | `messages: Vec<AgentMessage>` — used for `on_context` in Extension trait |
+| `TurnEndCtx` | `agent_core::context` | `turn_index: u64`, `messages: Vec<AgentMessage>` |
+| `AgentEndCtx` | `agent_core::context` | `messages: Vec<AgentMessage>` |
+| `SessionCtx` | `agent_core::context` | `system_prompt: String`, `tools: Vec<Value>` |
 
 ---
 
@@ -454,6 +458,10 @@ impl SessionActor {
     ) -> Self;
     // 内部: stream_options = StreamOptions::default()
     //       steer_queue = Arc::new(Mutex::new(Vec::new()))
+    //       follow_up_queue = Arc::new(Mutex::new(Vec::new()))
+    //       on_session_start hook fired via tokio::spawn:
+    //         let ctx = SessionCtx { system_prompt, tools };
+    //         tokio::spawn(async { hook_dispatcher.on_session_start(&ctx).await });
     //       follow_up_queue = Arc::new(Mutex::new(Vec::new()))
 
     /// Send a user message and run the agent loop.
