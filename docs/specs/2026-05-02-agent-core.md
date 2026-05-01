@@ -6,6 +6,35 @@
 
 Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 session 生命周期，定义 HookDispatcher 依赖反转边界，AgentEvent 事件系统。
 
+## 引用类型速查
+
+本节列出 spec 中引用的外部类型，来自 `llm-client` 或 `agent-core` 已有代码。
+
+| 类型 | 来源 | 关键字段/变体 |
+|---|---|---|
+| `AgentMessage` | `agent_core::types` | type alias of `llm_client::Message`; variants: `User(UserMessage)`, `Assistant(AssistantMessage)`, `ToolResult(ToolResultMessage)` |
+| `AgentToolRef` | `agent_core::types` | `Arc<dyn AgentTool>` |
+| `AgentTool` trait | `agent_core::types` | `name()`, `description()`, `parameters()`, `execution_mode()` → `ToolExecutionMode`, `execute(id, params)` → `AgentToolResult` |
+| `AgentToolResult` | `agent_core::types` | `content: Vec<Content>`, `details: Option<Value>`, `is_error: bool` |
+| `ToolExecutionMode` | `agent_core::types` | `Sequential`, `Parallel` |
+| `ToolCall` | `llm_client` | `id: String`, `name: String`, `arguments: Value` |
+| `Content` | `llm_client` | `Text { text }`, `Image { data, mime_type }`, `Thinking { thinking }`, `ToolCall(ToolCall)` |
+| `ToolDef` | `llm_client` | `name`, `description`, `parameters: Value` |
+| `UserMessage` | `llm_client` | `content: Vec<Content>`, `timestamp` |
+| `AssistantMessage` | `llm_client` | `content: Vec<Content>`, `api`, `usage`, `stop_reason`, `response_id`, `error_message`, `timestamp` |
+| `ToolResultMessage` | `llm_client` | `tool_call_id`, `tool_name`, `content`, `details`, `is_error`, `timestamp` |
+| `StopReason` | `llm_client` | `Stop`, `Length`, `ToolUse`, `Error`, `Aborted` |
+| `LlmContext` | `llm_client` | `system_prompt: Option<String>`, `messages: Vec<Message>`, `tools: Option<Vec<ToolDef>>` |
+| `LlmProvider` | `llm_client` | `stream(model, context, options, signal)` → `AssistantMessageEventStream` |
+| `StreamOptions` | `llm_client` | `max_tokens`, `temperature`, `top_p` |
+| `LlmError` | `llm_client` | `RateLimited`, `Overloaded`, `InvalidRequest`, `ProviderError`, `Timeout`, `Cancelled`, `Serialization` |
+| `HookDispatcher` trait | `agent_core::hook_dispatcher` | `on_tool_call()`, `on_tool_result()`, `on_context()`, `on_turn_end()`, `on_agent_end()`, `on_session_start()` |
+| `HookDecision` | `agent_core::mutations` | `Continue`, `Block { reason }` |
+| `ToolResultMutation` | `agent_core::mutations` | `content: Option<Vec<Content>>`, `details: Option<Value>`, `is_error: Option<bool>` |
+| `ToolExecutor` | `agent_core::tool` | `new(Arc<HookDispatcher>, AgentToolRef)`, `execute_tool_call(&ToolCall)` → `Result<ToolResultMessage, AgentError>` |
+| `AgentError` | `agent_core::error` | `ToolNotFound`, `ToolExecutionFailed`, `HookDispatchError`, `LlmError`, `Cancelled` |
+| `CancellationToken` | `tokio_util::sync` | `new()`, `child_token()`, `cancel()`, `is_cancelled()` |
+
 ---
 
 ## 1. 新增类型
@@ -126,12 +155,12 @@ new_messages = []
 turn_index: u64 = 0
 message_index: u64 = 0
 
-emit_event(AgentStart)
+emit_event(&config, AgentStart)
 
 loop {
   // —— drain steer queue ——
   {
-    let mut q = config.steer_queue.lock().unwrap();
+    let mut q = config.steer_queue.lock().expect("steer queue poisoned");
     messages.extend(q.drain(..));
   }
 
@@ -151,7 +180,7 @@ loop {
 
   // —— drain follow_up queue ——
   {
-    let mut q = config.follow_up_queue.lock().unwrap();
+    let mut q = config.follow_up_queue.lock().expect("follow_up queue poisoned");
     let follow_ups: Vec<_> = q.drain(..).collect();
     if follow_ups.is_empty() { break }
     messages.extend(follow_ups);
@@ -253,9 +282,9 @@ enum TurnResult {
     Error(AgentError),
 }
 
-fn extract_tool_calls(content: &[Content]) -> Vec<&ToolCall> {
+fn extract_tool_calls(content: &[Content]) -> Vec<ToolCall> {
     content.iter().filter_map(|c| match c {
-        Content::ToolCall(tc) => Some(tc),
+        Content::ToolCall(tc) => Some(tc.clone()),
         _ => None,
     }).collect()
 }
@@ -264,7 +293,7 @@ fn extract_tool_calls(content: &[Content]) -> Vec<&ToolCall> {
 ### 2.3 LLM 调用 + 指数退避重试
 
 ```
-call_llm_with_retry(ctx, config, message_index, signal) → AssistantMessage
+call_llm_with_retry(ctx: LlmContext, config: &AgentLoopConfig, message_index: u64, signal: &CancellationToken) → Result<AssistantMessage, AgentError>
 
 for attempt in 0..config.max_retries:
   result = config.provider.stream(model, ctx.clone(), stream_options, signal.child_token())
@@ -318,7 +347,7 @@ fn execute_tools(
             config.tools.iter()
                 .find(|t| t.name() == tc.name)
                 .map(|t| t.execution_mode() == ToolExecutionMode::Sequential)
-                .unwrap_or(true)  // unknown tools default sequential
+                .unwrap_or(true)  // unknown tools default sequential (safe: validated by ToolExecutor)
         });
 
     // Phase 1: Sequential — one at a time
@@ -485,15 +514,19 @@ async fn run_with_messages(&mut self, add_user_msg: Option<String>)
         follow_up_queue: self.follow_up_queue.clone(),
     };
 
-    let new_msgs = AgentLoop::run(config, self.messages.clone(), self.abort_token.child_token()).await?;
-
-    self.messages.extend(new_msgs.clone());
-    self.is_streaming = false;
-    Ok(new_msgs)
+    let new_msgs = match AgentLoop::run(config, self.messages.clone(), self.abort_token.child_token()).await {
+        Ok(msgs) => {
+            self.messages.extend(msgs.clone());
+            self.is_streaming = false;
+            Ok(msgs)
+        }
+        Err(e) => {
+            self.is_streaming = false;
+            Err(e)
+        }
+    }
 }
 ```
-// Note: is_streaming must be reset on error path too.
-// Use a Drop guard or explicit `self.is_streaming = false` before `?`.
 
 ---
 
@@ -529,7 +562,38 @@ impl CompactionActor {
 
 ---
 
-## 6. 文件变更清单
+## 6. 设计约束与边界说明
+
+### Hook 超时
+
+阻断型和链式 hook 的 `oneshot` 超时（500ms）由 **extensions crate 的 ExtensionActor** 负责，不在此 crate 实现。agent-core 仅定义 `HookDispatcher` trait，超时逻辑在 `extensions::host::extension_actor::ExtensionHandle` 中。
+
+观测型 hook（`on_turn_end`, `on_agent_end`, `on_session_start`）通过 `HookDispatcher` trait 调用，100ms 超时 + EventBus 广播在 `extensions::host::hook_router::HookRouter` 中实现。
+
+### AgentEvent vs Extension hook
+
+`AgentEvent` 是 agent-core 级事件（`AgentEventListener` 回调），供 session 级消费者使用（持久化层、API gateway 等）。`Extension::on_turn_end` / `on_agent_end` 是 extension 级 hook（EventBus 广播），两者是**不同的通道**，在 `HookRouter::on_turn_end()` 中分别发射：
+
+```rust
+// HookRouter::on_turn_end (in extensions crate)
+async fn on_turn_end(&self, ctx: &TurnEndCtx) {
+    // Extension hook → EventBus broadcast
+    self.event_bus.emit(ObsEvent::TurnEnd(ctx.clone()));
+    // agent-core events are handled separately by SessionActor
+}
+```
+
+### `std::sync::Mutex` in async context
+
+steer/follow_up 队列使用 `Arc<std::sync::Mutex<Vec>>` 而非 `tokio::sync::Mutex`。理由：临界区极短（`drain(..)` -> push 单个元素），锁持有时间 < 1µs，不会阻塞 async executor。这是性能优化，不违反 ADR-004（避免共享可变状态跨 session）。
+
+### `.expect()` vs `.unwrap()`
+
+根据 AGENTS.md 错误处理约束，生产代码中 `.unwrap()` 替换为 `.expect("reason")`。Mutex lock 失败表示线程 panic 导致 poison，属于不可恢复错误，`.expect()` 是正确选择。
+
+---
+
+## 7. 文件变更清单
 
 | 文件 | 操作 | 说明 |
 |---|---|---|
@@ -542,7 +606,7 @@ impl CompactionActor {
 
 ---
 
-## 7. 测试计划
+## 8. 测试计划
 
 | 测试 | 验证点 |
 |---|---|
