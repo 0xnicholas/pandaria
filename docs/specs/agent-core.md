@@ -1,0 +1,488 @@
+# agent-core 详细模块规格
+
+> 状态: 🔲 待实现 | 依赖: llm-client | 被依赖: extensions
+
+## 模块职责
+
+Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 session 生命周期，定义 HookDispatcher 依赖反转边界，AgentEvent 事件系统。
+
+---
+
+## 1. 新增类型
+
+### 1.1 AgentEvent (`src/events.rs`)
+
+agent-core 级事件，通过 `AgentEventListener` 回调 trait 传递给订阅者。
+
+```rust
+use llm_client::ToolResultMessage;
+use crate::types::AgentMessage;
+use crate::error::AgentError;
+
+/// Events emitted by AgentLoop during execution.
+/// Subscribed via AgentEventListener trait.
+#[derive(Debug, Clone)]
+pub enum AgentEvent {
+    /// Agent loop started
+    AgentStart,
+    /// Agent loop ended
+    AgentEnd {
+        messages: Vec<AgentMessage>,
+    },
+    /// A new turn started
+    TurnStart {
+        turn_index: u64,
+    },
+    /// A turn ended
+    TurnEnd {
+        turn_index: u64,
+        messages: Vec<AgentMessage>,
+    },
+    /// An assistant message started (streaming begins)
+    MessageStart {
+        message_index: u64,
+    },
+    /// Streaming delta for current assistant message
+    MessageUpdate {
+        message_index: u64,
+        content_delta: String,
+    },
+    /// An assistant message completed
+    MessageEnd {
+        message: AgentMessage,
+    },
+    /// Tool execution started
+    ToolExecutionStart {
+        tool_call_id: String,
+        tool_name: String,
+    },
+    /// Tool execution streaming update
+    ToolExecutionUpdate {
+        tool_call_id: String,
+        content: String,
+    },
+    /// Tool execution completed
+    ToolExecutionEnd {
+        tool_call_id: String,
+        result: ToolResultMessage,
+    },
+    /// Non-fatal error
+    Error {
+        error: AgentError,
+    },
+}
+```
+
+### 1.2 AgentEventListener (`src/events.rs`)
+
+回调 trait，会话级订阅者通过此接口接收 agent 事件。
+
+```rust
+use async_trait::async_trait;
+
+#[async_trait]
+pub trait AgentEventListener: Send + Sync {
+    /// Called for every agent event.
+    /// Listener errors are logged but not propagated to the agent loop.
+    async fn on_event(&self, event: &AgentEvent);
+}
+```
+
+### 1.3 AgentLoopConfig (`src/loop.rs` — 重构)
+
+```rust
+pub struct AgentLoopConfig {
+    pub model: String,
+    pub provider: Arc<dyn LlmProvider>,
+    pub hook_dispatcher: Arc<dyn HookDispatcher>,
+    pub tools: Vec<AgentToolRef>,
+    pub system_prompt: Option<String>,
+    pub stream_options: StreamOptions,
+    pub max_retries: u32,
+    pub event_listeners: Vec<Arc<dyn AgentEventListener>>,
+    /// Called before each outer loop iteration to drain steer queue
+    pub pull_steer: Option<Box<dyn FnMut() -> Vec<AgentMessage> + Send>>,
+    /// Called after agent would stop to drain follow_up queue
+    pub pull_follow_up: Option<Box<dyn FnMut() -> Vec<AgentMessage> + Send>>,
+}
+```
+
+---
+
+## 2. AgentLoop 双层循环
+
+### 2.1 外层 — follow-up
+
+```
+run(config, initial_messages, signal) → Vec<AgentMessage>
+
+messages = initial_messages
+new_messages = []
+
+emit_event(AgentStart)
+
+loop {
+  // —— pull steer queue ——
+  if let Some(ref mut pull) = config.pull_steer {
+    messages.extend(pull())
+  }
+
+  // —— inner turn loop ——
+  loop {
+    result = run_turn(&mut messages, &mut new_messages, config, signal)
+    match result {
+      TurnResult::ToolUse => continue,  // more tool calls expected
+      TurnResult::Stop => break,
+      TurnResult::Error(e) => {
+        emit_event(Error { error: e.clone() })
+        return Err(e)
+      }
+    }
+  }
+
+  // —— pull follow_up queue ——
+  if let Some(ref mut pull) = config.pull_follow_up {
+    let follow_ups = pull()
+    if follow_ups.is_empty() { break }
+    messages.extend(follow_ups)
+    new_messages.extend(follow_ups)
+    continue  // restart inner loop
+  }
+
+  break
+}
+
+emit_event(AgentEnd { messages })
+return Ok(new_messages)
+```
+
+### 2.2 内层 — turn
+
+```
+run_turn(messages, new_messages, config, signal) → TurnResult
+
+turn_index++
+
+// 1. Transform context via hook chain
+transformed = hook_dispatcher.on_context(messages.clone())
+
+// 2. Build LlmContext
+ctx = LlmContext {
+  system_prompt: config.system_prompt,
+  messages: transformed,
+  tools: build_tool_defs(config.tools),
+}
+
+// 3. Call LLM with retry
+assistant_msg = call_llm_with_retry(ctx, config, signal)?
+
+// 4. Emit message_end
+emit_event(MessageEnd { message: assistant_msg.clone() })
+new_messages.push(assistant_msg.clone())
+messages.push(assistant_msg.clone())
+
+// 5. Extract ToolCalls
+tool_calls = extract_tool_calls(&assistant_msg.content)
+if tool_calls.is_empty() {
+  emit_event(TurnEnd { turn_index, messages: messages.clone() })
+  return TurnResult::Stop
+}
+
+// 6. Execute tools (partitioned by mode)
+tool_results = execute_tools(tool_calls, config, signal)
+for result in &tool_results {
+  new_messages.push(AgentMessage::ToolResult(result.clone()))
+  messages.push(AgentMessage::ToolResult(result.clone()))
+}
+
+emit_event(TurnEnd { turn_index, messages: messages.clone() })
+
+if assistant_msg.stop_reason == StopReason::ToolUse {
+  return TurnResult::ToolUse  // expect another turn
+} else {
+  return TurnResult::Stop
+}
+```
+
+### 2.3 LLM 调用 + 指数退避重试
+
+```
+call_llm_with_retry(ctx, config, signal) → AssistantMessage
+
+for attempt in 0..config.max_retries:
+  result = config.provider.stream(model, ctx, stream_options, signal.child_token())
+
+  match result:
+    Ok(stream) => {
+      // Consume stream → AssistantMessage
+      // Emit MessageStart on first delta
+      // Emit MessageUpdate on each text_delta
+      return parse_stream_response(stream, signal)
+    }
+    Err(RateLimited | Overloaded) if attempt < config.max_retries - 1 => {
+      sleep(2^attempt * 100ms)
+      continue
+    }
+    Err(other) => return Err(other.into())
+```
+
+重试策略：
+- 仅对 `RateLimited` 和 `Overloaded` 重试
+- 后退间隔: 100ms → 200ms → 400ms
+- 跨重次 trace span 记录 `retry_count`
+
+---
+
+## 3. 并行工具执行
+
+```rust
+fn execute_tools(
+    tool_calls: Vec<ToolCall>,
+    config: &AgentLoopConfig,
+    signal: &CancellationToken,
+) -> Vec<ToolResultMessage> {
+    let mut results = Vec::new();
+
+    // Partition by tool execution mode
+    let (sequential_calls, parallel_calls): (Vec<_>, Vec<_>) = tool_calls
+        .into_iter()
+        .partition(|tc| {
+            config.tools.iter()
+                .find(|t| t.name() == tc.name)
+                .map(|t| t.execution_mode() == ToolExecutionMode::Sequential)
+                .unwrap_or(true)  // unknown tools default sequential
+        });
+
+    // Phase 1: Sequential — one at a time
+    for tc in sequential_calls {
+        let result = execute_single_tool(&tc, config, signal).await;
+        results.push(result);
+    }
+
+    // Phase 2: Parallel — concurrent via join_all
+    if !parallel_calls.is_empty() {
+        let futures: Vec<_> = parallel_calls.iter().map(|tc| {
+            execute_single_tool(tc, config, signal)
+        }).collect();
+        let parallel_results = futures::future::join_all(futures).await;
+        results.extend(parallel_results);
+    }
+
+    results
+}
+
+async fn execute_single_tool(
+    tc: &ToolCall,
+    config: &AgentLoopConfig,
+    signal: &CancellationToken,
+) -> ToolResultMessage {
+    emit_event(ToolExecutionStart { tool_call_id: tc.id.clone(), tool_name: tc.name.clone() });
+
+    let tool = config.tools.iter().find(|t| t.name() == tc.name).cloned();
+    let result = match tool {
+        Some(tool) => {
+            let executor = ToolExecutor::new(config.hook_dispatcher.clone(), tool);
+            executor.execute_tool_call(tc).await
+        }
+        None => Err(AgentError::ToolNotFound(tc.name.clone())),
+    };
+
+    let result_msg = match result {
+        Ok(msg) => msg,
+        Err(e) => ToolResultMessage {
+            tool_call_id: tc.id.clone(),
+            tool_name: tc.name.clone(),
+            content: vec![],
+            details: Some(serde_json::json!({"error": e.to_string()})),
+            is_error: true,
+            timestamp: SystemTime::now(),
+        },
+    };
+
+    emit_event(ToolExecutionEnd { tool_call_id: tc.id.clone(), result: result_msg.clone() });
+    result_msg
+}
+```
+
+---
+
+## 4. SessionActor
+
+### 4.1 结构
+
+```rust
+pub struct SessionActor {
+    // State
+    model: String,
+    system_prompt: String,
+    tools: Vec<AgentToolRef>,
+    messages: Vec<AgentMessage>,
+    is_streaming: bool,
+
+    // DI
+    provider: Arc<dyn LlmProvider>,
+    hook_dispatcher: Arc<dyn HookDispatcher>,
+
+    // Queues
+    steer_queue: Vec<AgentMessage>,
+    follow_up_queue: Vec<AgentMessage>,
+
+    // Control
+    abort_token: CancellationToken,
+
+    // Event listeners
+    event_listeners: Vec<Arc<dyn AgentEventListener>>,
+}
+```
+
+### 4.2 完整接口
+
+```rust
+impl SessionActor {
+    // --- Lifecycle ---
+    pub fn new(
+        system_prompt: String,
+        model: String,
+        provider: Arc<dyn LlmProvider>,
+        hook_dispatcher: Arc<dyn HookDispatcher>,
+        tools: Vec<AgentToolRef>,
+    ) -> Self;
+
+    /// Send a user message and run the agent loop.
+    /// Returns all NEW messages generated this run (excludes prior history).
+    pub async fn prompt(&mut self, text: String)
+        -> Result<Vec<AgentMessage>, AgentError>;
+
+    /// Continue from the current transcript without adding a user message.
+    /// Use after session restore or compaction.
+    pub async fn continue_(&mut self)
+        -> Result<Vec<AgentMessage>, AgentError>;
+
+    /// Cancel current run
+    pub fn abort(&self);
+
+    // --- Message injection ---
+    /// Queue a message to inject before the next LLM call in the current run
+    pub fn steer(&mut self, message: AgentMessage);
+
+    /// Queue a message to inject after agent would stop (triggers new outer loop)
+    pub fn follow_up(&mut self, message: AgentMessage);
+
+    // --- State management ---
+    pub fn messages(&self) -> &[AgentMessage];
+    pub fn system_prompt(&self) -> &str;
+    pub fn set_system_prompt(&mut self, prompt: String);
+    pub fn set_model(&mut self, model: String);
+    pub fn set_tools(&mut self, tools: Vec<AgentToolRef>);
+    pub fn is_streaming(&self) -> bool;
+
+    // --- Event subscription ---
+    pub fn add_event_listener(&mut self, listener: Arc<dyn AgentEventListener>);
+}
+```
+
+### 4.3 prompt / continue_ 实现
+
+两者共享内部方法 `run_with_messages()`:
+
+```rust
+async fn run_with_messages(&mut self, add_user_msg: Option<String>)
+    -> Result<Vec<AgentMessage>, AgentError>
+{
+    self.is_streaming = true;
+    self.abort_token = CancellationToken::new();
+
+    if let Some(text) = add_user_msg {
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text }],
+            timestamp: SystemTime::now(),
+        });
+        self.messages.push(user_msg.clone());
+    }
+
+    let mut config = AgentLoopConfig {
+        model: self.model.clone(),
+        provider: self.provider.clone(),
+        hook_dispatcher: self.hook_dispatcher.clone(),
+        tools: self.tools.clone(),
+        system_prompt: Some(self.system_prompt.clone()),
+        stream_options: StreamOptions::default(),
+        max_retries: 3,
+        event_listeners: self.event_listeners.clone(),
+        pull_steer: Some(Box::new(|| self.steer_queue.drain(..).collect())),
+        pull_follow_up: Some(Box::new(|| self.follow_up_queue.drain(..).collect())),
+    };
+
+    let new_msgs = AgentLoop::run(config, self.messages.clone(), self.abort_token.child_token()).await?;
+
+    self.messages.extend(new_msgs.clone());
+    self.is_streaming = false;
+    Ok(new_msgs)
+}
+```
+
+---
+
+## 5. CompactionActor（占位）
+
+```rust
+/// Simple token-based message truncation.
+/// v0.1 uses character count estimation (1 token ≈ 4 chars).
+/// Future versions: LLM-based summarization.
+pub struct CompactionActor;
+
+impl CompactionActor {
+    pub fn compact(messages: &[AgentMessage], max_tokens: u64) -> Vec<AgentMessage> {
+        let mut kept: Vec<AgentMessage> = Vec::new();
+        let mut estimated_tokens: u64 = 0;
+
+        // Keep newest messages, drop oldest
+        for msg in messages.iter().rev() {
+            let chars = format!("{:?}", msg).len() as u64;
+            if estimated_tokens + chars / 4 > max_tokens {
+                break;
+            }
+            estimated_tokens += chars / 4;
+            kept.push(msg.clone());
+        }
+
+        kept.reverse();
+        kept
+    }
+}
+```
+
+---
+
+## 6. 文件变更清单
+
+| 文件 | 操作 | 说明 |
+|---|---|---|
+| `src/events.rs` | 新增 | AgentEvent 枚举 + AgentEventListener trait |
+| `src/loop.rs` | 重写 | 双层循环 + retry + 并行工具 + event emit + steer/followUp pull |
+| `src/session.rs` | 重写 | 完整接口（continue_, 事件订阅, steer/followUp 集成） |
+| `src/compaction.rs` | 新增 | CompactionActor 占位（token 估计算法） |
+| `src/lib.rs` | 修改 | 导出 events, compaction 模块 |
+| `src/error.rs` | 修改 | 补充 error 变体（如有需要） |
+
+---
+
+## 7. 测试计划
+
+| 测试 | 验证点 |
+|---|---|
+| `test_normal_stop` | prompt → LLM 返回 StopReason::Stop → agent_end 事件 |
+| `test_tool_call_roundtrip` | prompt → ToolUse → tool 执行 → LLM 再次返回 Stop |
+| `test_multiple_turns` | 2 轮 ToolUse → Stop，验证 turn_index 递增 |
+| `test_parallel_tool_execution` | 两个 Parallel 工具并发计时，验证并行 |
+| `test_sequential_tool_execution` | 工具按顺序执行 |
+| `test_retry_on_rate_limit` | Mock provider: RateLimited ×2 → 第 3 次成功 |
+| `test_retry_exhausted` | Mock provider: RateLimited ×3 → 返回错误 |
+| `test_steer_injection` | steer("msg") → prompt → 验证 steer 消息出现在 LLM context |
+| `test_follow_up_loop` | follow_up("msg") → prompt → 验证外层循环重启 |
+| `test_continue_session` | prompt → continue_ → 验证消息历史连续无重复 user msg |
+| `test_event_callback` | 注册 listener → 验证 AgentStart, TurnStart, MessageEnd 被调用 |
+| `test_compaction_truncation` | 20 条消息，max_tokens=50 → 只保留最近 ~5 条 |
+| `test_cancellation` | prompt 期间 abort → 验证 Cancelled 错误 |
+| `test_unknown_tool` | LLM 调用不存在的 tool → ToolResultMessage { is_error: true } |
+| `test_hook_block` | on_tool_call 返回 Block → 工具不执行 |
