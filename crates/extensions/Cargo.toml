@@ -1,0 +1,15 @@
+[package]
+name = "extensions"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+agent-core = { path = "../agent-core" }
+llm-client = { path = "../llm-client" }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
