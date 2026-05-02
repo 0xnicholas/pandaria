@@ -4,6 +4,7 @@ members = [
     "crates/llm-client",
     "crates/agent-core",
     "crates/extensions",
+    "crates/tui",
 ]
 
 [workspace.dependencies]
@@ -15,6 +16,8 @@ serde_json = "1"
 tracing = "0.1"
 futures = "0.3"
 tokio-util = "0.7"
+futures-util = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [package]
 name = "pandaria"
