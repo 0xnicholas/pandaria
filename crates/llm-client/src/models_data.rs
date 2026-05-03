@@ -287,6 +287,62 @@ fn build_models() -> HashMap<String, Model> {
         32_768
     );
 
+    // ── Bedrock ────────────────────────────────────────────────────
+    insert!(
+        m,
+        "bedrock",
+        "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "Claude 3.5 Sonnet",
+        "anthropic-messages",
+        "https://bedrock-runtime.us-east-1.amazonaws.com",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 3.0,
+            output: 15.0,
+            cache_read: 0.3,
+            cache_write: 3.75
+        },
+        200_000,
+        8192
+    );
+    insert!(
+        m,
+        "bedrock",
+        "anthropic.claude-3-opus-20240229-v1:0",
+        "Claude 3 Opus",
+        "anthropic-messages",
+        "https://bedrock-runtime.us-east-1.amazonaws.com",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 15.0,
+            output: 75.0,
+            cache_read: 1.5,
+            cache_write: 18.75
+        },
+        200_000,
+        4096
+    );
+    insert!(
+        m,
+        "bedrock",
+        "anthropic.claude-3-haiku-20240307-v1:0",
+        "Claude 3 Haiku",
+        "anthropic-messages",
+        "https://bedrock-runtime.us-east-1.amazonaws.com",
+        false,
+        vec![Modality::Text],
+        TokenCost {
+            input: 0.25,
+            output: 1.25,
+            cache_read: 0.025,
+            cache_write: 0.3125
+        },
+        200_000,
+        4096
+    );
+
     // ── Mistral ────────────────────────────────────────────────────
     insert!(
         m,
@@ -426,6 +482,14 @@ fn build_provider_list() -> HashMap<String, Vec<String>> {
             "gpt-5.1-codex".to_string(),
             "gpt-4.1".to_string(),
             "gpt-4.1-mini".to_string(),
+        ],
+    );
+    p.insert(
+        "bedrock".to_string(),
+        vec![
+            "anthropic.claude-3-5-sonnet-20241022-v2:0".to_string(),
+            "anthropic.claude-3-opus-20240229-v1:0".to_string(),
+            "anthropic.claude-3-haiku-20240307-v1:0".to_string(),
         ],
     );
     p.insert(

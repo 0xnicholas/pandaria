@@ -3,6 +3,7 @@ use secrecy::{ExposeSecret, SecretString};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
+use crate::oauth::resolve_oauth_key;
 use crate::provider::LlmProvider;
 use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
 use crate::types::{Api, LlmContext};
@@ -11,6 +12,7 @@ pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: Option<SecretString>,
     base_url: String,
+    oauth_provider: Option<std::sync::Arc<dyn crate::oauth::OAuthProvider>>,
 }
 
 impl AnthropicProvider {
@@ -27,7 +29,16 @@ impl AnthropicProvider {
             client,
             api_key,
             base_url: base_url.to_string(),
+            oauth_provider: None,
         }
+    }
+
+    pub fn with_oauth(
+        mut self,
+        oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,
+    ) -> Self {
+        self.oauth_provider = Some(oauth);
+        self
     }
 
     fn resolve_api_key(

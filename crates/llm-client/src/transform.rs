@@ -159,7 +159,7 @@ fn pad_orphan_tool_results(messages: &mut Vec<Message>) {
     *messages = result;
 }
 
-fn short_hash(s: &str) -> String {
+pub(crate) fn short_hash(s: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();

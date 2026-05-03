@@ -135,6 +135,7 @@ impl ToolExecutor {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use crate::mutations::ToolResultMutation;
     use crate::AgentToolResult;
     use llm_client::Content;
 
@@ -219,5 +220,215 @@ mod tests {
         assert!(result.is_error);
         let details = result.details.unwrap();
         assert_eq!(details["blocked"], true);
+    }
+
+    // ============================================================================
+    // Additional tool.rs tests
+    // ============================================================================
+
+    struct ProgressTool;
+    #[async_trait]
+    impl crate::types::AgentTool for ProgressTool {
+        fn name(&self) -> &str { "progress_tool" }
+        fn description(&self) -> &str { "Reports progress" }
+        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+        ) -> Result<AgentToolResult, AgentError> {
+            if let Some(callback) = on_progress {
+                callback(AgentToolProgressUpdate {
+                    content: "step 1".to_string(),
+                });
+                callback(AgentToolProgressUpdate {
+                    content: "step 2".to_string(),
+                });
+            }
+            Ok(AgentToolResult {
+                content: vec![Content::Text {
+                    text: "done".to_string(),
+                    text_signature: None,
+                }],
+                details: None,
+                is_error: false,
+                terminate: false,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_progress_callback() {
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let tool = Arc::new(ProgressTool);
+        let executor = ToolExecutor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            dispatcher,
+            tool,
+        );
+
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            name: "progress_tool".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+
+        let progress_updates = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let progress_updates_clone = progress_updates.clone();
+
+        let result = executor
+            .execute_tool_call(&tool_call, Some(&move |update: AgentToolProgressUpdate| {
+                progress_updates_clone.lock().unwrap().push(update.content);
+            }))
+            .await
+            .unwrap();
+
+        assert!(!result.is_error);
+        let updates = progress_updates.lock().unwrap();
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[0], "step 1");
+        assert_eq!(updates[1], "step 2");
+    }
+
+    struct MutatingDispatcher;
+    #[async_trait]
+    impl HookDispatcher for MutatingDispatcher {
+        async fn on_tool_result(&self, _ctx: &ToolResultCtx) -> ToolResultMutation {
+            ToolResultMutation {
+                content: Some(vec![Content::Text {
+                    text: "mutated result".to_string(),
+                    text_signature: None,
+                }]),
+                details: Some(serde_json::json!({"mutated": true})),
+                is_error: Some(true),
+                terminate: None,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_result_mutation() {
+        let dispatcher = Arc::new(MutatingDispatcher);
+        let tool = Arc::new(MockTool);
+        let executor = ToolExecutor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            dispatcher,
+            tool,
+        );
+
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            name: "mock_tool".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+
+        let result = executor.execute_tool_call(&tool_call, None).await.unwrap();
+        assert!(result.is_error); // mutated to error
+        assert_eq!(result.content.len(), 1);
+        match &result.content[0] {
+            Content::Text { text, .. } => assert_eq!(text, "mutated result"),
+            _ => panic!("expected text content"),
+        }
+        let details = result.details.unwrap();
+        assert_eq!(details["mutated"], true);
+    }
+
+    struct ErrorTool;
+    #[async_trait]
+    impl crate::types::AgentTool for ErrorTool {
+        fn name(&self) -> &str { "error_tool" }
+        fn description(&self) -> &str { "Always fails" }
+        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+        ) -> Result<AgentToolResult, AgentError> {
+            Err(AgentError::ToolExecutionFailed("intentional failure".to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_execution_error() {
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let tool = Arc::new(ErrorTool);
+        let executor = ToolExecutor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            dispatcher,
+            tool,
+        );
+
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            name: "error_tool".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+
+        let result = executor.execute_tool_call(&tool_call, None).await;
+        assert!(result.is_err());
+        match result {
+            Err(AgentError::ToolExecutionFailed(msg)) => {
+                assert_eq!(msg, "intentional failure");
+            }
+            other => panic!("expected ToolExecutionFailed, got {:?}", other),
+        }
+    }
+
+    struct TerminateTool;
+    #[async_trait]
+    impl crate::types::AgentTool for TerminateTool {
+        fn name(&self) -> &str { "terminate_tool" }
+        fn description(&self) -> &str { "Signals termination" }
+        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+        ) -> Result<AgentToolResult, AgentError> {
+            Ok(AgentToolResult {
+                content: vec![Content::Text {
+                    text: "terminating".to_string(),
+                    text_signature: None,
+                }],
+                details: Some(serde_json::json!({"special": true})),
+                is_error: false,
+                terminate: true,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_terminate_flag_propagation() {
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let tool = Arc::new(TerminateTool);
+        let executor = ToolExecutor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            dispatcher,
+            tool,
+        );
+
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            name: "terminate_tool".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+
+        let result = executor.execute_tool_call(&tool_call, None).await.unwrap();
+        assert!(!result.is_error);
+        let details = result.details.unwrap();
+        // Verify terminate flag is embedded in details
+        assert_eq!(details["_terminate"], true);
+        assert_eq!(details["special"], true);
     }
 }

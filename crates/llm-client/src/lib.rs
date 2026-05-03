@@ -4,6 +4,7 @@ pub mod error;
 pub mod hooks;
 pub mod models;
 mod models_data;
+pub mod oauth;
 pub mod overflow;
 pub mod provider;
 pub mod providers;
@@ -27,7 +28,12 @@ pub use models::{
     Modality, Model, ModelRegistry, TokenCost, calculate_cost, get_model, models_are_equal,
     models_for_provider, providers, supports_xhigh,
 };
+pub use oauth::{OAuthProvider, OAuthToken, is_expired, resolve_oauth_key};
 pub use providers::mistral::MistralProvider;
+
+#[cfg(feature = "bedrock")]
+pub use providers::bedrock::AwsBedrockProvider;
+
 pub use overflow::is_context_overflow;
 pub use provider::*;
 pub use repair::{StreamingJsonParser, parse_json_with_repair, repair_json, sanitize_unicode};

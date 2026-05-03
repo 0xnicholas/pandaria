@@ -702,4 +702,147 @@ mod tests {
         let loaded = store.load_session("t1", "s1").await.unwrap();
         assert!(loaded.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_restore_from_store() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        let store = Arc::new(MemoryStore::new());
+        let provider = Arc::new(EchoProvider);
+        let dispatcher = Arc::new(AllowAllDispatcher);
+
+        // Create session and add some messages
+        {
+            let mut session = SessionActor::new(
+                "t1".to_string(),
+                "s1".to_string(),
+                "prompt".to_string(),
+                "echo".to_string(),
+                128_000,
+                provider.clone(),
+                dispatcher.clone(),
+                vec![],
+                Some(store.clone()),
+                None,
+            );
+            session.prompt("hello".to_string()).await.unwrap();
+            session.flush().await.unwrap();
+        }
+
+        // Create new session with same store, restore should get messages back
+        let mut session2 = SessionActor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "prompt".to_string(),
+            "echo".to_string(),
+            128_000,
+            provider,
+            dispatcher,
+            vec![],
+            Some(store.clone()),
+            None,
+        );
+
+        let restored = session2.restore().await.unwrap();
+        assert!(restored > 0);
+        let msgs = session2.messages();
+        assert!(msgs.len() >= 2); // user + assistant
+    }
+
+    #[tokio::test]
+    async fn test_entries_api_with_compaction() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let provider = Arc::new(EchoProvider);
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "prompt".to_string(),
+            "echo".to_string(),
+            128_000,
+            provider,
+            dispatcher,
+            vec![],
+            None,
+            None,
+        );
+
+        // Add a compaction entry manually
+        use crate::types::{CompactionEntry, SessionEntry, SessionEntryKind};
+        session.entries.push(SessionEntry {
+            id: 999,
+            kind: SessionEntryKind::Compaction(CompactionEntry {
+                summary: "test summary".to_string(),
+                first_kept_entry_id: 0,
+                tokens_before: 100,
+                timestamp: std::time::SystemTime::now(),
+                details: None,
+            }),
+        });
+
+        // entries() should include compaction
+        let all_entries = session.entries();
+        assert!(all_entries.iter().any(|e| matches!(e.kind, SessionEntryKind::Compaction(_))));
+
+        // messages() should filter out compaction
+        let msgs = session.messages();
+        assert!(!msgs.iter().any(|m| matches!(m, AgentMessage::Assistant(_)))); // No assistant messages yet
+        assert_eq!(msgs.len(), 0); // No actual messages, only compaction entry
+    }
+
+    #[tokio::test]
+    async fn test_steer_and_follow_up_combined() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let provider = Arc::new(EchoProvider);
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "You are helpful.".to_string(),
+            "echo".to_string(),
+            128_000,
+            provider,
+            dispatcher,
+            vec![],
+            None,
+            None,
+        );
+
+        // Queue both steer and follow-up
+        session.steer(AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "steer note".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        }));
+        session.follow_up(AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "follow up".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        }));
+
+        // Expected flow:
+        // Turn 1: user(main) + steer + assistant
+        // Turn 2: follow_up + assistant
+        let results = session.prompt("hello".to_string()).await.unwrap();
+
+        // Should have multiple messages from both turns
+        assert!(results.len() >= 2);
+
+        // Verify steer was consumed
+        let msgs = session.messages();
+        assert!(msgs.iter().any(|m| {
+            if let AgentMessage::User(u) = m {
+                u.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text == "steer note"))
+            } else {
+                false
+            }
+        }));
+
+        // Verify follow-up was consumed
+        assert!(msgs.iter().any(|m| {
+            if let AgentMessage::User(u) = m {
+                u.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text == "follow up"))
+            } else {
+                false
+            }
+        }));
+    }
 }

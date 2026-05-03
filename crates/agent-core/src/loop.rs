@@ -795,4 +795,367 @@ mod tests {
             other => panic!("expected LlmResponseError, got {:?}", other),
         }
     }
+
+    // ============================================================================
+    // New tests for comprehensive coverage
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_sequential_tool_execution() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        struct SequentialCounterTool {
+            name: String,
+            counter: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::types::AgentTool for SequentialCounterTool {
+            fn name(&self) -> &str { &self.name }
+            fn description(&self) -> &str { "A sequential counter tool" }
+            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            fn execution_mode(&self) -> ToolExecutionMode { ToolExecutionMode::Sequential }
+
+            async fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: serde_json::Value,
+                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+            ) -> Result<crate::AgentToolResult, AgentError> {
+                // Add a small delay to make sequential execution observable
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                self.counter.fetch_add(1, Ordering::SeqCst);
+                Ok(crate::AgentToolResult {
+                    content: vec![Content::Text {
+                        text: format!("executed_{}", self.name),
+                        text_signature: None,
+                    }],
+                    details: None,
+                    is_error: false,
+                    terminate: true,
+                })
+            }
+        }
+
+        let tool_a = Arc::new(SequentialCounterTool { name: "seq_a".to_string(), counter: AtomicUsize::new(0) });
+        let tool_b = Arc::new(SequentialCounterTool { name: "seq_b".to_string(), counter: AtomicUsize::new(0) });
+
+        let provider = Arc::new(ToolCallProvider {
+            tool_calls: vec![
+                ToolCall {
+                    id: "call_a".to_string(),
+                    name: "seq_a".to_string(),
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                },
+                ToolCall {
+                    id: "call_b".to_string(),
+                    name: "seq_b".to_string(),
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                },
+            ],
+        });
+
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let loop_ = AgentLoop::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "test".to_string(),
+            provider,
+            dispatcher,
+            vec![tool_a.clone() as AgentToolRef, tool_b.clone() as AgentToolRef],
+        );
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "do sequential things".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_
+            .run(Some("You have tools.".to_string()), vec![user_msg], CancellationToken::new())
+            .await
+            .unwrap();
+
+        // Expected: assistant message + 2 tool results = 3 messages
+        assert_eq!(results.len(), 3);
+        assert!(matches!(results[0], AgentMessage::Assistant(_)));
+        assert!(matches!(results[1], AgentMessage::ToolResult(_)));
+        assert!(matches!(results[2], AgentMessage::ToolResult(_)));
+
+        // Both tools should have been executed
+        assert_eq!(tool_a.counter.load(Ordering::SeqCst), 1);
+        assert_eq!(tool_b.counter.load(Ordering::SeqCst), 1);
+    }
+
+    struct ContextMutatingDispatcher;
+    #[async_trait::async_trait]
+    impl HookDispatcher for ContextMutatingDispatcher {
+        async fn on_context(&self, _ctx: &ContextCtx) -> crate::mutations::ContextMutation {
+            crate::mutations::ContextMutation {
+                messages: Some(vec![
+                    AgentMessage::User(llm_client::UserMessage {
+                        content: vec![Content::Text {
+                            text: "mutated".to_string(),
+                            text_signature: None,
+                        }],
+                        timestamp: std::time::SystemTime::now(),
+                    }),
+                ]),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_context_hook_mutation() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        // This provider will verify it receives the mutated message
+        struct VerifyingProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for VerifyingProvider {
+            fn provider_name(&self) -> &str { "verify" }
+            fn models(&self) -> Vec<String> { vec!["test".to_string()] }
+            async fn stream(
+                &self,
+                _model: &str,
+                context: LlmContext,
+                _options: StreamOptions,
+                _signal: CancellationToken,
+            ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
+                // Verify the mutated message was passed
+                assert_eq!(context.messages.len(), 1);
+                match &context.messages[0] {
+                    AgentMessage::User(user) => {
+                        let text = user.content.first().and_then(|c| match c {
+                            Content::Text { text, .. } => Some(text.as_str()),
+                            _ => None,
+                        });
+                        assert_eq!(text, Some("mutated"));
+                    }
+                    _ => panic!("expected user message"),
+                }
+
+                let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
+                let partial = llm_client::AssistantMessage {
+                    content: vec![Content::Text { text: "ok".to_string(), text_signature: None }],
+                    provider: "verify".to_string(),
+                    model: "test".to_string(),
+                    api: llm_client::Api { provider: "verify".to_string(), model: "test".to_string() },
+                    usage: llm_client::Usage {
+                        input_tokens: 0, output_tokens: 0,
+                        cache_creation_input_tokens: None, cache_read_input_tokens: None,
+                        total_tokens: 0,
+                    },
+                    stop_reason: StopReason::Stop,
+                    response_id: None,
+                    error_message: None,
+                    timestamp: std::time::SystemTime::now(),
+                };
+
+                tokio::spawn(async move {
+                    let _ = tx.send(llm_client::AssistantMessageEvent::Start { partial: partial.clone() }).await;
+                    let _ = tx.send(llm_client::AssistantMessageEvent::Done { reason: StopReason::Stop, message: partial }).await;
+                });
+
+                Ok(stream)
+            }
+        }
+
+        let provider = Arc::new(VerifyingProvider);
+        let dispatcher = Arc::new(ContextMutatingDispatcher);
+        let loop_ = AgentLoop::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "test".to_string(),
+            provider,
+            dispatcher,
+            vec![],
+        );
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "original".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_
+            .run(None, vec![user_msg], CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_all_tools_terminate() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        struct TerminatingTool;
+        #[async_trait::async_trait]
+        impl crate::types::AgentTool for TerminatingTool {
+            fn name(&self) -> &str { "terminator" }
+            fn description(&self) -> &str { "Terminates the loop" }
+            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+
+            async fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: serde_json::Value,
+                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+            ) -> Result<crate::AgentToolResult, AgentError> {
+                Ok(crate::AgentToolResult {
+                    content: vec![Content::Text { text: "done".to_string(), text_signature: None }],
+                    details: None,
+                    is_error: false,
+                    terminate: true,
+                })
+            }
+        }
+
+        let tool = Arc::new(TerminatingTool);
+        let provider = Arc::new(ToolCallProvider {
+            tool_calls: vec![
+                ToolCall {
+                    id: "call_1".to_string(),
+                    name: "terminator".to_string(),
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                },
+            ],
+        });
+
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let loop_ = AgentLoop::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "test".to_string(),
+            provider,
+            dispatcher,
+            vec![tool as AgentToolRef],
+        );
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "terminate".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_
+            .run(Some("You have tools.".to_string()), vec![user_msg], CancellationToken::new())
+            .await
+            .unwrap();
+
+        // Should be: assistant + tool_result only (no second LLM call)
+        assert_eq!(results.len(), 2);
+        assert!(matches!(results[0], AgentMessage::Assistant(_)));
+        assert!(matches!(results[1], AgentMessage::ToolResult(_)));
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_mid_stream() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        struct SlowProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for SlowProvider {
+            fn provider_name(&self) -> &str { "slow" }
+            fn models(&self) -> Vec<String> { vec!["slow".to_string()] }
+            async fn stream(
+                &self,
+                _model: &str,
+                _context: LlmContext,
+                _options: StreamOptions,
+                signal: CancellationToken,
+            ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
+                let (stream, _tx) = llm_client::AssistantMessageEventStream::new(4);
+
+                // Wait for cancellation
+                tokio::select! {
+                    _ = signal.cancelled() => {}
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {}
+                }
+
+                Err(llm_client::LlmError::Cancelled)
+            }
+        }
+
+        let provider = Arc::new(SlowProvider);
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let loop_ = AgentLoop::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "slow".to_string(),
+            provider,
+            dispatcher,
+            vec![],
+        );
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let cancel_token = CancellationToken::new();
+        let cancel_token_clone = cancel_token.child_token();
+
+        let handle = tokio::spawn(async move {
+            loop_
+                .run(Some("You are helpful.".to_string()), vec![user_msg], cancel_token_clone)
+                .await
+        });
+
+        // Cancel after a short delay
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        cancel_token.cancel();
+
+        let result = handle.await.unwrap();
+        assert!(result.is_err());
+        match result {
+            Err(AgentError::Cancelled) | Err(AgentError::LlmError(llm_client::LlmError::Cancelled)) => {}
+            other => panic!("expected Cancelled, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_tool_set() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let provider = Arc::new(SingleResponseProvider {
+            content: vec![Content::Text {
+                text: "Hello without tools".to_string(),
+                text_signature: None,
+            }],
+            stop_reason: StopReason::Stop,
+        });
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let loop_ = AgentLoop::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "test".to_string(),
+            provider,
+            dispatcher,
+            vec![], // Empty tool set
+        );
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_
+            .run(
+                Some("You are helpful.".to_string()),
+                vec![user_msg],
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        match &results[0] {
+            AgentMessage::Assistant(msg) => {
+                assert_eq!(msg.stop_reason, StopReason::Stop);
+                assert!(msg.content.iter().any(|c| matches!(c, Content::Text { .. })));
+            }
+            _ => panic!("expected assistant message"),
+        }
+    }
 }

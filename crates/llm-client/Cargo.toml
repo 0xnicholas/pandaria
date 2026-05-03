@@ -17,6 +17,7 @@ eventsource-stream = "0.2"
 secrecy = { version = "0.10", features = ["serde"] }
 regex = { workspace = true }
 jsonschema = "0.28"
+aws-sdk-bedrockruntime = { version = "1", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
@@ -24,4 +25,5 @@ wiremock = "0.6"
 tokio-test = "0.4"
 
 [features]
+bedrock = ["aws-sdk-bedrockruntime"]
 test-utils = []
