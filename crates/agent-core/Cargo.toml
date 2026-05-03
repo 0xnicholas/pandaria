@@ -8,11 +8,12 @@ llm-client = { path = "../llm-client" }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 futures = { workspace = true }
 tokio-util = { workspace = true }
 
 [dev-dependencies]
+llm-client = { path = "../llm-client", features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { workspace = true }

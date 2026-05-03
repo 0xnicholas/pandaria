@@ -34,9 +34,9 @@ pub trait Extension: Send + Sync {
     fn name(&self) -> &str;
     fn tools(&self) -> Vec<ToolDef>;
 
-    // 阻断型拦截 hook，返回决策（first-block-wins）
-    async fn on_tool_call(&self, ctx: &ToolCallCtx) -> HookDecision {
-        HookDecision::Continue
+    // 阻断型拦截 hook，返回决策（first-block-wins）+ input mutation
+    async fn on_tool_call(&self, ctx: &ToolCallCtx) -> (HookDecision, ToolCallMutation) {
+        (HookDecision::Continue, ToolCallMutation::default())
     }
 
     // 链式拦截 hook，修改结果（每个 handler 在前一个结果的修改上叠加）
@@ -190,9 +190,9 @@ api-gateway → tenant → extensions → agent-core → llm-client
 | Hook 机制（Mailbox + EventBus） | ✅ 已确定 |
 | Session 隔离粒度（tokio task） | ✅ 已确定 |
 | Session 持久化 schema | 🔲 待设计 |
-| LLM provider 抽象接口 | 🔲 待设计 |
-| API Gateway 协议选型 | 🔲 待设计 |
-| 所有代码实现 | 🔲 未开始 |
+| LLM provider 抽象接口 | 🟡 部分实现（类型系统+LlmProvider trait 已实现，provider 适配器待完成） |
+| API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST，服务端正式设计文档待补充） |
+| 所有代码实现 | 🟡 部分实现（llm-client、agent-core、extensions 已有代码） |
 
 ---
 

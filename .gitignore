@@ -1,6 +1,6 @@
 .DS_Store
 /_references
-
+/_tmp
 # Added by cargo
 
 /target

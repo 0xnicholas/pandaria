@@ -10,6 +10,18 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 tokio-util = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+reqwest = { version = "0.12", features = ["stream", "json"] }
+eventsource-stream = "0.2"
+secrecy = { version = "0.10", features = ["serde"] }
+regex = { workspace = true }
+jsonschema = "0.28"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+wiremock = "0.6"
+tokio-test = "0.4"
+
+[features]
+test-utils = []

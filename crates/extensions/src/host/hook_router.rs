@@ -5,8 +5,7 @@ use async_trait::async_trait;
 use agent_core::context::{
     AgentEndCtx, ContextCtx, SessionCtx, ToolCallCtx, ToolResultCtx, TurnEndCtx,
 };
-use agent_core::mutations::{HookDecision, ToolResultMutation};
-use agent_core::types::AgentMessage;
+use agent_core::mutations::{ContextMutation, HookDecision, ToolResultMutation};
 
 use super::event_bus::EventBus;
 use super::extension_actor::{ExtensionHandle, ObsEvent};
@@ -74,12 +73,14 @@ impl agent_core::HookDispatcher for HookRouter {
         final_mutation
     }
 
-    async fn on_context(&self, messages: Vec<AgentMessage>) -> Vec<AgentMessage> {
+    async fn on_context(&self, ctx: &ContextCtx) -> ContextMutation {
         // Chain merge — each handler transforms the messages
-        let mut current_messages = messages;
+        let mut current_messages = ctx.messages.clone();
 
         for handle in &self.handles {
             let ctx = ContextCtx {
+                tenant_id: ctx.tenant_id.clone(),
+                session_id: ctx.session_id.clone(),
                 messages: current_messages.clone(),
             };
             let mutation = handle.on_context(ctx).await;
@@ -88,7 +89,9 @@ impl agent_core::HookDispatcher for HookRouter {
             }
         }
 
-        current_messages
+        ContextMutation {
+            messages: Some(current_messages),
+        }
     }
 
     async fn on_turn_end(&self, ctx: &TurnEndCtx) {
@@ -142,6 +145,8 @@ mod tests {
         let router = HookRouter::new(vec![h1, h2, h3], bus);
 
         let ctx = ToolCallCtx {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
             tool_name: "t".to_string(),
             tool_call_id: "c1".to_string(),
             input: serde_json::json!({}),
@@ -164,6 +169,8 @@ mod tests {
         let router = HookRouter::new(vec![h1, h2], bus);
 
         let ctx = ToolCallCtx {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
             tool_name: "t".to_string(),
             tool_call_id: "c1".to_string(),
             input: serde_json::json!({}),

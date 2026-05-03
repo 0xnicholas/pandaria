@@ -13,6 +13,9 @@ pub struct ToolResultMutation {
     pub content: Option<Vec<llm_client::Content>>,
     pub details: Option<serde_json::Value>,
     pub is_error: Option<bool>,
+    /// Override the terminate flag set by the tool execution.
+    /// When set, replaces the tool's terminate flag.
+    pub terminate: Option<bool>,
 }
 
 /// Mutation returned by chain hooks for context

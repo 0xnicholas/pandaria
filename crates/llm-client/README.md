@@ -2,6 +2,8 @@
 
 LLM provider 抽象层。定义消息类型、Tool 定义、LlmProvider trait 及流式 SSE 事件类型。
 
+Note: This library only includes models that support tool calling (function calling), as this is essential for agentic workflows.
+
 ## 职责
 
 - 定义与 LLM 交互的通用消息协议（`UserMessage`、`AssistantMessage`、`ToolResultMessage`）

@@ -14,6 +14,9 @@ pub enum AgentError {
     #[error("llm error: {0}")]
     LlmError(#[from] llm_client::LlmError),
 
+    #[error("llm response error: {0}")]
+    LlmResponseError(String),
+
     #[error("cancelled")]
     Cancelled,
 }

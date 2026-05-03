@@ -172,6 +172,8 @@ mod tests {
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
         let ctx = ToolCallCtx {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
             tool_name: "blocked_tool".to_string(),
             tool_call_id: "c1".to_string(),
             input: serde_json::json!({}),
@@ -191,6 +193,8 @@ mod tests {
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
         let ctx = ToolCallCtx {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
             tool_name: "allowed_tool".to_string(),
             tool_call_id: "c2".to_string(),
             input: serde_json::json!({}),
@@ -218,6 +222,8 @@ mod tests {
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
         let ctx = ToolResultCtx {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
             tool_name: "t".to_string(),
             tool_call_id: "c1".to_string(),
             input: serde_json::json!({}),
