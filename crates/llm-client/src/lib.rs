@@ -27,6 +27,7 @@ pub use models::{
     Modality, Model, ModelRegistry, TokenCost, calculate_cost, get_model, models_are_equal,
     models_for_provider, providers, supports_xhigh,
 };
+pub use providers::mistral::MistralProvider;
 pub use overflow::is_context_overflow;
 pub use provider::*;
 pub use repair::{StreamingJsonParser, parse_json_with_repair, repair_json, sanitize_unicode};

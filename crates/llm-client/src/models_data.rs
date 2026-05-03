@@ -287,6 +287,44 @@ fn build_models() -> HashMap<String, Model> {
         32_768
     );
 
+    // ── Mistral ────────────────────────────────────────────────────
+    insert!(
+        m,
+        "mistral",
+        "mistral-large-latest",
+        "Mistral Large",
+        "openai-completions",
+        "https://api.mistral.ai/v1/chat/completions",
+        true,
+        vec![Modality::Text],
+        TokenCost {
+            input: 2.0,
+            output: 6.0,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        128_000,
+        128_000
+    );
+    insert!(
+        m,
+        "mistral",
+        "mistral-medium-latest",
+        "Mistral Medium",
+        "openai-completions",
+        "https://api.mistral.ai/v1/chat/completions",
+        false,
+        vec![Modality::Text],
+        TokenCost {
+            input: 1.0,
+            output: 3.0,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        128_000,
+        128_000
+    );
+
     // ── Google ─────────────────────────────────────────────────────
     insert!(
         m,
@@ -388,6 +426,13 @@ fn build_provider_list() -> HashMap<String, Vec<String>> {
             "gpt-5.1-codex".to_string(),
             "gpt-4.1".to_string(),
             "gpt-4.1-mini".to_string(),
+        ],
+    );
+    p.insert(
+        "mistral".to_string(),
+        vec![
+            "mistral-large-latest".to_string(),
+            "mistral-medium-latest".to_string(),
         ],
     );
     p.insert(
