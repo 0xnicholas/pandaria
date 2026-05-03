@@ -1,4 +1,4 @@
-use crate::types::{Api, AssistantMessage, Content, Message, StopReason, ToolResultMessage, Usage};
+use crate::types::{Api, AssistantMessage, Content, Message, StopReason, Usage};
 
 /// Options controlling message transformation behavior.
 #[derive(Debug, Clone, Default)]
@@ -40,7 +40,7 @@ pub fn transform_messages(messages: &[Message], options: &TransformOptions) -> V
     result
 }
 
-fn downgrade_images(messages: &mut Vec<Message>) {
+fn downgrade_images(messages: &mut [Message]) {
     for msg in messages.iter_mut() {
         let (content, is_tool_result) = match msg {
             Message::User(m) => (&mut m.content, false),
@@ -78,7 +78,7 @@ fn downgrade_images(messages: &mut Vec<Message>) {
     }
 }
 
-fn remove_thinking_blocks(messages: &mut Vec<Message>) {
+fn remove_thinking_blocks(messages: &mut [Message]) {
     for msg in messages.iter_mut() {
         if let Message::Assistant(m) = msg {
             m.content.retain(|c| !matches!(c, Content::Thinking { .. }));
@@ -86,7 +86,7 @@ fn remove_thinking_blocks(messages: &mut Vec<Message>) {
     }
 }
 
-fn normalize_tool_call_ids(messages: &mut Vec<Message>) {
+fn normalize_tool_call_ids(messages: &mut [Message]) {
     // First pass: normalize IDs in assistant messages, build rename map
     let mut id_map: Vec<(String, String)> = Vec::new();
 
@@ -170,6 +170,7 @@ fn short_hash(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ToolResultMessage;
 
     fn make_tool_call(id: &str) -> Content {
         Content::ToolCall(crate::ToolCall {

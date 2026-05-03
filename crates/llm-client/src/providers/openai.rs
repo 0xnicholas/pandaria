@@ -110,6 +110,7 @@ impl LlmProvider for OpenAiProvider {
 }
 
 impl OpenAiProvider {
+    #[allow(clippy::too_many_arguments)]
     async fn try_stream(
         client: reqwest::Client,
         base_url: String,

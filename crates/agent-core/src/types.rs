@@ -1,10 +1,59 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::error::AgentError;
 
 /// Type alias for the LLM message type used throughout the agent system.
 pub type AgentMessage = llm_client::Message;
+
+/// A single entry in the session history, identified by a monotonically
+/// increasing `id`.  Used for compaction-aware storage and context
+/// reconstruction.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SessionEntry {
+    pub id: u64,
+    #[serde(flatten)]
+    pub kind: SessionEntryKind,
+}
+
+/// The payload of a [`SessionEntry`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SessionEntryKind {
+    Message(AgentMessage),
+    Compaction(CompactionEntry),
+}
+
+/// Metadata stored when a session is compacted.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompactionEntry {
+    pub summary: String,
+    pub first_kept_entry_id: u64,
+    pub tokens_before: u64,
+    #[serde(with = "crate::types::ts_serde")]
+    pub timestamp: SystemTime,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
+}
+
+mod ts_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    pub fn serialize<S: Serializer>(time: &SystemTime, s: S) -> Result<S::Ok, S::Error> {
+        let dur = time
+            .duration_since(UNIX_EPOCH)
+            .expect("SystemTime before UNIX_EPOCH");
+        dur.as_secs().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<SystemTime, D::Error> {
+        let secs: u64 = Deserialize::deserialize(d)?;
+        Ok(UNIX_EPOCH + Duration::from_secs(secs))
+    }
+}
 
 /// Controls how multiple tool calls within a single assistant response are executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

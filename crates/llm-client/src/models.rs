@@ -40,6 +40,7 @@ pub struct Model {
 /// Per-API compatibility flags, tag-discriminated by api field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "api")]
+#[allow(clippy::large_enum_variant)]
 pub enum ModelCompat {
     #[serde(rename = "openai-completions")]
     OpenAI(crate::compat::OpenAiCompat),

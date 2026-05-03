@@ -110,6 +110,7 @@ impl LlmProvider for GoogleProvider {
 }
 
 impl GoogleProvider {
+    #[allow(clippy::too_many_arguments)]
     async fn try_stream(
         client: reqwest::Client,
         base_url: String,

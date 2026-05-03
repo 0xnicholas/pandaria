@@ -112,6 +112,7 @@ impl LlmProvider for AnthropicProvider {
 }
 
 impl AnthropicProvider {
+    #[allow(clippy::too_many_arguments)]
     async fn try_stream(
         client: reqwest::Client,
         base_url: String,

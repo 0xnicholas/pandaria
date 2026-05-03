@@ -4,12 +4,16 @@ use llm_client::Content;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument, warn};
 
+use crate::compaction::{
+    compact as compact_inner, prepare_compaction, should_compact, CompactionResult,
+    CompactionSettings, estimate_context_tokens,
+};
 use crate::context::{AgentEndCtx, SessionCtx};
 use crate::error::AgentError;
 use crate::hook_dispatcher::HookDispatcher;
 use crate::loop_::AgentLoop;
 use crate::store::SessionStore;
-use crate::types::{AgentMessage, AgentToolRef};
+use crate::types::{AgentMessage, AgentToolRef, CompactionEntry, SessionEntry, SessionEntryKind};
 
 /// Manages the lifecycle of a single agent session for a given tenant.
 ///
@@ -20,17 +24,20 @@ pub struct SessionActor {
     session_id: String,
     model: String,
     system_prompt: String,
+    context_window: u64,
     provider: Arc<dyn llm_client::LlmProvider>,
     hook_dispatcher: Arc<dyn HookDispatcher>,
     tools: Vec<AgentToolRef>,
-    messages: Vec<AgentMessage>,
+    entries: Vec<SessionEntry>,
+    next_entry_id: u64,
     /// Messages queued for injection before the next LLM call
     steer_queue: Vec<AgentMessage>,
     /// Messages queued for injection after the agent would stop
     follow_up_queue: Vec<AgentMessage>,
-    /// Optional persistence backend for message history
+    /// Optional persistence backend for session history
     store: Option<Arc<dyn SessionStore>>,
     abort_token: CancellationToken,
+    compaction_settings: CompactionSettings,
 }
 
 impl SessionActor {
@@ -43,10 +50,12 @@ impl SessionActor {
         session_id: String,
         system_prompt: String,
         model: String,
+        context_window: u64,
         provider: Arc<dyn llm_client::LlmProvider>,
         hook_dispatcher: Arc<dyn HookDispatcher>,
         tools: Vec<AgentToolRef>,
         store: Option<Arc<dyn SessionStore>>,
+        compaction_settings: Option<CompactionSettings>,
     ) -> Self {
         // Emit session_start (fire-and-forget, per ADR-003)
         let session_ctx = SessionCtx {
@@ -73,25 +82,28 @@ impl SessionActor {
             session_id,
             model,
             system_prompt,
+            context_window,
             provider,
             hook_dispatcher,
             tools,
-            messages: Vec::new(),
+            entries: Vec::new(),
+            next_entry_id: 0,
             steer_queue: Vec::new(),
             follow_up_queue: Vec::new(),
             store,
             abort_token: CancellationToken::new(),
+            compaction_settings: compaction_settings.unwrap_or_default(),
         }
     }
 
-    /// Attempt to restore message history from the configured store.
+    /// Attempt to restore session history from the configured store.
     ///
-    /// Returns the number of messages restored, or 0 if no store is configured
+    /// Returns the number of entries restored, or 0 if no store is configured
     /// or the store has no data for this session.
     pub async fn restore(&mut self) -> Result<usize, AgentError> {
         if let Some(ref store) = self.store {
-            let messages = store.load_session(&self.tenant_id, &self.session_id).await?;
-            let count = messages.len();
+            let entries = store.load_session(&self.tenant_id, &self.session_id).await?;
+            let count = entries.len();
             if count > 0 {
                 info!(
                     tenant_id = %self.tenant_id,
@@ -100,7 +112,8 @@ impl SessionActor {
                     "restored session history from store",
                 );
             }
-            self.messages = messages;
+            self.next_entry_id = entries.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+            self.entries = entries;
             Ok(count)
         } else {
             Ok(0)
@@ -134,7 +147,7 @@ impl SessionActor {
             }],
             timestamp: std::time::SystemTime::now(),
         });
-        self.messages.push(user_msg.clone());
+        self.push_message(user_msg.clone());
 
         // Drain steer_queue — inject before the LLM turn
         if !self.steer_queue.is_empty() {
@@ -144,12 +157,16 @@ impl SessionActor {
                 count = self.steer_queue.len(),
                 "injecting steer messages",
             );
-            self.messages.append(&mut self.steer_queue);
+            let steer_msgs: Vec<_> = self.steer_queue.drain(..).collect();
+            for msg in steer_msgs {
+                self.push_message(msg);
+            }
         }
 
         let mut all_new_messages: Vec<AgentMessage> = Vec::new();
 
         loop {
+            let messages = self.messages().to_vec();
             let loop_ = AgentLoop::new(
                 self.tenant_id.clone(),
                 self.session_id.clone(),
@@ -162,12 +179,14 @@ impl SessionActor {
             let new_msgs = loop_
                 .run(
                     Some(self.system_prompt.clone()),
-                    self.messages.clone(),
+                    messages,
                     self.abort_token.child_token(),
                 )
                 .await?;
 
-            self.messages.extend(new_msgs.clone());
+            for msg in &new_msgs {
+                self.push_message(msg.clone());
+            }
             all_new_messages.extend(new_msgs);
 
             // If follow_up messages are queued, inject them and loop again
@@ -178,7 +197,10 @@ impl SessionActor {
                     count = self.follow_up_queue.len(),
                     "injecting follow-up messages, continuing loop",
                 );
-                self.messages.append(&mut self.follow_up_queue);
+                let follow_up_msgs: Vec<_> = self.follow_up_queue.drain(..).collect();
+                for msg in follow_up_msgs {
+                    self.push_message(msg);
+                }
                 continue;
             }
 
@@ -189,7 +211,7 @@ impl SessionActor {
         let end_ctx = AgentEndCtx {
             tenant_id: self.tenant_id.clone(),
             session_id: self.session_id.clone(),
-            messages: self.messages.clone(),
+            messages: self.messages().to_vec(),
         };
         let dispatcher = self.hook_dispatcher.clone();
         tokio::spawn(async move {
@@ -199,19 +221,19 @@ impl SessionActor {
         info!(
             tenant_id = %self.tenant_id,
             session_id = %self.session_id,
-            total_msg_count = self.messages.len(),
+            total_entries = self.entries.len(),
             new_msg_count = all_new_messages.len(),
             "agent run complete",
         );
 
         // Persist session state if a store is configured
         if let Some(ref store) = self.store {
-            let messages = self.messages.clone();
+            let entries = self.entries.clone();
             let tenant_id = self.tenant_id.clone();
             let session_id = self.session_id.clone();
             let store = store.clone();
             tokio::spawn(async move {
-                if let Err(e) = store.save_session(&tenant_id, &session_id, &messages).await {
+                if let Err(e) = store.save_session(&tenant_id, &session_id, &entries).await {
                     warn!(
                         tenant_id = %tenant_id,
                         session_id = %session_id,
@@ -222,7 +244,85 @@ impl SessionActor {
             });
         }
 
+        // Check for auto-compaction after the run
+        if let Err(e) = self.check_and_compact(None).await {
+            warn!(
+                tenant_id = %self.tenant_id,
+                session_id = %self.session_id,
+                error = %e,
+                "auto-compaction failed",
+            );
+        }
+
         Ok(all_new_messages)
+    }
+
+    /// Check if compaction should trigger and execute it.
+    async fn check_and_compact(
+        &mut self,
+        custom_instructions: Option<&str>,
+    ) -> Result<Option<CompactionResult>, AgentError> {
+        let messages = self.messages();
+        let estimate = estimate_context_tokens(&messages);
+
+        if !should_compact(estimate.tokens, self.context_window, &self.compaction_settings) {
+            return Ok(None);
+        }
+
+        let preparation = prepare_compaction(&self.entries, &self.compaction_settings)
+            .ok_or_else(|| AgentError::ToolExecutionFailed("Failed to prepare compaction".to_string()))?;
+
+        let result = compact_inner(
+            &preparation,
+            self.provider.as_ref(),
+            &self.model,
+            self.compaction_settings.reserve_tokens,
+            custom_instructions,
+            self.abort_token.child_token(),
+        ).await?;
+
+        // Append compaction entry
+        let entry_id = self.next_entry_id;
+        self.next_entry_id += 1;
+        self.entries.push(SessionEntry {
+            id: entry_id,
+            kind: SessionEntryKind::Compaction(CompactionEntry {
+                summary: result.summary.clone(),
+                first_kept_entry_id: result.first_kept_entry_id,
+                tokens_before: result.tokens_before,
+                timestamp: std::time::SystemTime::now(),
+                details: result.details.clone(),
+            }),
+        });
+
+        info!(
+            tenant_id = %self.tenant_id,
+            session_id = %self.session_id,
+            first_kept_id = result.first_kept_entry_id,
+            tokens_before = result.tokens_before,
+            "compaction completed",
+        );
+
+        Ok(Some(result))
+    }
+
+    /// Manually trigger compaction with optional custom instructions.
+    pub async fn compact(
+        &mut self,
+        custom_instructions: Option<String>,
+    ) -> Result<CompactionResult, AgentError> {
+        self.check_and_compact(custom_instructions.as_deref()).await?
+            .ok_or_else(|| AgentError::ToolExecutionFailed("Compaction not applicable".to_string()))
+    }
+
+    /// Push a message into the session history, assigning the next entry id.
+    fn push_message(&mut self, msg: AgentMessage) {
+        let id = self.next_entry_id;
+        self.next_entry_id += 1;
+        self.entries.push(SessionEntry {
+            id,
+            kind: SessionEntryKind::Message(msg),
+        });
     }
 
     /// Queue a steering message (injected before next LLM call in current run)
@@ -242,7 +342,7 @@ impl SessionActor {
     /// have completed. Returns `Ok(())` if no store is configured.
     pub async fn flush(&self) -> Result<(), AgentError> {
         if let Some(ref store) = self.store {
-            store.save_session(&self.tenant_id, &self.session_id, &self.messages).await?;
+            store.save_session(&self.tenant_id, &self.session_id, &self.entries).await?;
             info!(
                 tenant_id = %self.tenant_id,
                 session_id = %self.session_id,
@@ -262,9 +362,23 @@ impl SessionActor {
         self.abort_token.cancel();
     }
 
-    /// Get the current message history
-    pub fn messages(&self) -> &[AgentMessage] {
-        &self.messages
+    /// Return all message entries (filtering out compaction metadata).
+    ///
+    /// This is a convenience method for consumers that only need the
+    /// LLM-visible messages.
+    pub fn messages(&self) -> Vec<AgentMessage> {
+        self.entries
+            .iter()
+            .filter_map(|e| match &e.kind {
+                SessionEntryKind::Message(m) => Some(m.clone()),
+                SessionEntryKind::Compaction(_) => None,
+            })
+            .collect()
+    }
+
+    /// Return the full session history including compaction entries.
+    pub fn entries(&self) -> &[SessionEntry] {
+        &self.entries
     }
 
     /// Get the tenant ID
@@ -301,7 +415,7 @@ mod tests {
             _options: llm_client::StreamOptions,
             _signal: CancellationToken,
         ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-            let (mut stream, tx) = llm_client::AssistantMessageEventStream::new(4);
+            let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
 
             let partial = llm_client::AssistantMessage {
                 content: vec![Content::Text {
@@ -355,7 +469,7 @@ mod tests {
 
     /// In-memory store for testing persistence
     struct MemoryStore {
-        data: Mutex<Vec<(String, String, Vec<AgentMessage>)>>,
+        data: Mutex<Vec<(String, String, Vec<SessionEntry>)>>,
     }
 
     impl MemoryStore {
@@ -370,12 +484,12 @@ mod tests {
             &self,
             tenant_id: &str,
             session_id: &str,
-            messages: &[AgentMessage],
+            entries: &[SessionEntry],
         ) -> Result<(), AgentError> {
             self.data.lock().unwrap().push((
                 tenant_id.to_string(),
                 session_id.to_string(),
-                messages.to_vec(),
+                entries.to_vec(),
             ));
             Ok(())
         }
@@ -384,7 +498,7 @@ mod tests {
             &self,
             tenant_id: &str,
             session_id: &str,
-        ) -> Result<Vec<AgentMessage>, AgentError> {
+        ) -> Result<Vec<SessionEntry>, AgentError> {
             let data = self.data.lock().unwrap();
             let msgs = data
                 .iter()
@@ -411,9 +525,11 @@ mod tests {
             "s1".to_string(),
             "prompt".to_string(),
             "echo".to_string(),
+            128_000, // context_window
             provider,
             dispatcher,
             vec![],
+            None,
             None,
         );
 
@@ -431,9 +547,11 @@ mod tests {
             "s1".to_string(),
             "You are helpful.".to_string(),
             "echo".to_string(),
+            128_000,
             provider,
             dispatcher,
             vec![],
+            None,
             None,
         );
 
@@ -473,9 +591,11 @@ mod tests {
             "s1".to_string(),
             "You are helpful.".to_string(),
             "echo".to_string(),
+            128_000,
             provider,
             dispatcher,
             vec![],
+            None,
             None,
         );
 
@@ -515,10 +635,6 @@ mod tests {
         }
         }
 
-        fn format_err(msg: &str) -> String {
-            format!("provider error: {}", msg)
-        }
-
         let provider = Arc::new(SlowProvider);
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(
@@ -526,9 +642,11 @@ mod tests {
             "s1".to_string(),
             "prompt".to_string(),
             "slow".to_string(),
+            128_000,
             provider,
             dispatcher,
             vec![],
+            None,
             None,
         );
 
@@ -542,7 +660,7 @@ mod tests {
             // Can't move session, so we'll test abort via CancellationToken directly
             async move {
                 // Just verify the pattern works
-                handle.await;
+                let _ = handle.await;
                 Ok::<_, AgentError>(())
             }
         });
@@ -570,10 +688,12 @@ mod tests {
             "s1".to_string(),
             "prompt".to_string(),
             "echo".to_string(),
+            128_000,
             provider,
             dispatcher,
             vec![],
             Some(store.clone()),
+            None,
         );
 
         // No messages yet, flush should save empty
