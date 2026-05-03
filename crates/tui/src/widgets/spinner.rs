@@ -4,7 +4,7 @@ use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_INTERVAL_MS: u64 = 80;
 
 pub struct SpinnerWidget { pub frame_index: usize }
@@ -18,6 +18,10 @@ impl SpinnerWidget {
         let frame = SPINNER_FRAMES[self.frame_index];
         f.render_widget(Paragraph::new(Span::styled(frame, Style::default())), area);
     }
+}
+
+impl Default for SpinnerWidget {
+    fn default() -> Self { Self::new() }
 }
 
 #[cfg(test)]

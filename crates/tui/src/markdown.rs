@@ -17,6 +17,7 @@ pub fn render_markdown(text: &str, theme: &Theme) -> Vec<Line<'static>> {
     let mut code_lang: Option<String> = None;
     let mut code_buffer = String::new();
     let mut current_style = theme.body();
+    let mut style_stack: Vec<ratatui::style::Style> = Vec::new();
 
     for event in parser {
         match event {
@@ -48,10 +49,20 @@ pub fn render_markdown(text: &str, theme: &Theme) -> Vec<Line<'static>> {
             Event::Start(Tag::BlockQuote(_)) => {
                 current_line.push(Span::styled("│ ", theme.muted()));
             }
-            Event::Start(Tag::Strong) => { current_style = current_style.add_modifier(ratatui::style::Modifier::BOLD); }
-            Event::End(TagEnd::Strong) => { current_style = theme.body(); }
-            Event::Start(Tag::Emphasis) => { current_style = current_style.add_modifier(ratatui::style::Modifier::ITALIC); }
-            Event::End(TagEnd::Emphasis) => { current_style = theme.body(); }
+            Event::Start(Tag::Strong) => {
+                style_stack.push(current_style);
+                current_style = current_style.add_modifier(ratatui::style::Modifier::BOLD);
+            }
+            Event::End(TagEnd::Strong) => {
+                if let Some(prev) = style_stack.pop() { current_style = prev; }
+            }
+            Event::Start(Tag::Emphasis) => {
+                style_stack.push(current_style);
+                current_style = current_style.add_modifier(ratatui::style::Modifier::ITALIC);
+            }
+            Event::End(TagEnd::Emphasis) => {
+                if let Some(prev) = style_stack.pop() { current_style = prev; }
+            }
             Event::Start(Tag::Link { dest_url, .. }) => {
                 let url = if dest_url.len() > 60 { format!("{}…", &dest_url[..57]) } else { dest_url.to_string() };
                 current_line.push(Span::styled(format!(" ({})", url), theme.link()));

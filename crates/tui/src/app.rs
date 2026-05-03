@@ -43,6 +43,7 @@ pub struct App {
     pub input_tokens: u64,
     pub server_rx: Option<mpsc::Receiver<ServerEvent>>,
     pub scroll_offset: usize,
+    pub user_scrolled_up: bool,
     pub running: bool,
 }
 
@@ -66,6 +67,7 @@ impl App {
             input_tokens: 0,
             server_rx: None,
             scroll_offset: 0,
+            user_scrolled_up: false,
             running: true,
         }
     }
@@ -74,6 +76,17 @@ impl App {
         // Overlays take priority
         if !self.overlays.is_empty() {
             if let Some(overlay) = self.overlays.top_mut() {
+                // Non-capturing overlays dismiss on any printable input
+                if !overlay.is_capturing() {
+                    use crossterm::event::KeyCode;
+                    match key.code {
+                        KeyCode::Char(_) | KeyCode::Enter => {
+                            self.overlays.pop();
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
                 let action = overlay.handle_input(key);
                 match action {
                     OverlayAction::Dismiss => {
@@ -98,7 +111,7 @@ impl App {
             KeyCode::Enter => self.submit_input(),
             KeyCode::Esc => {
                 if self.state == AppState::Busy {
-                    let rest = RestClient::new(&self.config.server);
+                    let rest = self.rest.clone();
                     let token = self.config.auth.token.clone().unwrap_or_default();
                     let sid = self.data.active_session.clone();
                     tokio::spawn(async move {
@@ -127,12 +140,20 @@ impl App {
             KeyCode::Right => self.input.move_cursor_right(),
             KeyCode::Home => self.input.move_cursor_home(),
             KeyCode::End => self.input.move_cursor_end(),
+            KeyCode::PageUp => {
+                self.scroll_offset = self.scroll_offset.saturating_add(5);
+                self.user_scrolled_up = true;
+            }
+            KeyCode::PageDown => {
+                if self.scroll_offset >= 5 { self.scroll_offset -= 5; }
+                if self.scroll_offset == 0 { self.user_scrolled_up = false; }
+            }
             KeyCode::Char(c) => {
                 if key.modifiers == KeyModifiers::CONTROL {
                     match c {
                         'c' => {
                             if self.state == AppState::Busy {
-                                let rest = RestClient::new(&self.config.server);
+                                let rest = self.rest.clone();
                                 let token = self.config.auth.token.clone().unwrap_or_default();
                                 let sid = self.data.active_session.clone();
                                 tokio::spawn(async move {
@@ -220,7 +241,7 @@ impl App {
                     self.data.active_session_mut().messages.clear();
                 }
                 Command::NewSession { title } => {
-                    let rest = RestClient::new(&self.config.server);
+                    let rest = self.rest.clone();
                     let token = self.config.auth.token.clone().unwrap_or_default();
                     tokio::spawn(async move {
                         let _ = rest.create_session(title.as_deref(), &token).await;
@@ -332,6 +353,7 @@ impl App {
         });
 
         self.state = AppState::Busy;
+        self.user_scrolled_up = false;
     }
 
     pub fn handle_server_event(&mut self, event: ServerEvent) {
@@ -342,8 +364,9 @@ impl App {
                 if let Some(ref mut buf) = session.streaming {
                     buf.text_content.push_str(&delta);
                 }
-                if let Some(last) = session.messages.last_mut() {
-                    if let Some(ref buf) = session.streaming {
+                if let Some(last) = session.messages.last_mut()
+                    && let Some(ref buf) = session.streaming
+                {
                         let line = ratatui::text::Line::from(buf.text_content.clone());
                         let mut found = false;
                         for block in &mut last.blocks {
@@ -353,12 +376,11 @@ impl App {
                                 break;
                             }
                         }
-                        if !found {
-                            last.blocks.push(MessageBlock::Text(vec![line]));
-                        }
+                    if !found {
+                        last.blocks.push(MessageBlock::Text(vec![line]));
                     }
                 }
-                self.scroll_offset = 0;
+                if !self.user_scrolled_up { self.scroll_offset = 0; }
             }
             ServerEvent::ThinkingDelta {
                 content_index: _,
@@ -389,7 +411,7 @@ impl App {
                         }));
                     }
                 }
-                self.scroll_offset = 0;
+                if !self.user_scrolled_up { self.scroll_offset = 0; }
             }
             ServerEvent::ToolCallStarted { call_id, name } => {
                 let tc = ToolCallWidget {
@@ -405,7 +427,7 @@ impl App {
                 if let Some(last) = session.messages.last_mut() {
                     last.blocks.push(MessageBlock::ToolCall(tc));
                 }
-                self.scroll_offset = 0;
+                if !self.user_scrolled_up { self.scroll_offset = 0; }
             }
             ServerEvent::ToolCallDelta { call_id, delta } => {
                 if let Some(ref mut buf) = session.streaming {
@@ -422,8 +444,9 @@ impl App {
             } => {
                 if let Some(last) = session.messages.last_mut() {
                     for block in &mut last.blocks {
-                        if let MessageBlock::ToolCall(tc) = block {
-                            if tc.call_id == call_id {
+                        if let MessageBlock::ToolCall(tc) = block
+                            && tc.call_id == call_id
+                        {
                                 tc.state = if is_error {
                                     ToolCallState::Error
                                 } else {
@@ -434,7 +457,6 @@ impl App {
                                         vec![ratatui::text::Line::from(r.clone())];
                                 }
                                 break;
-                            }
                         }
                     }
                 }

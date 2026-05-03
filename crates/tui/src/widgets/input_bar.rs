@@ -49,6 +49,10 @@ impl InputBar {
     }
 }
 
+impl Default for InputBar {
+    fn default() -> Self { Self::new() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

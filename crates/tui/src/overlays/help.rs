@@ -8,6 +8,12 @@ use ratatui::Frame;
 
 pub struct HelpOverlay { lines: Vec<Line<'static>> }
 
+impl Default for HelpOverlay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HelpOverlay {
     pub fn new() -> Self {
         let text = [

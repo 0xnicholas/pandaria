@@ -16,6 +16,12 @@ pub enum OverlayAction { Consumed, Dismiss, Confirm(String), Ignored }
 
 pub struct OverlayStack { overlays: Vec<Box<dyn Overlay>> }
 
+impl Default for OverlayStack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OverlayStack {
     pub fn new() -> Self { Self { overlays: Vec::new() } }
     pub fn push(&mut self, overlay: Box<dyn Overlay>) { self.overlays.push(overlay); }

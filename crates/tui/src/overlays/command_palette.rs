@@ -14,6 +14,12 @@ const COMMANDS: &[(&str, &str)] = &[
 
 pub struct CommandPalette { filter: String, selected: usize }
 
+impl Default for CommandPalette {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandPalette {
     pub fn new() -> Self { Self { filter: String::new(), selected: 0 } }
     fn filtered(&self) -> Vec<(&'static str, &'static str)> {

@@ -10,6 +10,7 @@ use ratatui::Frame;
 pub struct StatusBar;
 
 impl StatusBar {
+    #[allow(clippy::too_many_arguments)]
     pub fn render(f: &mut Frame, area: Rect, theme: &Theme, connection: &ConnectionStatus, busy: bool, spinner: &SpinnerWidget, input_tokens: u64, context_window: Option<u64>, model: &str) {
         if area.width < 20 { return; }
         let conn_icon = match connection {
@@ -18,8 +19,7 @@ impl StatusBar {
             ConnectionStatus::Reconnecting => Span::styled("↻", Style::default().fg(theme.warning)),
         };
         let center = if busy {
-            let frames = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
-            Span::styled(frames[spinner.frame_index].to_string(), Style::default().fg(theme.accent))
+            Span::styled(crate::widgets::spinner::SPINNER_FRAMES[spinner.frame_index].to_string(), Style::default().fg(theme.accent))
         } else {
             Span::styled(model.to_string(), Style::default().fg(theme.muted))
         };

@@ -31,12 +31,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .list_sessions(&token)
         .await
         .map_err(|e| format!("Failed to list sessions: {}", e))?;
-    let session_info = if sessions.is_empty() {
+    let session_info = if let Some(first) = sessions.into_iter().next() {
+        first
+    } else {
         rest.create_session(None, &token)
             .await
             .map_err(|e| format!("Failed to create session: {}", e))?
-    } else {
-        sessions.into_iter().next().unwrap()
     };
 
     let mut stdout = io::stdout();
