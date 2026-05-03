@@ -197,10 +197,57 @@ impl OpenAiProvider {
         }
 
         // Reasoning / thinking_format
-        if let Some(level) = options.reasoning {
-            let effort = map_reasoning_effort(level);
-            // Default to OpenAI format — compat layer integration in future phase
-            body["reasoning_effort"] = serde_json::json!(effort);
+        // Step 1: XHigh clamp check
+        let effective_reasoning = if options.reasoning == Some(crate::provider::ReasoningLevel::XHigh)
+            && !crate::models::supports_xhigh(model)
+        {
+            Some(crate::provider::ReasoningLevel::High)
+        } else {
+            options.reasoning
+        };
+
+        // Step 2: Read model compat thinking_format
+        let compat = match crate::models::get_model("openai", model) {
+            Some(m) => match &m.compat {
+                crate::models::ModelCompat::OpenAI(c) => c.clone(),
+                _ => crate::compat::OpenAiCompat::default(),
+            },
+            None => crate::compat::OpenAiCompat::default(),
+        };
+
+        // Step 3: Branch by thinking_format
+        if let Some(level) = effective_reasoning {
+            match compat.thinking_format {
+                Some(crate::compat::ThinkingFormat::OpenAI) | None => {
+                    let effort = map_reasoning_effort(level);
+                    body["reasoning_effort"] = serde_json::json!(effort);
+                }
+                Some(crate::compat::ThinkingFormat::OpenRouter) => {
+                    let effort = map_reasoning_effort(level);
+                    body["reasoning"] = serde_json::json!({ "effort": effort });
+                }
+                Some(crate::compat::ThinkingFormat::DeepSeek) => {
+                    body["thinking"] = serde_json::json!({ "type": "enabled" });
+                    let effort = if level == crate::provider::ReasoningLevel::XHigh {
+                        "max"
+                    } else {
+                        map_reasoning_effort(level)
+                    };
+                    body["reasoning_effort"] = serde_json::json!(effort);
+                }
+                Some(crate::compat::ThinkingFormat::Zai) => {
+                    body["enable_thinking"] = serde_json::json!(true);
+                }
+                Some(crate::compat::ThinkingFormat::Qwen) => {
+                    body["enable_thinking"] = serde_json::json!(true);
+                }
+                Some(crate::compat::ThinkingFormat::QwenChatTemplate) => {
+                    body["chat_template_kwargs"] = serde_json::json!({
+                        "enable_thinking": true,
+                        "preserve_thinking": true,
+                    });
+                }
+            }
         }
 
         // on_payload hook
