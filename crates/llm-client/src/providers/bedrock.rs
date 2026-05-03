@@ -3,9 +3,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
 use crate::provider::LlmProvider;
-use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
-use crate::types::{Api, LlmContext};
+use crate::streaming::AssistantMessageEventStream;
+use crate::types::LlmContext;
 
+#[allow(dead_code)]
 pub struct AwsBedrockProvider {
     client: aws_sdk_bedrockruntime::Client,
     region: String,
@@ -14,7 +15,7 @@ pub struct AwsBedrockProvider {
 impl AwsBedrockProvider {
     pub async fn new(region: impl Into<String>) -> Self {
         let region = region.into();
-        let config = aws_config::from_env()
+        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(aws_sdk_bedrockruntime::config::Region::new(region.clone()))
             .load()
             .await;
@@ -51,7 +52,7 @@ impl LlmProvider for AwsBedrockProvider {
         _options: crate::provider::StreamOptions,
         _signal: CancellationToken,
     ) -> Result<AssistantMessageEventStream, LlmError> {
-        let (stream, _tx) = AssistantMessageEventStream::new(32);
+        let (_stream, _tx) = AssistantMessageEventStream::new(32);
         // TODO: Implement Bedrock ConverseStream integration
         // This is a placeholder - full implementation will handle:
         // - Message conversion (system, user, assistant, tool_result)
