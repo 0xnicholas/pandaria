@@ -36,20 +36,22 @@ Note: This library only includes models that support tool calling (function call
 | `retry` | `with_retry` |
 | `cache` | `CacheRetention` |
 | `hooks` | `OnPayloadFn`、`OnResponseFn`、`ProviderResponse` |
+| `oauth` | `OAuthToken`、`OAuthProvider`、`is_expired`、`resolve_oauth_key` |
 
 ## Provider 实现状态
 
 | Provider | 文件 | 状态 | 特性 |
 |---|---|---|---|
-| Anthropic | `providers/anthropic.rs` | 完整 | SSE + cache_control + thinking + beta headers |
-| OpenAI | `providers/openai.rs` | 完整 | SSE + reasoning + prompt_cache_key + thinking_format 映射 |
-| Google | `providers/google.rs` | 完整 | JSON stream + x-goog-api-key |
-| Mistral | `providers/mistral.rs` | 待实现 | — |
-| AWS Bedrock | `providers/bedrock.rs` | 待实现 | 可选 feature `bedrock` |
+| Anthropic | `providers/anthropic.rs` | 完整 | SSE + cache_control + thinking + beta headers + OAuth |
+| OpenAI | `providers/openai.rs` | 完整 | SSE + reasoning + prompt_cache_key + thinking_format 映射 + OAuth |
+| Google | `providers/google.rs` | 完整 | JSON stream + x-goog-api-key + OAuth |
+| Mistral | `providers/mistral.rs` | 完整 | SSE + tool_call_id 截断 + reasoning + OAuth |
+| AWS Bedrock | `providers/bedrock.rs` | 占位 | 可选 feature `bedrock`（ConverseStream 待实现） |
 
 ## 边界
 
 - **不实现**具体的 OAuth 流程（Browser OAuth / Device code 等留到后续版本）
+- **Bedrock** 为占位实现，仅包含模型列表和基础结构
 - 所有类型支持 `serde` 序列化/反序列化
 - 所有公开 API 均有文档注释
 
@@ -73,4 +75,4 @@ cargo test -p llm-client
 cargo clippy -p llm-client --all-features -- -D warnings
 ```
 
-当前测试覆盖：~170 个测试全部通过（87 单元测试 + 83 集成测试）。
+当前测试覆盖：~184 个测试全部通过（95 单元测试 + 89 集成测试）。
