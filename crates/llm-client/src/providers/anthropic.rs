@@ -79,7 +79,12 @@ impl LlmProvider for AnthropicProvider {
         options: crate::provider::StreamOptions,
         signal: CancellationToken,
     ) -> Result<AssistantMessageEventStream, LlmError> {
-        let api_key = self.resolve_api_key(&options)?;
+        // Try OAuth first, fall back to static key on any failure
+        let api_key = if let Some(key) = resolve_oauth_key(&self.oauth_provider).await {
+            key
+        } else {
+            self.resolve_api_key(&options)?
+        };
         let (stream, tx) = AssistantMessageEventStream::new(32);
         let client = self.client.clone();
         let model = model.to_string();

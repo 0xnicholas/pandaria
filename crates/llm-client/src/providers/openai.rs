@@ -3,6 +3,7 @@ use secrecy::{ExposeSecret, SecretString};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
+use crate::oauth::resolve_oauth_key;
 use crate::provider::LlmProvider;
 use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
 use crate::types::{Api, LlmContext};
@@ -11,6 +12,7 @@ pub struct OpenAiProvider {
     client: reqwest::Client,
     api_key: Option<SecretString>,
     base_url: String,
+    oauth_provider: Option<std::sync::Arc<dyn crate::oauth::OAuthProvider>>,
 }
 
 impl OpenAiProvider {
@@ -27,7 +29,16 @@ impl OpenAiProvider {
             client,
             api_key,
             base_url: base_url.to_string(),
+            oauth_provider: None,
         }
+    }
+
+    pub fn with_oauth(
+        mut self,
+        oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,
+    ) -> Self {
+        self.oauth_provider = Some(oauth);
+        self
     }
 
     fn resolve_api_key(
@@ -68,7 +79,12 @@ impl LlmProvider for OpenAiProvider {
         options: crate::provider::StreamOptions,
         signal: CancellationToken,
     ) -> Result<AssistantMessageEventStream, LlmError> {
-        let api_key = self.resolve_api_key(&options)?;
+        // Try OAuth first, fall back to static key on any failure
+        let api_key = if let Some(key) = resolve_oauth_key(&self.oauth_provider).await {
+            key
+        } else {
+            self.resolve_api_key(&options)?
+        };
         let (stream, tx) = AssistantMessageEventStream::new(32);
         let client = self.client.clone();
         let model = model.to_string();
