@@ -1,4 +1,4 @@
-use crate::types::{Content, ToolCall, ToolDef};
+use crate::types::{Content, ToolCall};
 
 /// Extract all ToolCall entries from content blocks.
 pub fn extract_tool_calls(content: &[Content]) -> Vec<ToolCall> {
@@ -11,11 +11,6 @@ pub fn extract_tool_calls(content: &[Content]) -> Vec<ToolCall> {
         .collect()
 }
 
-/// Build a Vec<ToolDef> from a tool definition slice.
-/// Equivalent to `tools.to_vec()` but with semantic naming.
-pub fn build_tool_defs(tools: &[ToolDef]) -> Vec<ToolDef> {
-    tools.to_vec()
-}
 
 #[cfg(test)]
 mod tests {
@@ -50,22 +45,5 @@ mod tests {
         assert_eq!(calls[0].name, "read");
     }
 
-    #[test]
-    fn test_build_tool_defs() {
-        let tools = vec![
-            ToolDef {
-                name: "read".to_string(),
-                description: "reads".to_string(),
-                parameters: serde_json::json!({}),
-            },
-            ToolDef {
-                name: "write".to_string(),
-                description: "writes".to_string(),
-                parameters: serde_json::json!({}),
-            },
-        ];
-        let defs = build_tool_defs(&tools);
-        assert_eq!(defs.len(), 2);
-        assert_eq!(defs[0].name, "read");
-    }
+
 }

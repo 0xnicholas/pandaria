@@ -40,5 +40,5 @@ pub use repair::{StreamingJsonParser, parse_json_with_repair, repair_json, sanit
 pub use retry::with_retry;
 pub use streaming::*;
 pub use types::*;
-pub use util::{build_tool_defs, extract_tool_calls};
+pub use util::extract_tool_calls;
 pub use validation::{ValidationError, validate_tool_arguments, validate_tool_call};
