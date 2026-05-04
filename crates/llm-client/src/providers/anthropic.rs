@@ -1,139 +1,21 @@
-use async_trait::async_trait;
 use secrecy::{ExposeSecret, SecretString};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
-use crate::oauth::resolve_oauth_key;
+#[cfg(test)]
 use crate::provider::LlmProvider;
-use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
+use crate::streaming::AssistantMessageEvent;
 use crate::types::{Api, LlmContext};
 
-/// Anthropic Claude provider via the Messages API.
-///
-/// Supports SSE streaming, cache control, adaptive thinking,
-/// and fine-grained tool input streaming for Claude 4+ models.
-/// Requires `ANTHROPIC_API_KEY` environment variable or explicit API key.
-pub struct AnthropicProvider {
-    client: reqwest::Client,
-    api_key: Option<SecretString>,
-    base_url: String,
-    oauth_provider: Option<std::sync::Arc<dyn crate::oauth::OAuthProvider>>,
-}
-
-impl AnthropicProvider {
-    /// Create a new Anthropic provider with the default API endpoint.
-    pub fn new(api_key: Option<SecretString>) -> Self {
-        Self::with_base_url(api_key, "https://api.anthropic.com/v1/messages")
-    }
-
-    /// Create a new Anthropic provider with a custom base URL.
-    pub fn with_base_url(api_key: Option<SecretString>, base_url: &str) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .expect("reqwest client should build");
-        Self {
-            client,
-            api_key,
-            base_url: base_url.to_string(),
-            oauth_provider: None,
-        }
-    }
-
-    /// Attach an OAuth provider for automatic token management.
-    pub fn with_oauth(
-        mut self,
-        oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,
-    ) -> Self {
-        self.oauth_provider = Some(oauth);
-        self
-    }
-
-    fn resolve_api_key(
-        &self,
-        options: &crate::provider::StreamOptions,
-    ) -> Result<SecretString, LlmError> {
-        if let Some(key) = &options.api_key {
-            return Ok(key.clone());
-        }
-        if let Some(key) = &self.api_key {
-            return Ok(key.clone());
-        }
-        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            return Ok(SecretString::new(key.into_boxed_str()));
-        }
-        Err(LlmError::AuthError("ANTHROPIC_API_KEY not set".to_string()))
-    }
-}
-
-#[async_trait]
-impl LlmProvider for AnthropicProvider {
-    fn provider_name(&self) -> &str {
-        "anthropic"
-    }
-
-    fn models(&self) -> Vec<String> {
-        vec![
-            "claude-sonnet-4-20250514".to_string(),
-            "claude-opus-4-7".to_string(),
-            "claude-haiku-4-7".to_string(),
-        ]
-    }
-
-    async fn stream(
-        &self,
-        model: &str,
-        context: LlmContext,
-        options: crate::provider::StreamOptions,
-        signal: CancellationToken,
-    ) -> Result<AssistantMessageEventStream, LlmError> {
-        // Try OAuth first, fall back to static key on any failure
-        let api_key = if let Some(key) = resolve_oauth_key(&self.oauth_provider).await {
-            key
-        } else {
-            self.resolve_api_key(&options)?
-        };
-        let (stream, tx) = AssistantMessageEventStream::new(32);
-        let client = self.client.clone();
-        let model = model.to_string();
-
-        let base_url = self.base_url.clone();
-        tokio::spawn(async move {
-            let result = Self::try_stream(
-                client, base_url, &model, context, options, &tx, api_key, signal,
-            )
-            .await;
-            if let Err(e) = result {
-                let _ = tx
-                    .send(AssistantMessageEvent::Error {
-                        error: crate::AssistantMessage {
-                            content: vec![],
-                            provider: "anthropic".to_string(),
-                            model: model.clone(),
-                            api: Api {
-                                provider: "anthropic".to_string(),
-                                model,
-                            },
-                            usage: crate::Usage {
-                                input_tokens: 0,
-                                output_tokens: 0,
-                                cache_creation_input_tokens: None,
-                                cache_read_input_tokens: None,
-                                total_tokens: 0,
-                            },
-                            stop_reason: crate::StopReason::Error,
-                            response_id: None,
-                            error_message: Some(e.to_string()),
-                            timestamp: std::time::SystemTime::now(),
-                        },
-                    })
-                    .await;
-            }
-        });
-
-        Ok(stream)
-    }
-}
+crate::providers::shared::define_provider!(
+    AnthropicProvider,
+    "anthropic",
+    "ANTHROPIC_API_KEY",
+    "https://api.anthropic.com/v1/messages",
+    "claude-sonnet-4-20250514",
+    "claude-opus-4-7",
+    "claude-haiku-4-7"
+);
 
 impl AnthropicProvider {
     #[allow(clippy::too_many_arguments)]

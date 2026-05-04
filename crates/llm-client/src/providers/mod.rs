@@ -1,3 +1,6 @@
+#[macro_use]
+pub mod shared;
+
 pub mod anthropic;
 pub mod google;
 pub mod mistral;

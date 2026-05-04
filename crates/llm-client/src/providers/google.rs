@@ -1,137 +1,21 @@
-use async_trait::async_trait;
 use secrecy::{ExposeSecret, SecretString};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
-use crate::oauth::resolve_oauth_key;
+#[cfg(test)]
 use crate::provider::LlmProvider;
-use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
+use crate::streaming::AssistantMessageEvent;
 use crate::types::{Api, LlmContext};
 
-/// Google Gemini provider via the Generative Language API.
-///
-/// Supports JSON stream via SSE, `x-goog-api-key` authentication,
-/// `functionDeclarations` for tool calling, and thoughts via `part["thought"]`.
-/// Requires `GOOGLE_API_KEY` environment variable or explicit API key.
-pub struct GoogleProvider {
-    client: reqwest::Client,
-    api_key: Option<SecretString>,
-    base_url: String,
-    oauth_provider: Option<std::sync::Arc<dyn crate::oauth::OAuthProvider>>,
-}
-
-impl GoogleProvider {
-    /// Create a new Google provider with the default API endpoint.
-    pub fn new(api_key: Option<SecretString>) -> Self {
-        Self::with_base_url(api_key, "https://generativelanguage.googleapis.com/v1beta")
-    }
-
-    /// Create a new Google provider with a custom base URL.
-    pub fn with_base_url(api_key: Option<SecretString>, base_url: &str) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .expect("reqwest client should build");
-        Self {
-            client,
-            api_key,
-            base_url: base_url.to_string(),
-            oauth_provider: None,
-        }
-    }
-
-    /// Attach an OAuth provider for automatic token management.
-    pub fn with_oauth(
-        mut self,
-        oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,
-    ) -> Self {
-        self.oauth_provider = Some(oauth);
-        self
-    }
-
-    fn resolve_api_key(
-        &self,
-        options: &crate::provider::StreamOptions,
-    ) -> Result<SecretString, LlmError> {
-        if let Some(key) = &options.api_key {
-            return Ok(key.clone());
-        }
-        if let Some(key) = &self.api_key {
-            return Ok(key.clone());
-        }
-        if let Ok(key) = std::env::var("GOOGLE_API_KEY") {
-            return Ok(SecretString::new(key.into_boxed_str()));
-        }
-        Err(LlmError::AuthError("GOOGLE_API_KEY not set".to_string()))
-    }
-}
-
-#[async_trait]
-impl LlmProvider for GoogleProvider {
-    fn provider_name(&self) -> &str {
-        "google"
-    }
-
-    fn models(&self) -> Vec<String> {
-        vec![
-            "gemini-2.5-pro".to_string(),
-            "gemini-2.5-flash".to_string(),
-            "gemini-3.0-flash".to_string(),
-        ]
-    }
-
-    async fn stream(
-        &self,
-        model: &str,
-        context: LlmContext,
-        options: crate::provider::StreamOptions,
-        signal: CancellationToken,
-    ) -> Result<AssistantMessageEventStream, LlmError> {
-        // Try OAuth first, fall back to static key on any failure
-        let api_key = if let Some(key) = resolve_oauth_key(&self.oauth_provider).await {
-            key
-        } else {
-            self.resolve_api_key(&options)?
-        };
-        let (stream, tx) = AssistantMessageEventStream::new(32);
-        let client = self.client.clone();
-        let model = model.to_string();
-        let base_url = self.base_url.clone();
-
-        tokio::spawn(async move {
-            let result =
-                Self::try_stream(client, base_url, &model, context, options, &tx, api_key, signal).await;
-            if let Err(e) = result {
-                let _ = tx
-                    .send(AssistantMessageEvent::Error {
-                        error: crate::AssistantMessage {
-                            content: vec![],
-                            provider: "google".to_string(),
-                            model: model.clone(),
-                            api: Api {
-                                provider: "google".to_string(),
-                                model,
-                            },
-                            usage: crate::Usage {
-                                input_tokens: 0,
-                                output_tokens: 0,
-                                cache_creation_input_tokens: None,
-                                cache_read_input_tokens: None,
-                                total_tokens: 0,
-                            },
-                            stop_reason: crate::StopReason::Error,
-                            response_id: None,
-                            error_message: Some(e.to_string()),
-                            timestamp: std::time::SystemTime::now(),
-                        },
-                    })
-                    .await;
-            }
-        });
-
-        Ok(stream)
-    }
-}
+crate::providers::shared::define_provider!(
+    GoogleProvider,
+    "google",
+    "GOOGLE_API_KEY",
+    "https://generativelanguage.googleapis.com/v1beta",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-3.0-flash"
+);
 
 impl GoogleProvider {
     #[allow(clippy::too_many_arguments)]
