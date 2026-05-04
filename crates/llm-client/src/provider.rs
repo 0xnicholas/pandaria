@@ -40,18 +40,12 @@ pub fn adjust_max_tokens_for_thinking(
         high: Some(16384),
     };
     let budgets = custom_budgets.unwrap_or(&default_budgets);
-    let level = if reasoning_level == ReasoningLevel::XHigh {
-        ReasoningLevel::High
-    } else {
-        reasoning_level
-    };
 
-    let thinking_budget = match level {
+    let thinking_budget = match reasoning_level {
         ReasoningLevel::Minimal => budgets.minimal.unwrap_or(1024),
         ReasoningLevel::Low => budgets.low.unwrap_or(2048),
         ReasoningLevel::Medium => budgets.medium.unwrap_or(8192),
-        ReasoningLevel::High => budgets.high.unwrap_or(16384),
-        ReasoningLevel::XHigh => 16384,
+        ReasoningLevel::High | ReasoningLevel::XHigh => budgets.high.unwrap_or(16384),
     };
 
     let min_output_tokens: u32 = 1024;
