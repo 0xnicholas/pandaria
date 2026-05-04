@@ -18,8 +18,8 @@ pub struct TransformOptions {
 /// 2. Thinking block handling (§25.5)
 /// 3. Tool call ID normalization (§25.3)
 /// 4. Orphan tool call padding (§25.6)
-pub fn transform_messages(messages: &[Message], options: &TransformOptions) -> Vec<Message> {
-    let mut result: Vec<Message> = messages.to_vec();
+pub fn transform_messages(messages: Vec<Message>, options: &TransformOptions) -> Vec<Message> {
+    let mut result: Vec<Message> = messages;
 
     // 1. Image downgrade
     if !options.supports_images {
@@ -237,7 +237,7 @@ mod tests {
             }),
         ];
         let result = transform_messages(
-            &messages,
+            messages,
             &TransformOptions {
                 preserve_thinking: true,
                 ..Default::default()
@@ -273,7 +273,7 @@ mod tests {
             timestamp: std::time::SystemTime::now(),
         })];
         let result = transform_messages(
-            &messages,
+            messages,
             &TransformOptions {
                 preserve_thinking: true,
                 ..Default::default()
@@ -296,7 +296,7 @@ mod tests {
             timestamp: std::time::SystemTime::now(),
         })];
         let result = transform_messages(
-            &messages,
+            messages,
             &TransformOptions {
                 supports_images: true,
                 preserve_thinking: true,
@@ -343,7 +343,7 @@ mod tests {
             timestamp: std::time::SystemTime::now(),
         })];
         let result = transform_messages(
-            &messages,
+            messages,
             &TransformOptions {
                 preserve_thinking: false,
                 ..Default::default()
@@ -384,7 +384,7 @@ mod tests {
             timestamp: std::time::SystemTime::now(),
         })];
         let result = transform_messages(
-            &messages,
+            messages,
             &TransformOptions {
                 preserve_thinking: true,
                 ..Default::default()
