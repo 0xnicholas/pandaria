@@ -32,6 +32,15 @@ impl StreamingJsonParser {
     pub fn finalize(self) -> Result<serde_json::Value, serde_json::Error> {
         parse_json_with_repair(&self.buffer)
     }
+
+    /// Return the current best-effort parsed value without consuming
+    /// the parser. Returns `None` if nothing has been fed yet.
+    pub fn peek_value(&self) -> Option<serde_json::Value> {
+        if self.buffer.is_empty() {
+            return None;
+        }
+        parse_json_with_repair(&self.buffer).ok()
+    }
 }
 
 impl Default for StreamingJsonParser {
@@ -232,5 +241,26 @@ mod tests {
         let result = parser.finalize();
         // Empty buffer produces parse error
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_streaming_parser_peek_progressive() {
+        let mut parser = StreamingJsonParser::new();
+        assert!(parser.peek_value().is_none());
+
+        parser.feed(r#"{"ke"#);
+        // Best-effort: may or may not parse depending on repair heuristics
+        // At minimum, peek_value should not panic
+
+        parser.feed(r#"y": "va"#);
+        // Still partial
+
+        parser.feed(r#"lue"}"#);
+        let val = parser.peek_value().unwrap();
+        assert_eq!(val["key"], "value");
+
+        // finalize should also work and produce the same result
+        let val2 = parser.finalize().unwrap();
+        assert_eq!(val2["key"], "value");
     }
 }
