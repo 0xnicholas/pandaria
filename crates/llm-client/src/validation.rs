@@ -129,13 +129,40 @@ pub fn validate_tool_arguments(
     let mut args = tool_call.arguments.clone();
     coerce_value(&mut args, &tool.parameters);
 
-    // Cache check: skip recompilation if schema JSON is identical for this tool name
-    {
-        let cache = SCHEMA_CACHE.lock().expect("schema cache lock poisoned");
-        if let Some(cached) = cache.get(&tool.name)
-            && cached == &tool.parameters
-        {
-            // Schema unchanged for this tool — validate directly
+    // Check cache and compile if needed, holding lock across both operations
+    // to avoid TOCTOU race where two threads compile the same schema.
+    let compiled = {
+        let mut cache = SCHEMA_CACHE.lock().expect("schema cache lock poisoned");
+        if let Some(cached) = cache.get(&tool.name) {
+            if cached == &tool.parameters {
+                // Schema unchanged — compile from cached reference
+                jsonschema::validator_for(cached).map_err(|e| {
+                    ValidationError::schema_violation(
+                        tool.name.clone(),
+                        vec![ValidationMessage {
+                            path: String::new(),
+                            message: format!("schema compilation error: {e}"),
+                        }],
+                        args.clone(),
+                    )
+                })?
+            } else {
+                // Schema changed — recompile and update cache
+                let compiled = jsonschema::validator_for(&tool.parameters).map_err(|e| {
+                    ValidationError::schema_violation(
+                        tool.name.clone(),
+                        vec![ValidationMessage {
+                            path: String::new(),
+                            message: format!("schema compilation error: {e}"),
+                        }],
+                        args.clone(),
+                    )
+                })?;
+                cache.insert(tool.name.clone(), tool.parameters.clone());
+                compiled
+            }
+        } else {
+            // Not in cache — compile and store
             let compiled = jsonschema::validator_for(&tool.parameters).map_err(|e| {
                 ValidationError::schema_violation(
                     tool.name.clone(),
@@ -146,34 +173,10 @@ pub fn validate_tool_arguments(
                     args.clone(),
                 )
             })?;
-            if compiled.is_valid(&args) {
-                return Ok(args);
-            }
-            let errors = ValidationError::collect_errors(&compiled, &args);
-            return Err(ValidationError::schema_violation(
-                tool.name.clone(),
-                errors,
-                args,
-            ));
+            cache.insert(tool.name.clone(), tool.parameters.clone());
+            compiled
         }
-    }
-
-    // Compile and cache
-    let compiled = jsonschema::validator_for(&tool.parameters).map_err(|e| {
-        ValidationError::schema_violation(
-            tool.name.clone(),
-            vec![ValidationMessage {
-                path: String::new(),
-                message: format!("schema compilation error: {e}"),
-            }],
-            args.clone(),
-        )
-    })?;
-
-    {
-        let mut cache = SCHEMA_CACHE.lock().expect("schema cache lock poisoned");
-        cache.insert(tool.name.clone(), tool.parameters.clone());
-    }
+    };
 
     if compiled.is_valid(&args) {
         return Ok(args);
