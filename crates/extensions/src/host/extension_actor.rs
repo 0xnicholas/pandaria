@@ -79,9 +79,7 @@ pub enum ObsEvent {
 }
 
 /// An actor running a single Extension.
-pub struct ExtensionActor {
-    _extension: Arc<dyn Extension>,
-}
+pub struct ExtensionActor;
 
 impl ExtensionActor {
     /// Spawn the actor and return its handle + JoinHandle.
@@ -93,10 +91,9 @@ impl ExtensionActor {
     ) -> (ExtensionHandle, tokio::task::JoinHandle<()>) {
         let (tx, rx) = mpsc::channel::<ActorMessage>(buffer);
         let handle = ExtensionHandle { sender: tx };
-        let ext = extension.clone();
 
         let join_handle = tokio::spawn(async move {
-            run_actor(ext, rx, obs_bus).await;
+            run_actor(extension, rx, obs_bus).await;
         });
 
         (handle, join_handle)
@@ -124,20 +121,48 @@ async fn run_actor(
         });
     });
 
-    // Process intercepting hooks from mpsc
+    // Process intercepting hooks from mpsc.
+    // Each extension call is wrapped in tokio::spawn for panic isolation.
     while let Some(msg) = mpsc_rx.recv().await {
         match msg {
             ActorMessage::ToolCall { ctx, reply } => {
-                let result = extension.on_tool_call(&ctx).await;
-                let _ = reply.send(result);
+                let ext = extension.clone();
+                let spawn_result = tokio::spawn(async move {
+                    ext.on_tool_call(&ctx).await
+                }).await;
+                match spawn_result {
+                    Ok(decision) => { let _ = reply.send(decision); }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Extension panicked in on_tool_call");
+                        let _ = reply.send(HookDecision::Continue);
+                    }
+                }
             }
             ActorMessage::ToolResult { ctx, reply } => {
-                let result = extension.on_tool_result(&ctx).await;
-                let _ = reply.send(result);
+                let ext = extension.clone();
+                let spawn_result = tokio::spawn(async move {
+                    ext.on_tool_result(&ctx).await
+                }).await;
+                match spawn_result {
+                    Ok(mutation) => { let _ = reply.send(mutation); }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Extension panicked in on_tool_result");
+                        let _ = reply.send(ToolResultMutation::default());
+                    }
+                }
             }
             ActorMessage::Context { ctx, reply } => {
-                let result = extension.on_context(&ctx).await;
-                let _ = reply.send(result);
+                let ext = extension.clone();
+                let spawn_result = tokio::spawn(async move {
+                    ext.on_context(&ctx).await
+                }).await;
+                match spawn_result {
+                    Ok(mutation) => { let _ = reply.send(mutation); }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Extension panicked in on_context");
+                        let _ = reply.send(ContextMutation::default());
+                    }
+                }
             }
         }
     }
@@ -235,5 +260,44 @@ mod tests {
         // Should timeout and return default (not hang)
         let result = tokio::time::timeout(Duration::from_secs(2), handle.on_tool_result(ctx)).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_actor_panic_isolation() {
+        struct PanicExtension;
+        #[async_trait]
+        impl Extension for PanicExtension {
+            fn name(&self) -> &str { "panicky" }
+            async fn on_tool_call(&self, _ctx: &ToolCallCtx) -> HookDecision {
+                panic!("intentional panic for test");
+            }
+        }
+
+        let ext = Arc::new(PanicExtension);
+        let bus = Arc::new(EventBus::<ObsEvent>::new(16));
+        let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
+
+        let ctx = ToolCallCtx {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            tool_name: "t".to_string(),
+            tool_call_id: "c1".to_string(),
+            input: serde_json::json!({}),
+        };
+
+        // Panic should be caught; actor should survive and return Continue
+        let decision = handle.on_tool_call(ctx).await;
+        assert!(matches!(decision, HookDecision::Continue));
+
+        // Actor should still be alive — verify by sending another message
+        let ctx2 = ToolCallCtx {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            tool_name: "t".to_string(),
+            tool_call_id: "c2".to_string(),
+            input: serde_json::json!({}),
+        };
+        let decision2 = handle.on_tool_call(ctx2).await;
+        assert!(matches!(decision2, HookDecision::Continue));
     }
 }

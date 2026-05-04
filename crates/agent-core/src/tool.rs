@@ -1,7 +1,9 @@
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use llm_client::ToolCall;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::context::{ToolCallCtx, ToolResultCtx};
 use crate::error::AgentError;
@@ -9,6 +11,22 @@ use crate::hook_dispatcher::HookDispatcher;
 use crate::mutations::HookDecision;
 use crate::types::{AgentToolProgressUpdate, AgentToolRef};
 use llm_client::ToolResultMessage as ToolResultMsg;
+
+/// Execute an async block, catching panics and converting them to AgentError.
+async fn catch_panic<F, T>(f: F) -> Result<T, AgentError>
+where
+    F: std::future::Future<Output = T>,
+{
+    match AssertUnwindSafe(f).catch_unwind().await {
+        Ok(result) => Ok(result),
+        Err(_) => {
+            error!("Extension or tool panicked — converting to error");
+            Err(AgentError::ToolExecutionFailed(
+                "Extension panicked".to_string(),
+            ))
+        }
+    }
+}
 
 /// Executes a tool call through the full pipeline:
 /// prepare → on_tool_call (blocking) → execute → on_tool_result (chain) → finalize.
@@ -51,7 +69,7 @@ impl ToolExecutor {
             tool_call_id: tool_call.id.clone(),
             input: tool_call.arguments.clone(),
         };
-        let decision = self.hook_dispatcher.on_tool_call(&tool_call_ctx).await;
+        let decision = catch_panic(self.hook_dispatcher.on_tool_call(&tool_call_ctx)).await?;
         match decision {
             HookDecision::Block { reason } => {
                 warn!(
@@ -81,8 +99,14 @@ impl ToolExecutor {
             "executing tool",
         );
 
-        // Step 2: Execute the tool
-        let mut result = self.tool.execute(&tool_call.id, tool_call.arguments.clone(), on_progress).await?;
+        // Step 2: Execute the tool (with panic boundary per ADR constraint)
+        let execute_result = catch_panic(
+            self.tool.execute(&tool_call.id, tool_call.arguments.clone(), on_progress)
+        ).await;
+        let mut result = match execute_result {
+            Ok(inner) => inner?,
+            Err(e) => return Err(e),
+        };
 
         // Step 3: Dispatch on_tool_result (chaining hook)
         let tool_result_ctx = ToolResultCtx {
@@ -95,7 +119,7 @@ impl ToolExecutor {
             details: result.details.clone(),
             is_error: result.is_error,
         };
-        let mutation = self.hook_dispatcher.on_tool_result(&tool_result_ctx).await;
+        let mutation = catch_panic(self.hook_dispatcher.on_tool_result(&tool_result_ctx)).await?;
 
         // Apply mutations
         if let Some(content) = mutation.content {

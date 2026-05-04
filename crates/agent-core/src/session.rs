@@ -43,8 +43,13 @@ pub struct SessionActor {
 impl SessionActor {
     /// Create a new session.
     ///
-    /// Emits `on_session_start` hook (fire-and-forget) on construction.
-    /// If a `store` is provided, attempts to restore message history from it.
+    /// Emits `on_session_start` hook (fire-and-forget, per ADR-003) on construction.
+    /// This hook is observational only — it must not perform setup work that
+    /// affects the session, as it runs concurrently and may not complete before
+    /// the first `prompt()` call.
+    ///
+    /// If a `store` is provided, call [`restore`](Self::restore) after construction
+    /// to load message history before the first prompt.
     pub fn new(
         tenant_id: String,
         session_id: String,
@@ -397,7 +402,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::sync::Mutex;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::Duration;
 
     struct EchoProvider;
     #[async_trait::async_trait]
@@ -617,31 +622,31 @@ mod tests {
     async fn test_abort_session() {
         let _ = tracing_subscriber::fmt().try_init();
 
-        struct SlowProvider;
+        struct CancellableProvider;
         #[async_trait::async_trait]
-        impl llm_client::LlmProvider for SlowProvider {
-            fn provider_name(&self) -> &str { "slow" }
-            fn models(&self) -> Vec<String> { vec!["slow".to_string()] }
+        impl llm_client::LlmProvider for CancellableProvider {
+            fn provider_name(&self) -> &str { "cancellable" }
+            fn models(&self) -> Vec<String> { vec!["cancellable".to_string()] }
             async fn stream(
                 &self,
                 _model: &str,
                 _context: llm_client::LlmContext,
                 _options: llm_client::StreamOptions,
-            _signal: CancellationToken,
-        ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-            // Yield before responding to allow abort to be sent
-            sleep(Duration::from_millis(200)).await;
-            Err(llm_client::LlmError::Cancelled)
-        }
+                signal: CancellationToken,
+            ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
+                // Wait for cancellation signal
+                signal.cancelled().await;
+                Err(llm_client::LlmError::Cancelled)
+            }
         }
 
-        let provider = Arc::new(SlowProvider);
+        let provider = Arc::new(CancellableProvider);
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(
             "t1".to_string(),
             "s1".to_string(),
             "prompt".to_string(),
-            "slow".to_string(),
+            "cancellable".to_string(),
             128_000,
             provider,
             dispatcher,
@@ -650,30 +655,25 @@ mod tests {
             None,
         );
 
-        // Spawn abort after a short delay
-        let handle = tokio::spawn(async move {
-            sleep(Duration::from_millis(10)).await;
-        });
+        // Test that abort() works by verifying the token propagates cancellation.
+        // We can't easily test concurrent abort during prompt() because prompt()
+        // takes &mut self. Instead, test the mechanism: abort the pre-prompt token,
+        // then verify a new prompt creates a fresh token that can also be cancelled.
 
-        // Start prompt in a separate task
-        let prompt_handle = tokio::spawn({
-            // Can't move session, so we'll test abort via CancellationToken directly
-            async move {
-                // Just verify the pattern works
-                let _ = handle.await;
-                Ok::<_, AgentError>(())
-            }
-        });
-
-        prompt_handle.await.unwrap().unwrap();
-
-        // Alternative: test abort by calling session.abort() and verifying cancel propagates
+        // 1. Verify abort doesn't panic
         session.abort();
-        let result = session.prompt("should fail".to_string()).await;
-        // The prompt should still work (new cancel token created) since we reset it
-        // Or it should fail if the slow provider sees the old token
-        // For a cleaner test, we just verify abort() doesn't panic
-        assert!(result.is_ok() || result.is_err());
+        assert!(session.abort_token.is_cancelled());
+
+        // 2. Start a prompt — it creates a new token
+        let prompt_handle = tokio::spawn(async move {
+            session.prompt("hello".to_string()).await
+        });
+
+        // The provider waits for cancellation, so the prompt will hang until
+        // cancelled or timed out. Since we can't call abort() (session moved),
+        // we rely on the timeout to verify the prompt was actually running.
+        let result = tokio::time::timeout(Duration::from_millis(100), prompt_handle).await;
+        assert!(result.is_err(), "prompt should still be running (not yet cancelled)");
     }
 
     #[tokio::test]

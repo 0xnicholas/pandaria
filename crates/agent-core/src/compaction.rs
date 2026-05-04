@@ -448,38 +448,66 @@ pub fn prepare_compaction(
         (None, 0)
     };
 
-    // Extract messages for token estimation
-    let messages: Vec<AgentMessage> = entries.iter().filter_map(message_from_entry).collect();
+    // Build mapping from message index to entry id, and extract messages
+    let mut message_to_entry_id: Vec<u64> = Vec::new();
+    let messages: Vec<AgentMessage> = entries
+        .iter()
+        .filter_map(|entry| {
+            if let Some(msg) = message_from_entry(entry) {
+                message_to_entry_id.push(entry.id);
+                Some(msg)
+            } else {
+                None
+            }
+        })
+        .collect();
     let tokens_before = estimate_context_tokens(&messages).tokens;
 
     // Find cut point among the messages (not entries)
     let cut_point = find_cut_point(&messages, settings.keep_recent_tokens);
 
-    // Map message index back to entry index for first_kept_entry_id
-    let first_kept_entry_id = entries[cut_point.first_kept_index].id;
+    // Map message index back to entry id for first_kept_entry_id
+    let first_kept_entry_id = message_to_entry_id
+        .get(cut_point.first_kept_index)
+        .copied()
+        .unwrap_or_else(|| entries.last().map(|e| e.id).unwrap_or(0));
 
     // Determine history end (where to stop collecting messages to summarize)
-    let history_end = if cut_point.is_split_turn {
-        cut_point.turn_start_index.unwrap_or(cut_point.first_kept_index)
+    // Convert message indices to entry indices for slicing entries
+    let first_kept_entry_idx = entries
+        .iter()
+        .position(|e| e.id == first_kept_entry_id)
+        .unwrap_or(0);
+
+    let history_end_entry_idx = if cut_point.is_split_turn {
+        let turn_start_msg_idx = cut_point.turn_start_index.unwrap_or(cut_point.first_kept_index);
+        message_to_entry_id
+            .get(turn_start_msg_idx)
+            .and_then(|id| entries.iter().position(|e| e.id == *id))
+            .unwrap_or(first_kept_entry_idx)
     } else {
-        cut_point.first_kept_index
+        first_kept_entry_idx
     };
 
     // Messages to summarize
     let messages_to_summarize: Vec<AgentMessage> = entries
         .iter()
         .skip(boundary_start)
-        .take(history_end.saturating_sub(boundary_start))
+        .take(history_end_entry_idx.saturating_sub(boundary_start))
         .filter_map(message_from_entry)
         .collect();
 
     // Turn prefix messages (if splitting)
     let turn_prefix_messages: Vec<AgentMessage> = if cut_point.is_split_turn {
-        let start = cut_point.turn_start_index.unwrap_or(0);
+        let turn_start_msg_idx = cut_point.turn_start_index.unwrap_or(0);
+        let turn_start_entry_idx = message_to_entry_id
+            .get(turn_start_msg_idx)
+            .and_then(|id| entries.iter().position(|e| e.id == *id))
+            .unwrap_or(0);
         entries
             .iter()
-            .skip(start)
-            .take(cut_point.first_kept_index.saturating_sub(start))
+            .skip(turn_start_entry_idx)
+            .take(first_kept_entry_idx.saturating_sub(turn_start_entry_idx))
             .filter_map(message_from_entry)
             .collect()
     } else {

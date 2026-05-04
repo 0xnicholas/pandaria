@@ -32,13 +32,12 @@ impl HookRouter {
 #[async_trait]
 impl agent_core::HookDispatcher for HookRouter {
     async fn on_tool_call(&self, ctx: &ToolCallCtx) -> HookDecision {
-        // Serial dispatch, first-block-wins
+        // Serial dispatch, first-block-wins.
+        // When ToolCallMutation support is added, change to `let mut current_ctx`
+        // so each handler sees the previous handler's input mutations.
         let current_ctx = ctx.clone();
         for handle in &self.handles {
             let decision = handle.on_tool_call(current_ctx.clone()).await;
-            // Note: input mutations are lost here since ctx is cloned.
-            // In production, we'd need a mutable ctx reference.
-            // For v0.1, we accept this limitation.
             match decision {
                 HookDecision::Block { .. } => return decision,
                 HookDecision::Continue => continue,
@@ -55,7 +54,6 @@ impl agent_core::HookDispatcher for HookRouter {
         for handle in &self.handles {
             let mutation = handle.on_tool_result(current_ctx.clone()).await;
 
-            // Apply mutation to ctx for next handler
             if let Some(ref content) = mutation.content {
                 current_ctx.content = content.clone();
                 final_mutation.content = Some(content.clone());
@@ -68,6 +66,9 @@ impl agent_core::HookDispatcher for HookRouter {
                 current_ctx.is_error = is_error;
                 final_mutation.is_error = Some(is_error);
             }
+            if let Some(terminate) = mutation.terminate {
+                final_mutation.terminate = Some(terminate);
+            }
         }
 
         final_mutation
@@ -75,7 +76,8 @@ impl agent_core::HookDispatcher for HookRouter {
 
     async fn on_context(&self, ctx: &ContextCtx) -> ContextMutation {
         // Chain merge — each handler transforms the messages
-        let mut current_messages = ctx.messages.clone();
+        let original_messages = ctx.messages.clone();
+        let mut current_messages = original_messages.clone();
 
         for handle in &self.handles {
             let ctx = ContextCtx {
@@ -89,8 +91,12 @@ impl agent_core::HookDispatcher for HookRouter {
             }
         }
 
-        ContextMutation {
-            messages: Some(current_messages),
+        if current_messages == original_messages {
+            ContextMutation::default()
+        } else {
+            ContextMutation {
+                messages: Some(current_messages),
+            }
         }
     }
 

@@ -1,5 +1,7 @@
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
+use futures::FutureExt;
 use llm_client::{
     Content, LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall,
 };
@@ -11,6 +13,22 @@ use crate::error::AgentError;
 use crate::hook_dispatcher::HookDispatcher;
 use crate::tool::ToolExecutor;
 use crate::types::{AgentMessage, AgentToolRef, ToolExecutionMode};
+
+/// Execute an async block, catching panics and converting them to AgentError.
+async fn catch_panic<F, T>(f: F) -> Result<T, AgentError>
+where
+    F: std::future::Future<Output = T>,
+{
+    match AssertUnwindSafe(f).catch_unwind().await {
+        Ok(result) => Ok(result),
+        Err(_) => {
+            error!("Extension panicked — converting to error");
+            Err(AgentError::HookDispatchError(
+                "Extension panicked".to_string(),
+            ))
+        }
+    }
+}
 
 /// Drives the agent tool-use loop per ADR-001.
 ///
@@ -27,6 +45,38 @@ pub struct AgentLoop {
 }
 
 impl AgentLoop {
+    /// Handle an LLM response that stopped with an error reason.
+    /// Emits the turn_end hook if `emit_turn_end` is true.
+    async fn handle_error_stop_reason(
+        &self,
+        stop_reason: &StopReason,
+        error_message: Option<String>,
+        turn_index: u64,
+        messages: &[AgentMessage],
+        emit_turn_end: bool,
+    ) -> Result<(), AgentError> {
+        let err_msg = error_message
+            .unwrap_or_else(|| format!("LLM returned stop reason: {:?}", stop_reason));
+        error!(
+            tenant_id = %self.tenant_id,
+            session_id = %self.session_id,
+            turn = turn_index,
+            stop_reason = ?stop_reason,
+            error = %err_msg,
+            "LLM response error",
+        );
+        if emit_turn_end {
+            let turn_ctx = TurnEndCtx {
+                tenant_id: self.tenant_id.clone(),
+                session_id: self.session_id.clone(),
+                turn_index,
+                messages: messages.to_vec(),
+            };
+            self.hook_dispatcher.on_turn_end(&turn_ctx).await;
+        }
+        Err(AgentError::LlmResponseError(err_msg))
+    }
+
     pub fn new(
         tenant_id: String,
         session_id: String,
@@ -89,7 +139,7 @@ impl AgentLoop {
                 session_id: self.session_id.clone(),
                 messages: messages.clone(),
             };
-            let ctx_mutation = self.hook_dispatcher.on_context(&ctx_ctx).await;
+            let ctx_mutation = catch_panic(self.hook_dispatcher.on_context(&ctx_ctx)).await?;
             let transformed = ctx_mutation.messages.unwrap_or_else(|| messages.clone());
 
             // Build LLM context
@@ -249,24 +299,16 @@ impl AgentLoop {
                 // No tool calls — check for error stop reasons first
                 match stop_reason {
                     StopReason::Error | StopReason::Aborted | StopReason::Length => {
-                        let err_msg = error_message
-                            .unwrap_or_else(|| format!("LLM returned stop reason: {:?}", stop_reason));
-                        error!(
-                            tenant_id = %self.tenant_id,
-                            session_id = %self.session_id,
-                            turn = turn_index,
-                            stop_reason = ?stop_reason,
-                            error = %err_msg,
-                            "LLM response error",
-                        );
-                        let turn_ctx = TurnEndCtx {
-                            tenant_id: self.tenant_id.clone(),
-                            session_id: self.session_id.clone(),
-                            turn_index,
-                            messages: messages.clone(),
-                        };
-                        self.hook_dispatcher.on_turn_end(&turn_ctx).await;
-                        return Err(AgentError::LlmResponseError(err_msg));
+                        self
+                            .handle_error_stop_reason(
+                                &stop_reason,
+                                error_message,
+                                turn_index,
+                                &messages,
+                                true,
+                            )
+                            .await?;
+                        return Ok(messages);
                     }
                     _ => {}
                 }
@@ -283,7 +325,15 @@ impl AgentLoop {
                     turn_index,
                     messages: messages.clone(),
                 };
-                self.hook_dispatcher.on_turn_end(&turn_ctx).await;
+            if let Err(e) = catch_panic(self.hook_dispatcher.on_turn_end(&turn_ctx)).await {
+                warn!(
+                    tenant_id = %self.tenant_id,
+                    session_id = %self.session_id,
+                    turn = turn_index,
+                    error = %e,
+                    "turn_end hook failed",
+                );
+            }
                 break;
             }
 
@@ -466,21 +516,17 @@ impl AgentLoop {
 
             // If the last assistant had stop_reason != ToolUse, break
             if stop_reason != StopReason::ToolUse {
-                if stop_reason == StopReason::Error
-                    || stop_reason == StopReason::Aborted
-                    || stop_reason == StopReason::Length
-                {
-                    let err_msg = error_message
-                        .unwrap_or_else(|| format!("LLM returned stop reason: {:?}", stop_reason));
-                    error!(
-                        tenant_id = %self.tenant_id,
-                        session_id = %self.session_id,
-                        turn = turn_index,
-                        stop_reason = ?stop_reason,
-                        error = %err_msg,
-                        "LLM response error after tool execution",
-                    );
-                    return Err(AgentError::LlmResponseError(err_msg));
+                if matches!(stop_reason, StopReason::Error | StopReason::Aborted | StopReason::Length) {
+                    self
+                        .handle_error_stop_reason(
+                            &stop_reason,
+                            error_message,
+                            turn_index,
+                            &messages,
+                            false,
+                        )
+                        .await?;
+                    return Ok(messages);
                 }
                 break;
             }
@@ -524,7 +570,7 @@ mod tests {
             _options: StreamOptions,
             _signal: CancellationToken,
         ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-            let (mut stream, tx) = llm_client::AssistantMessageEventStream::new(4);
+            let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
             let provider = "test".to_string();
             let model = "test".to_string();
 
@@ -671,7 +717,7 @@ mod tests {
             _options: StreamOptions,
             _signal: CancellationToken,
         ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-            let (mut stream, tx) = llm_client::AssistantMessageEventStream::new(8);
+            let (stream, tx) = llm_client::AssistantMessageEventStream::new(8);
             let provider = "tool-call-test".to_string();
 
             let partial = llm_client::AssistantMessage {
@@ -1066,7 +1112,7 @@ mod tests {
                 _options: StreamOptions,
                 signal: CancellationToken,
             ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-                let (stream, _tx) = llm_client::AssistantMessageEventStream::new(4);
+                let (_stream, _tx) = llm_client::AssistantMessageEventStream::new(4);
 
                 // Wait for cancellation
                 tokio::select! {
