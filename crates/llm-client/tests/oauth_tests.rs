@@ -1,4 +1,4 @@
-use llm_client::{OAuthToken, is_expired};
+use llm_client::{LlmError, OAuthToken, is_expired};
 use secrecy::{ExposeSecret, SecretString};
 use std::time::SystemTime;
 
@@ -45,11 +45,11 @@ async fn test_resolve_oauth_key_success() {
             "mock"
         }
 
-        async fn login(&self) -> Result<OAuthToken, std::io::Error> {
+        async fn login(&self) -> Result<OAuthToken, LlmError> {
             unimplemented!()
         }
 
-        async fn refresh(&self, _token: &OAuthToken) -> Result<OAuthToken, std::io::Error> {
+        async fn refresh(&self, _token: &OAuthToken) -> Result<OAuthToken, LlmError> {
             unimplemented!()
         }
 
@@ -62,13 +62,13 @@ async fn test_resolve_oauth_key_success() {
             })
         }
 
-        fn save_token(&self, _token: &OAuthToken) -> std::io::Result<()> {
+        fn save_token(&self, _token: &OAuthToken) -> Result<(), LlmError> {
             Ok(())
         }
     }
 
     let oauth = Some(Arc::new(MockOAuthProvider) as Arc<dyn OAuthProvider>);
-    let key = resolve_oauth_key(&oauth).await;
+    let key = resolve_oauth_key(oauth.as_ref()).await;
     assert!(key.is_some());
     let secret = key.unwrap();
     assert_eq!(secret.expose_secret(), "oauth_access_token");
@@ -88,11 +88,11 @@ async fn test_resolve_oauth_key_expired_refresh_success() {
             "mock"
         }
 
-        async fn login(&self) -> Result<OAuthToken, std::io::Error> {
+        async fn login(&self) -> Result<OAuthToken, LlmError> {
             unimplemented!()
         }
 
-        async fn refresh(&self, _token: &OAuthToken) -> Result<OAuthToken, std::io::Error> {
+        async fn refresh(&self, _token: &OAuthToken) -> Result<OAuthToken, LlmError> {
             Ok(OAuthToken {
                 access_token: SecretString::new("refreshed_token".into()),
                 refresh_token: None,
@@ -110,13 +110,13 @@ async fn test_resolve_oauth_key_expired_refresh_success() {
             })
         }
 
-        fn save_token(&self, _token: &OAuthToken) -> std::io::Result<()> {
+        fn save_token(&self, _token: &OAuthToken) -> Result<(), LlmError> {
             Ok(())
         }
     }
 
     let oauth = Some(Arc::new(MockOAuthProvider) as Arc<dyn OAuthProvider>);
-    let key = resolve_oauth_key(&oauth).await;
+    let key = resolve_oauth_key(oauth.as_ref()).await;
     assert!(key.is_some());
     let secret = key.unwrap();
     assert_eq!(secret.expose_secret(), "refreshed_token");
@@ -127,7 +127,7 @@ async fn test_resolve_oauth_key_no_provider() {
     use llm_client::resolve_oauth_key;
 
     let oauth: Option<std::sync::Arc<dyn llm_client::oauth::OAuthProvider>> = None;
-    let key = resolve_oauth_key(&oauth).await;
+    let key = resolve_oauth_key(oauth.as_ref()).await;
     assert!(key.is_none());
 }
 
@@ -145,12 +145,12 @@ async fn test_resolve_oauth_key_refresh_failure_falls_back() {
             "failing"
         }
 
-        async fn login(&self) -> Result<OAuthToken, std::io::Error> {
+        async fn login(&self) -> Result<OAuthToken, LlmError> {
             unimplemented!()
         }
 
-        async fn refresh(&self, _token: &OAuthToken) -> Result<OAuthToken, std::io::Error> {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "refresh failed"))
+        async fn refresh(&self, _token: &OAuthToken) -> Result<OAuthToken, LlmError> {
+            Err(LlmError::ProviderError("refresh failed".to_string()))
         }
 
         fn load_token(&self) -> Option<OAuthToken> {
@@ -162,13 +162,13 @@ async fn test_resolve_oauth_key_refresh_failure_falls_back() {
             })
         }
 
-        fn save_token(&self, _token: &OAuthToken) -> std::io::Result<()> {
+        fn save_token(&self, _token: &OAuthToken) -> Result<(), LlmError> {
             Ok(())
         }
     }
 
     let oauth = Some(Arc::new(FailingOAuthProvider) as Arc<dyn OAuthProvider>);
-    let key = resolve_oauth_key(&oauth).await;
+    let key = resolve_oauth_key(oauth.as_ref()).await;
     assert!(key.is_none()); // refresh failed, should return None for fallback
 }
 

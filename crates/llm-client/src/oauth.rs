@@ -1,3 +1,4 @@
+use crate::error::LlmError;
 use secrecy::SecretString;
 use std::time::SystemTime;
 
@@ -42,29 +43,29 @@ pub trait OAuthProvider: Send + Sync {
     fn provider_name(&self) -> &str;
 
     /// Acquire a fresh token (e.g. via browser redirect or device code).
-    async fn login(&self) -> Result<OAuthToken, std::io::Error>;
+    async fn login(&self) -> Result<OAuthToken, LlmError>;
 
     /// Refresh an existing token.
-    async fn refresh(&self, token: &OAuthToken) -> Result<OAuthToken, std::io::Error>;
+    async fn refresh(&self, token: &OAuthToken) -> Result<OAuthToken, LlmError>;
 
     /// Load a previously saved token from disk / keyring / etc.
     fn load_token(&self) -> Option<OAuthToken>;
 
     /// Persist a token for later reuse.
-    fn save_token(&self, token: &OAuthToken) -> std::io::Result<()>;
+    fn save_token(&self, token: &OAuthToken) -> Result<(), LlmError>;
 }
 
-/// Resolve an API key, preferring OAuth when available.
+/// Resolve an API key via OAuth when available.
 ///
 /// 1. If an `OAuthProvider` is configured, try loading the token.
 /// 2. If the token is expired, attempt refresh.
 /// 3. Return the access token on success.
 /// 4. On any failure (missing token, refresh error, etc.), return `None`
-///    so the caller can fall back to the next key source (env var, error).
+///    so the caller can fall back to the next key source.
 pub async fn resolve_oauth_key(
-    oauth: &Option<std::sync::Arc<dyn OAuthProvider>>,
+    oauth: Option<&std::sync::Arc<dyn OAuthProvider>>,
 ) -> Option<SecretString> {
-    let oauth = oauth.as_ref()?;
+    let oauth = oauth?;
     let token = oauth.load_token()?;
     let token = if is_expired(&token) {
         oauth.refresh(&token).await.ok()?
