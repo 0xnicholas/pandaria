@@ -66,13 +66,3 @@ impl LlmProvider for AwsBedrockProvider {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_provider_name_static() {
-        // Verify the provider name without constructing the provider
-        assert_eq!("bedrock", "bedrock");
-    }
-}
