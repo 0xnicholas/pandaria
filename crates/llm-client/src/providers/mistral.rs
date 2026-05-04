@@ -11,9 +11,7 @@ crate::providers::shared::define_provider!(
     MistralProvider,
     "mistral",
     "MISTRAL_API_KEY",
-    "https://api.mistral.ai/v1/chat/completions",
-    "mistral-large-latest",
-    "mistral-medium-latest"
+    "https://api.mistral.ai/v1/chat/completions"
 );
 
 impl MistralProvider {

@@ -11,10 +11,7 @@ crate::providers::shared::define_provider!(
     OpenAiProvider,
     "openai",
     "OPENAI_API_KEY",
-    "https://api.openai.com/v1/chat/completions",
-    "gpt-5.2",
-    "gpt-5.1",
-    "gpt-4.1"
+    "https://api.openai.com/v1/chat/completions"
 );
 
 impl OpenAiProvider {

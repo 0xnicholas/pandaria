@@ -11,10 +11,7 @@ crate::providers::shared::define_provider!(
     AnthropicProvider,
     "anthropic",
     "ANTHROPIC_API_KEY",
-    "https://api.anthropic.com/v1/messages",
-    "claude-sonnet-4-20250514",
-    "claude-opus-4-7",
-    "claude-haiku-4-7"
+    "https://api.anthropic.com/v1/messages"
 );
 
 impl AnthropicProvider {

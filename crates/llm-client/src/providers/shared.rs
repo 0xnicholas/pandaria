@@ -1,6 +1,9 @@
 macro_rules! define_provider {
-    ($struct_name:ident, $provider_str:literal, $env_key:literal, $default_url:literal $(, $model:literal)*) => {
-        #[doc = concat!("LLM provider for ", $provider_str)]
+    ($struct_name:ident, $provider_str:literal, $env_key:literal, $default_url:literal) => {
+        #[doc = concat!("LLM provider for the ", $provider_str, " API.")]
+        #[doc = ""]
+        #[doc = concat!("Implements the `LlmProvider` trait for ", $provider_str, " models.")]
+        #[doc = "Requires the corresponding API key environment variable or explicit key."]
         pub struct $struct_name {
             client: reqwest::Client,
             api_key: Option<secrecy::SecretString>,
@@ -9,10 +12,12 @@ macro_rules! define_provider {
         }
 
         impl $struct_name {
+            /// Create a new provider with the default API endpoint.
             pub fn new(api_key: Option<secrecy::SecretString>) -> Self {
                 Self::with_base_url(api_key, $default_url)
             }
 
+            /// Create a new provider with a custom base URL.
             pub fn with_base_url(
                 api_key: Option<secrecy::SecretString>,
                 base_url: &str,
@@ -29,6 +34,7 @@ macro_rules! define_provider {
                 }
             }
 
+            /// Attach an OAuth provider for automatic token management.
             pub fn with_oauth(
                 mut self,
                 oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,
@@ -120,8 +126,8 @@ macro_rules! define_provider {
                                     stop_reason: crate::StopReason::Error,
                                     response_id: None,
                                     error_message: Some(format!(
-                                        "{} '{}' {}: {}",
-                                        $provider_str, model, model, err_msg,
+                                        "{} '{}': {}",
+                                        $provider_str, model, err_msg,
                                     )),
                                     timestamp: std::time::SystemTime::now(),
                                 },
