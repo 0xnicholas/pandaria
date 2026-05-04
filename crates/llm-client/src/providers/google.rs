@@ -288,8 +288,11 @@ mod tests {
     }
 
     #[test]
-    fn test_models_not_empty() {
+    fn test_models() {
         let p = GoogleProvider::new(None);
-        assert!(!p.models().is_empty());
+        let m = p.models();
+        assert!(m.contains(&"gemini-2.5-pro".to_string()));
+        assert!(m.contains(&"gemini-3.0-flash".to_string()));
+        assert!(m.len() >= 3);
     }
 }

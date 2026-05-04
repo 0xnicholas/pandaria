@@ -554,9 +554,12 @@ mod tests {
     }
 
     #[test]
-    fn test_models_not_empty() {
+    fn test_models() {
         let p = AnthropicProvider::new(None);
-        assert!(!p.models().is_empty());
+        let m = p.models();
+        assert!(m.contains(&"claude-sonnet-4-20250514".to_string()));
+        assert!(m.contains(&"claude-opus-4-7".to_string()));
+        assert!(m.len() >= 3);
     }
 
     #[test]

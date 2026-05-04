@@ -141,6 +141,15 @@ pub fn providers() -> Vec<String> {
     ModelRegistry::builtin().providers()
 }
 
+/// Return just the model IDs (strings) for a given provider.
+/// Used by provider `models()` implementations.
+pub fn models_for_provider_names(provider: &str) -> Vec<String> {
+    models_for_provider(provider)
+        .into_iter()
+        .map(|m| m.id)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

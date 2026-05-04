@@ -427,8 +427,11 @@ mod tests {
     }
 
     #[test]
-    fn test_models_not_empty() {
+    fn test_models() {
         let p = OpenAiProvider::new(None);
-        assert!(!p.models().is_empty());
+        let m = p.models();
+        assert!(m.contains(&"gpt-5.2".to_string()));
+        assert!(m.contains(&"gpt-4.1".to_string()));
+        assert!(m.len() >= 3);
     }
 }

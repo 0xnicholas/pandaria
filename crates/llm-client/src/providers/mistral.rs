@@ -349,9 +349,12 @@ mod tests {
     }
 
     #[test]
-    fn test_models_not_empty() {
+    fn test_models() {
         let p = MistralProvider::new(None);
-        assert!(!p.models().is_empty());
+        let m = p.models();
+        assert!(m.contains(&"mistral-large-latest".to_string()));
+        assert!(m.contains(&"mistral-medium-latest".to_string()));
+        assert!(m.len() >= 2);
     }
 
     #[test]

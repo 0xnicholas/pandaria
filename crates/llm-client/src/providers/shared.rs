@@ -63,7 +63,7 @@ macro_rules! define_provider {
             }
 
             fn models(&self) -> Vec<String> {
-                vec![$($model.to_string()),*]
+                crate::models::models_for_provider_names($provider_str)
             }
 
             async fn stream(
@@ -75,7 +75,7 @@ macro_rules! define_provider {
             ) -> Result<crate::streaming::AssistantMessageEventStream, crate::error::LlmError>
             {
                 let api_key =
-                    if let Some(key) = crate::oauth::resolve_oauth_key(&self.oauth_provider).await
+                    if let Some(key) = crate::oauth::resolve_oauth_key(self.oauth_provider.as_ref()).await
                     {
                         key
                     } else {
