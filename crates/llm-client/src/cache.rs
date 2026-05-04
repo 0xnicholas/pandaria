@@ -12,7 +12,7 @@ impl CacheRetention {
         if let Some(explicit) = explicit {
             return explicit;
         }
-        if std::env::var("PI_CACHE_RETENTION")
+        if std::env::var("PANDARIA_CACHE_RETENTION")
             .map(|v| v == "long")
             .unwrap_or(false)
         {
@@ -50,7 +50,7 @@ mod tests {
 
     #[test]
     fn test_cache_resolve_default() {
-        // Without PI_CACHE_RETENTION set, default should be Short
+        // Without PANDARIA_CACHE_RETENTION set, default should be Short
         // (env var may or may not be set — explicit tests cover all cases)
         let result = CacheRetention::resolve(None);
         assert!(matches!(
