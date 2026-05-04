@@ -8,6 +8,11 @@ use crate::provider::LlmProvider;
 use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
 use crate::types::{Api, LlmContext};
 
+/// Anthropic Claude provider via the Messages API.
+///
+/// Supports SSE streaming, cache control, adaptive thinking,
+/// and fine-grained tool input streaming for Claude 4+ models.
+/// Requires `ANTHROPIC_API_KEY` environment variable or explicit API key.
 pub struct AnthropicProvider {
     client: reqwest::Client,
     api_key: Option<SecretString>,
@@ -16,10 +21,12 @@ pub struct AnthropicProvider {
 }
 
 impl AnthropicProvider {
+    /// Create a new Anthropic provider with the default API endpoint.
     pub fn new(api_key: Option<SecretString>) -> Self {
         Self::with_base_url(api_key, "https://api.anthropic.com/v1/messages")
     }
 
+    /// Create a new Anthropic provider with a custom base URL.
     pub fn with_base_url(api_key: Option<SecretString>, base_url: &str) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
@@ -33,6 +40,7 @@ impl AnthropicProvider {
         }
     }
 
+    /// Attach an OAuth provider for automatic token management.
     pub fn with_oauth(
         mut self,
         oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,

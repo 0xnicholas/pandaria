@@ -8,6 +8,11 @@ use crate::provider::LlmProvider;
 use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
 use crate::types::{Api, LlmContext};
 
+/// Mistral provider via the OpenAI-compatible Chat Completions API.
+///
+/// Supports SSE streaming, tool call ID truncation to ≤36 characters,
+/// and reasoning via `promptMode` parameter.
+/// Requires `MISTRAL_API_KEY` environment variable or explicit API key.
 pub struct MistralProvider {
     client: reqwest::Client,
     api_key: Option<SecretString>,
@@ -16,10 +21,12 @@ pub struct MistralProvider {
 }
 
 impl MistralProvider {
+    /// Create a new Mistral provider with the default API endpoint.
     pub fn new(api_key: Option<SecretString>) -> Self {
         Self::with_base_url(api_key, "https://api.mistral.ai/v1/chat/completions")
     }
 
+    /// Create a new Mistral provider with a custom base URL.
     pub fn with_base_url(api_key: Option<SecretString>, base_url: &str) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
@@ -33,6 +40,7 @@ impl MistralProvider {
         }
     }
 
+    /// Attach an OAuth provider for automatic token management.
     pub fn with_oauth(
         mut self,
         oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,

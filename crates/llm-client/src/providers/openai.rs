@@ -8,6 +8,12 @@ use crate::provider::LlmProvider;
 use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
 use crate::types::{Api, LlmContext};
 
+/// OpenAI provider via the Chat Completions API.
+///
+/// Supports SSE streaming, reasoning, prompt cache key for session affinity,
+/// thinking format mapping for different model compatibilities,
+/// and `x-client-request-id` headers for cache routing.
+/// Requires `OPENAI_API_KEY` environment variable or explicit API key.
 pub struct OpenAiProvider {
     client: reqwest::Client,
     api_key: Option<SecretString>,
@@ -16,10 +22,12 @@ pub struct OpenAiProvider {
 }
 
 impl OpenAiProvider {
+    /// Create a new OpenAI provider with the default API endpoint.
     pub fn new(api_key: Option<SecretString>) -> Self {
         Self::with_base_url(api_key, "https://api.openai.com/v1/chat/completions")
     }
 
+    /// Create a new OpenAI provider with a custom base URL.
     pub fn with_base_url(api_key: Option<SecretString>, base_url: &str) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
@@ -33,6 +41,7 @@ impl OpenAiProvider {
         }
     }
 
+    /// Attach an OAuth provider for automatic token management.
     pub fn with_oauth(
         mut self,
         oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,

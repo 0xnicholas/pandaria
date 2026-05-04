@@ -8,6 +8,11 @@ use crate::provider::LlmProvider;
 use crate::streaming::{AssistantMessageEvent, AssistantMessageEventStream};
 use crate::types::{Api, LlmContext};
 
+/// Google Gemini provider via the Generative Language API.
+///
+/// Supports JSON stream via SSE, `x-goog-api-key` authentication,
+/// `functionDeclarations` for tool calling, and thoughts via `part["thought"]`.
+/// Requires `GOOGLE_API_KEY` environment variable or explicit API key.
 pub struct GoogleProvider {
     client: reqwest::Client,
     api_key: Option<SecretString>,
@@ -16,10 +21,12 @@ pub struct GoogleProvider {
 }
 
 impl GoogleProvider {
+    /// Create a new Google provider with the default API endpoint.
     pub fn new(api_key: Option<SecretString>) -> Self {
         Self::with_base_url(api_key, "https://generativelanguage.googleapis.com/v1beta")
     }
 
+    /// Create a new Google provider with a custom base URL.
     pub fn with_base_url(api_key: Option<SecretString>, base_url: &str) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
@@ -33,6 +40,7 @@ impl GoogleProvider {
         }
     }
 
+    /// Attach an OAuth provider for automatic token management.
     pub fn with_oauth(
         mut self,
         oauth: std::sync::Arc<dyn crate::oauth::OAuthProvider>,
