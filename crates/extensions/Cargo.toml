@@ -13,3 +13,6 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio-util = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }

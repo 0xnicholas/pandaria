@@ -20,7 +20,11 @@ impl<T: Clone + Send + 'static> EventBus<T> {
 
     /// Emit an event to all subscribers. Fire-and-forget.
     pub fn emit(&self, event: T) {
-        let _ = self.tx.send(event);
+        if self.tx.send(event).is_err() {
+            tracing::warn!(
+                "EventBus emit failed: no active subscribers, event dropped"
+            );
+        }
     }
 }
 
