@@ -1,32 +1,16 @@
-use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
-use futures::FutureExt;
 use llm_client::ToolCall;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::context::{ToolCallCtx, ToolResultCtx};
 use crate::error::AgentError;
 use crate::hook_dispatcher::HookDispatcher;
 use crate::mutations::HookDecision;
 use crate::types::{AgentToolProgressUpdate, AgentToolRef};
+use crate::hook_timeout::with_timeout;
+use crate::util::catch_panic;
 use llm_client::ToolResultMessage as ToolResultMsg;
-
-/// Execute an async block, catching panics and converting them to AgentError.
-async fn catch_panic<F, T>(f: F) -> Result<T, AgentError>
-where
-    F: std::future::Future<Output = T>,
-{
-    match AssertUnwindSafe(f).catch_unwind().await {
-        Ok(result) => Ok(result),
-        Err(_) => {
-            error!("Extension or tool panicked — converting to error");
-            Err(AgentError::ToolExecutionFailed(
-                "Extension panicked".to_string(),
-            ))
-        }
-    }
-}
 
 /// Executes a tool call through the full pipeline:
 /// prepare → on_tool_call (blocking) → execute → on_tool_result (chain) → finalize.
@@ -69,7 +53,16 @@ impl ToolExecutor {
             tool_call_id: tool_call.id.clone(),
             input: tool_call.arguments.clone(),
         };
-        let decision = catch_panic(self.hook_dispatcher.on_tool_call(&tool_call_ctx)).await?;
+        let (decision, mutation) = with_timeout(
+            self.hook_dispatcher.on_tool_call(&tool_call_ctx),
+            500,
+            (HookDecision::Continue, crate::mutations::ToolCallMutation::default()),
+            "on_tool_call",
+        ).await;
+
+        // Apply accumulated input mutation from hook chain
+        let tool_input = mutation.input.unwrap_or_else(|| tool_call.arguments.clone());
+
         match decision {
             HookDecision::Block { reason } => {
                 warn!(
@@ -100,13 +93,9 @@ impl ToolExecutor {
         );
 
         // Step 2: Execute the tool (with panic boundary per ADR constraint)
-        let execute_result = catch_panic(
-            self.tool.execute(&tool_call.id, tool_call.arguments.clone(), on_progress)
-        ).await;
-        let mut result = match execute_result {
-            Ok(inner) => inner?,
-            Err(e) => return Err(e),
-        };
+        let mut result = catch_panic(
+            self.tool.execute(&tool_call.id, tool_input, on_progress)
+        ).await??;
 
         // Step 3: Dispatch on_tool_result (chaining hook)
         let tool_result_ctx = ToolResultCtx {
@@ -119,7 +108,12 @@ impl ToolExecutor {
             details: result.details.clone(),
             is_error: result.is_error,
         };
-        let mutation = catch_panic(self.hook_dispatcher.on_tool_result(&tool_result_ctx)).await?;
+        let mutation = with_timeout(
+            self.hook_dispatcher.on_tool_result(&tool_result_ctx),
+            500,
+            crate::mutations::ToolResultMutation::default(),
+            "on_tool_result",
+        ).await;
 
         // Apply mutations
         if let Some(content) = mutation.content {
@@ -217,8 +211,14 @@ mod tests {
     struct BlockAllDispatcher;
     #[async_trait]
     impl HookDispatcher for BlockAllDispatcher {
-        async fn on_tool_call(&self, _ctx: &ToolCallCtx) -> HookDecision {
-            HookDecision::Block { reason: "test block".to_string() }
+        async fn on_tool_call(
+            &self,
+            _ctx: &ToolCallCtx,
+        ) -> (HookDecision, crate::mutations::ToolCallMutation) {
+            (
+                HookDecision::Block { reason: "test block".to_string() },
+                crate::mutations::ToolCallMutation::default(),
+            )
         }
     }
 
@@ -454,5 +454,156 @@ mod tests {
         // Verify terminate flag is embedded in details
         assert_eq!(details["_terminate"], true);
         assert_eq!(details["special"], true);
+    }
+
+    struct PanicOnToolCallDispatcher;
+    #[async_trait]
+    impl HookDispatcher for PanicOnToolCallDispatcher {
+        async fn on_tool_call(
+            &self,
+            _ctx: &ToolCallCtx,
+        ) -> (HookDecision, crate::mutations::ToolCallMutation) {
+            panic!("on_tool_call panic");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_on_tool_call_panic_uses_default() {
+        let dispatcher = Arc::new(PanicOnToolCallDispatcher);
+        let tool = Arc::new(MockTool);
+        let executor = ToolExecutor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            dispatcher,
+            tool,
+        );
+
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            name: "mock_tool".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+
+        // Panic in on_tool_call is caught and defaults to Continue, so tool executes normally
+        let result = executor.execute_tool_call(&tool_call, None).await;
+        assert!(result.is_ok());
+        let content = result.unwrap().content;
+        assert_eq!(content.len(), 1);
+        assert!(matches!(&content[0], Content::Text { text, .. } if text == "result"));
+    }
+
+    struct PanicOnToolResultDispatcher;
+    #[async_trait]
+    impl HookDispatcher for PanicOnToolResultDispatcher {
+        async fn on_tool_result(&self, _ctx: &ToolResultCtx) -> ToolResultMutation {
+            panic!("on_tool_result panic");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_on_tool_result_panic_uses_default() {
+        let dispatcher = Arc::new(PanicOnToolResultDispatcher);
+        let tool = Arc::new(MockTool);
+        let executor = ToolExecutor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            dispatcher,
+            tool,
+        );
+
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            name: "mock_tool".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+
+        // Panic in on_tool_result is caught and defaults to no mutation
+        let result = executor.execute_tool_call(&tool_call, None).await;
+        assert!(result.is_ok());
+        let content = result.unwrap().content;
+        assert_eq!(content.len(), 1);
+        assert!(matches!(
+            &content[0],
+            Content::Text { text, .. } if text == "result"
+        ));
+    }
+
+    struct PanicTool;
+    #[async_trait]
+    impl crate::types::AgentTool for PanicTool {
+        fn name(&self) -> &str { "panic_tool" }
+        fn description(&self) -> &str { "Always panics" }
+        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        async fn execute(
+            &self,
+            _tool_call_id: &str,
+            _params: serde_json::Value,
+            _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+        ) -> Result<AgentToolResult, AgentError> {
+            panic!("tool execution panic");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_execute_panic_is_caught() {
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let tool = Arc::new(PanicTool);
+        let executor = ToolExecutor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            dispatcher,
+            tool,
+        );
+
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            name: "panic_tool".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+
+        let result = executor.execute_tool_call(&tool_call, None).await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AgentError::ToolExecutionFailed(_)));
+    }
+
+    struct TerminateMutatingDispatcher;
+    #[async_trait]
+    impl HookDispatcher for TerminateMutatingDispatcher {
+        async fn on_tool_result(
+            &self,
+            _ctx: &ToolResultCtx,
+        ) -> ToolResultMutation {
+            ToolResultMutation {
+                terminate: Some(true),
+                ..Default::default()
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_result_mutation_terminate_flag() {
+        let dispatcher = Arc::new(TerminateMutatingDispatcher);
+        let tool = Arc::new(MockTool);
+        let executor = ToolExecutor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            dispatcher,
+            tool,
+        );
+
+        let tool_call = ToolCall {
+            id: "call_1".to_string(),
+            name: "mock_tool".to_string(),
+            arguments: serde_json::json!({}),
+            thought_signature: None,
+        };
+
+        let result = executor.execute_tool_call(&tool_call, None).await.unwrap();
+        let details = result.details.unwrap();
+        // Verify terminate flag from mutation is embedded in details
+        assert_eq!(details["_terminate"], true);
     }
 }
