@@ -163,7 +163,8 @@ impl GoogleProvider {
         }
 
         if !status.to_string().starts_with('2') {
-            let body = response.text().await.unwrap_or_default();
+            let body = response.text().await
+                .map_err(|e| LlmError::ProviderError(format!("failed to read response body: {e}")))?;
             return Err(LlmError::ProviderError(format!("HTTP {status}: {body}")));
         }
 

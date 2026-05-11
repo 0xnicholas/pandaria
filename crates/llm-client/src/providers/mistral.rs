@@ -46,14 +46,25 @@ impl MistralProvider {
                         _ => serde_json::json!({"type": "text", "text": ""}),
                     }).collect::<Vec<_>>(),
                 }),
-                crate::Message::Assistant(m) => serde_json::json!({
-                    "role": "assistant",
-                    "content": m.content.iter().map(|c| match c {
-                        crate::Content::Text { text, .. } => serde_json::json!({"type": "text", "text": text}),
-                        crate::Content::ToolCall(tc) => serde_json::json!({"type": "function", "id": truncate_tool_call_id(&tc.id), "name": tc.name, "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()}),
-                        _ => serde_json::json!({"type": "text", "text": ""}),
-                    }).collect::<Vec<_>>(),
-                }),
+                crate::Message::Assistant(m) => {
+                    let mut content = Vec::with_capacity(m.content.len());
+                    for c in &m.content {
+                        let item = match c {
+                            crate::Content::Text { text, .. } => serde_json::json!({"type": "text", "text": text}),
+                            crate::Content::ToolCall(tc) => {
+                                let args = serde_json::to_string(&tc.arguments)
+                                    .map_err(|e| LlmError::Serialization(format!("failed to serialize tool call arguments: {e}")))?;
+                                serde_json::json!({"type": "function", "id": truncate_tool_call_id(&tc.id), "name": tc.name, "arguments": args})
+                            }
+                            _ => serde_json::json!({"type": "text", "text": ""}),
+                        };
+                        content.push(item);
+                    }
+                    serde_json::json!({
+                        "role": "assistant",
+                        "content": content,
+                    })
+                }
                 crate::Message::ToolResult(m) => serde_json::json!({
                     "role": "tool",
                     "tool_call_id": truncate_tool_call_id(&m.tool_call_id),
@@ -170,7 +181,8 @@ impl MistralProvider {
         }
 
         if !status.to_string().starts_with('2') {
-            let body = response.text().await.unwrap_or_default();
+            let body = response.text().await
+                .map_err(|e| LlmError::ProviderError(format!("failed to read response body: {e}")))?;
             return Err(LlmError::ProviderError(format!("HTTP {status}: {body}")));
         }
 
