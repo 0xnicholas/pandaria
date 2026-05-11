@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum AgentError {
     #[error("tool not found: {0}")]
     ToolNotFound(String),
@@ -17,6 +17,26 @@ pub enum AgentError {
     #[error("llm response error: {0}")]
     LlmResponseError(String),
 
+    #[error("context overflow: {0}")]
+    ContextOverflow(String),
+
     #[error("cancelled")]
     Cancelled,
+
+    #[error("compaction failed: {0}")]
+    CompactionFailed(String),
+
+    #[error("recovery aborted: {0}")]
+    RecoveryAborted(String),
+
+    #[error("persistence error: {0}")]
+    Persistence(String),
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum CompactionError {
+    #[error("already compacted")]
+    AlreadyCompacted,
+    #[error("llm error: {0}")]
+    LlmError(String),
 }

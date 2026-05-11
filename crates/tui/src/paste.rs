@@ -22,6 +22,37 @@ impl PasteStore {
         }
         result
     }
+
+    pub fn insert_if_large(&mut self, content: String) -> Option<usize> {
+        if content.lines().count() > 10 {
+            let id = self.next_id;
+            self.markers.insert(id, content);
+            self.next_id += 1;
+            Some(id)
+        } else {
+            None
+        }
+    }
+
+    pub fn get(&self, id: usize) -> Option<&str> {
+        self.markers.get(&id).map(|s| s.as_str())
+    }
+
+    pub fn resolve_markers(&self, text: &str) -> String {
+        let mut result = text.to_string();
+        for (&id, content) in &self.markers {
+            let start_pattern = format!("[paste #{}", id);
+            while let Some(pos) = result.find(&start_pattern) {
+                let end = result[pos..].find(']').map(|e| pos + e + 1);
+                if let Some(end) = end {
+                    result.replace_range(pos..end, content);
+                } else {
+                    break;
+                }
+            }
+        }
+        result
+    }
 }
 
 impl Default for PasteStore {

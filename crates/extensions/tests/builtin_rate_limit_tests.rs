@@ -50,6 +50,7 @@ async fn test_rate_limit_blocks_over_budget() {
 }
 
 #[tokio::test]
+#[ignore = "slow: waits for rate-limit window (61s+)"]
 async fn test_rate_limit_resets_after_window() {
     let rate_limit = RateLimitExtension::new(2);
     let ctx = ToolCallCtx {

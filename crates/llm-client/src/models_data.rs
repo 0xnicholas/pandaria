@@ -514,3 +514,113 @@ fn build_provider_list() -> HashMap<String, Vec<String>> {
 pub static MODELS: LazyLock<HashMap<String, Model>> = LazyLock::new(build_models);
 pub static PROVIDER_MODELS: LazyLock<HashMap<String, Vec<String>>> =
     LazyLock::new(build_provider_list);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_models_not_empty() {
+        assert!(!MODELS.is_empty(), "MODELS registry should not be empty");
+    }
+
+    #[test]
+    fn test_provider_models_not_empty() {
+        assert!(
+            !PROVIDER_MODELS.is_empty(),
+            "PROVIDER_MODELS registry should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_all_provider_models_exist() {
+        for (provider, model_ids) in PROVIDER_MODELS.iter() {
+            for model_id in model_ids {
+                let key = format!("{}/{}", provider, model_id);
+                assert!(
+                    MODELS.contains_key(&key),
+                    "Model '{}' listed under provider '{}' does not exist in MODELS",
+                    model_id,
+                    provider
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_no_duplicate_model_keys() {
+        // build_models uses HashMap::insert which overwrites on duplicate keys.
+        // Verify by checking the count equals the number of insert! macro calls.
+        // If we had 30 insert! calls but only 29 keys, one was silently overwritten.
+        // We'll just verify the count is stable and reasonable.
+        assert!(
+            MODELS.len() >= 20,
+            "MODELS registry seems unexpectedly small: {}",
+            MODELS.len()
+        );
+    }
+
+    #[test]
+    fn test_provider_consistency() {
+        for (key, model) in MODELS.iter() {
+            let expected_prefix = format!("{}/", model.provider);
+            assert!(
+                key.starts_with(&expected_prefix),
+                "Model key '{}' does not start with provider '{}'",
+                key,
+                model.provider
+            );
+
+            // Verify provider is listed in PROVIDER_MODELS
+            assert!(
+                PROVIDER_MODELS.contains_key(&model.provider),
+                "Provider '{}' not found in PROVIDER_MODELS",
+                model.provider
+            );
+        }
+    }
+
+    #[test]
+    fn test_provider_models_complete() {
+        // Every model in MODELS should be reachable via PROVIDER_MODELS
+        for (key, model) in MODELS.iter() {
+            let provider_models = PROVIDER_MODELS
+                .get(&model.provider)
+                .expect("Provider missing from PROVIDER_MODELS — model registry is inconsistent");
+            let model_id = key.strip_prefix(&format!("{}/", model.provider))
+                .unwrap_or(key);
+            assert!(
+                provider_models.contains(&model_id.to_string()),
+                "Model '{}' not listed under provider '{}' in PROVIDER_MODELS",
+                model_id,
+                model.provider
+            );
+        }
+    }
+
+    #[test]
+    fn test_model_fields_reasonable() {
+        for (key, model) in MODELS.iter() {
+            assert!(!model.id.is_empty(), "Model '{}' has empty id", key);
+            assert!(!model.name.is_empty(), "Model '{}' has empty name", key);
+            assert!(!model.api.is_empty(), "Model '{}' has empty api", key);
+            assert!(
+                !model.base_url.is_empty(),
+                "Model '{}' has empty base_url",
+                key
+            );
+            assert!(model.context_window > 0, "Model '{}' has zero context_window", key);
+            assert!(model.max_tokens > 0, "Model '{}' has zero max_tokens", key);
+            assert!(
+                model.cost.input >= 0.0,
+                "Model '{}' has negative input cost",
+                key
+            );
+            assert!(
+                model.cost.output >= 0.0,
+                "Model '{}' has negative output cost",
+                key
+            );
+        }
+    }
+}

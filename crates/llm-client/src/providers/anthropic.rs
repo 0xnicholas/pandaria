@@ -103,10 +103,13 @@ impl AnthropicProvider {
             body["tools"] = serde_json::json!(tool_json);
         }
 
-        // Cache_control on last message's last content block
+        // Cache_control on last **user** message's last content block (spec §9.1)
         if let Some(cc) = build_cache_control(options.cache_retention)
-            && let Some(last_msg) = messages_json.last_mut()
-            && let Some(content) = last_msg["content"].as_array_mut()
+            && let Some(last_user_msg) = messages_json
+                .iter_mut()
+                .rev()
+                .find(|m| m["role"].as_str() == Some("user"))
+            && let Some(content) = last_user_msg["content"].as_array_mut()
             && let Some(last_block) = content.last_mut()
         {
             last_block["cache_control"] = serde_json::json!(cc);
@@ -174,7 +177,8 @@ impl AnthropicProvider {
         }
 
         // Send request
-        let response = client
+        // Merge custom headers from StreamOptions
+        let mut req = client
             .post(&base_url)
             .header("x-api-key", api_key.expose_secret())
             .header("anthropic-version", "2023-06-01")
@@ -182,7 +186,14 @@ impl AnthropicProvider {
                 "anthropic-beta",
                 "interleaved-thinking-2025-05-14, fine-grained-tool-streaming-2025-05-14",
             )
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+        if let Some(custom) = &options.headers {
+            for (k, v) in custom {
+                req = req.header(k, v);
+            }
+        }
+
+        let response = req
             .json(&body)
             .send()
             .await
@@ -268,6 +279,7 @@ impl AnthropicProvider {
         }
         let mut current_block: Option<BlockType> = None;
         let mut tool_accum: String = String::new();
+        let mut text_accum: String = String::new();
         let mut thinking_accum: String = String::new();
         let mut thinking_signature: Option<String> = None;
 
@@ -308,6 +320,7 @@ impl AnthropicProvider {
                                     match block_type {
                                         "text" => {
                                             current_block = Some(BlockType::Text);
+                                            text_accum.clear();
                                             let _ = tx
                                                 .send(AssistantMessageEvent::TextStart {
                                                     content_index,
@@ -359,6 +372,7 @@ impl AnthropicProvider {
                                     match delta_type {
                                         "text_delta" => {
                                             let text = delta["text"].as_str().unwrap_or("");
+                                            text_accum.push_str(text);
                                             let _ = tx
                                                 .send(AssistantMessageEvent::TextDelta {
                                                     content_index,
@@ -405,10 +419,11 @@ impl AnthropicProvider {
                                 "content_block_stop" => {
                                     match &current_block {
                                         Some(BlockType::Text) => {
+                                            let text = std::mem::take(&mut text_accum);
                                             let _ = tx
                                                 .send(AssistantMessageEvent::TextEnd {
                                                     content_index,
-                                                    text: String::new(),
+                                                    text,
                                                     partial: partial.clone(),
                                                 })
                                                 .await;

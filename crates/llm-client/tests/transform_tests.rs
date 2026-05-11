@@ -60,7 +60,7 @@ fn test_tool_call_id_truncation() {
     let long_id = "a".repeat(100);
     let messages = vec![make_assistant(vec![make_tool_call(&long_id)])];
     let result = transform_messages(
-        messages,
+        &messages,
         &TransformOptions {
             preserve_thinking: true,
             ..Default::default()
@@ -83,7 +83,7 @@ fn test_tool_call_id_short_preserved() {
     let short = "call_123";
     let messages = vec![make_assistant(vec![make_tool_call(short)])];
     let result = transform_messages(
-        messages,
+        &messages,
         &TransformOptions {
             preserve_thinking: true,
             ..Default::default()
@@ -108,7 +108,7 @@ fn test_tool_call_id_preserves_mapping() {
         make_tool_result(&long_id),
     ];
     let result = transform_messages(
-        messages,
+        &messages,
         &TransformOptions {
             preserve_thinking: true,
             ..Default::default()
@@ -143,7 +143,7 @@ fn test_image_downgrade_non_vision() {
         timestamp: SystemTime::now(),
     })];
     let result = transform_messages(
-        messages,
+        &messages,
         &TransformOptions {
             preserve_thinking: true,
             ..Default::default()
@@ -166,7 +166,7 @@ fn test_image_preserved_vision_model() {
         timestamp: SystemTime::now(),
     })];
     let result = transform_messages(
-        messages,
+        &messages,
         &TransformOptions {
             supports_images: true,
             preserve_thinking: true,
@@ -194,7 +194,7 @@ fn test_thinking_block_removed_cross_provider() {
         },
     ])];
     let result = transform_messages(
-        messages,
+        &messages,
         &TransformOptions {
             preserve_thinking: false,
             ..Default::default()
@@ -216,7 +216,7 @@ fn test_thinking_block_preserved_same_model() {
         redacted: false,
     }])];
     let result = transform_messages(
-        messages,
+        &messages,
         &TransformOptions {
             preserve_thinking: true,
             ..Default::default()
@@ -235,7 +235,7 @@ fn test_orphan_tool_result_padding() {
     // ToolResult without preceding Assistant should get padded
     let messages = vec![make_tool_result("call_1")];
     let result = transform_messages(
-        messages,
+        &messages,
         &TransformOptions {
             preserve_thinking: true,
             ..Default::default()

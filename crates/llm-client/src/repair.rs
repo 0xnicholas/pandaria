@@ -263,4 +263,33 @@ mod tests {
         let val2 = parser.finalize().unwrap();
         assert_eq!(val2["key"], "value");
     }
+
+    #[test]
+    fn test_repair_escaped_quotes() {
+        // Valid JSON with escaped quotes should remain unchanged
+        let input = r#"{"key":"va\"lue"}"#;
+        let repaired = repair_json(input);
+        let v: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(v["key"], "va\"lue");
+    }
+
+    #[test]
+    fn test_repair_nested_unclosed() {
+        // Deeply nested object with missing closing braces
+        let input = r#"{"a":{"b":{"c":1}"#;
+        let repaired = repair_json(input);
+        let v: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(v["a"]["b"]["c"], 1);
+    }
+
+    #[test]
+    fn test_repair_mixed_heuristics() {
+        // Single quotes + trailing comma in array
+        let input = r#"{'a': 1, 'b': "hello", 'c': [1,2,]}"#;
+        let repaired = repair_json(input);
+        let v: serde_json::Value = serde_json::from_str(&repaired).unwrap();
+        assert_eq!(v["a"], 1);
+        assert_eq!(v["b"], "hello");
+        assert_eq!(v["c"].as_array().unwrap().len(), 2);
+    }
 }

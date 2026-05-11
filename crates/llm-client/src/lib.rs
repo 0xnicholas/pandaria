@@ -29,13 +29,17 @@ pub use models::{
     models_for_provider, providers, supports_xhigh,
 };
 pub use oauth::{OAuthProvider, OAuthToken, is_expired, resolve_oauth_key};
+pub use providers::anthropic::AnthropicProvider;
+pub use providers::google::GoogleProvider;
 pub use providers::mistral::MistralProvider;
+pub use providers::openai::OpenAiProvider;
 
 #[cfg(feature = "bedrock")]
 pub use providers::bedrock::AwsBedrockProvider;
 
 pub use overflow::is_context_overflow;
 pub use provider::*;
+pub use transform::*;
 pub use repair::{StreamingJsonParser, parse_json_with_repair, repair_json, sanitize_unicode};
 pub use retry::with_retry;
 pub use streaming::*;

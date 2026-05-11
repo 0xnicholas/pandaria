@@ -18,8 +18,8 @@ pub struct TransformOptions {
 /// 2. Thinking block handling (§25.5)
 /// 3. Tool call ID normalization (§25.3)
 /// 4. Orphan tool call padding (§25.6)
-pub fn transform_messages(messages: Vec<Message>, options: &TransformOptions) -> Vec<Message> {
-    let mut result: Vec<Message> = messages;
+pub fn transform_messages(messages: &[Message], options: &TransformOptions) -> Vec<Message> {
+    let mut result: Vec<Message> = messages.to_vec();
 
     // 1. Image downgrade
     if !options.supports_images {
@@ -160,17 +160,24 @@ fn pad_orphan_tool_results(messages: &mut Vec<Message>) {
 }
 
 pub(crate) fn short_hash(s: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    s.hash(&mut hasher);
-    format!("{:08x}", hasher.finish())
+    // Deterministic 64-bit hash, stable across Rust versions.
+    // FNV-1a 64-bit with splitmix64 finalizer for adequate avalanche.
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in s.as_bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h = h.wrapping_add(0x9e3779b97f4a7c15);
+    h = (h ^ (h >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    h = (h ^ (h >> 27)).wrapping_mul(0x94d049bb133111eb);
+    h ^= h >> 31;
+    format!("{:08x}", h)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ToolResultMessage;
+    use crate::{ToolCall, ToolResultMessage, UserMessage};
 
     fn make_tool_call(id: &str) -> Content {
         Content::ToolCall(crate::ToolCall {
@@ -237,7 +244,7 @@ mod tests {
             }),
         ];
         let result = transform_messages(
-            messages,
+            &messages,
             &TransformOptions {
                 preserve_thinking: true,
                 ..Default::default()
@@ -273,7 +280,7 @@ mod tests {
             timestamp: std::time::SystemTime::now(),
         })];
         let result = transform_messages(
-            messages,
+            &messages,
             &TransformOptions {
                 preserve_thinking: true,
                 ..Default::default()
@@ -296,7 +303,7 @@ mod tests {
             timestamp: std::time::SystemTime::now(),
         })];
         let result = transform_messages(
-            messages,
+            &messages,
             &TransformOptions {
                 supports_images: true,
                 preserve_thinking: true,
@@ -343,7 +350,7 @@ mod tests {
             timestamp: std::time::SystemTime::now(),
         })];
         let result = transform_messages(
-            messages,
+            &messages,
             &TransformOptions {
                 preserve_thinking: false,
                 ..Default::default()
@@ -384,7 +391,7 @@ mod tests {
             timestamp: std::time::SystemTime::now(),
         })];
         let result = transform_messages(
-            messages,
+            &messages,
             &TransformOptions {
                 preserve_thinking: true,
                 ..Default::default()
@@ -396,5 +403,135 @@ mod tests {
         };
         assert_eq!(assist.content.len(), 1);
         assert!(matches!(assist.content[0], Content::Thinking { .. }));
+    }
+
+    #[test]
+    fn test_full_pipeline_all_transforms() {
+        // Simultaneously exercise image downgrade, thinking removal,
+        // tool call ID truncation, and orphan tool result padding.
+        let long_id = "x".repeat(100);
+        let orphan_id = "orphan_tool_call_that_has_no_matching_assistant";
+        let messages = vec![
+            Message::User(UserMessage {
+                content: vec![
+                    Content::Text {
+                        text: "hello".into(),
+                        text_signature: None,
+                    },
+                    Content::Image {
+                        data: "base64img".into(),
+                        mime_type: "image/png".into(),
+                    },
+                ],
+                timestamp: std::time::SystemTime::now(),
+            }),
+            Message::Assistant(AssistantMessage {
+                content: vec![
+                    Content::Thinking {
+                        thinking: "hmm".into(),
+                        thinking_signature: None,
+                        redacted: false,
+                    },
+                    Content::ToolCall(ToolCall {
+                        id: long_id.clone(),
+                        name: "test".into(),
+                        arguments: serde_json::json!({}),
+                        thought_signature: None,
+                    }),
+                ],
+                provider: "test".into(),
+                model: "test".into(),
+                api: Api {
+                    provider: "test".into(),
+                    model: "test".into(),
+                },
+                usage: Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    total_tokens: 0,
+                },
+                stop_reason: StopReason::ToolUse,
+                response_id: None,
+                error_message: None,
+                timestamp: std::time::SystemTime::now(),
+            }),
+            Message::ToolResult(ToolResultMessage {
+                tool_call_id: long_id.clone(),
+                tool_name: "test".into(),
+                content: vec![],
+                details: None,
+                is_error: false,
+                timestamp: std::time::SystemTime::now(),
+            }),
+            // Orphan: no preceding assistant has a tool call with this ID
+            Message::ToolResult(ToolResultMessage {
+                tool_call_id: orphan_id.to_string(),
+                tool_name: "orphan".into(),
+                content: vec![],
+                details: None,
+                is_error: false,
+                timestamp: std::time::SystemTime::now(),
+            }),
+        ];
+        let result = transform_messages(
+            &messages,
+            &TransformOptions {
+                supports_images: false,
+                preserve_thinking: false,
+                ..Default::default()
+            },
+        );
+        // After transforms: image downgraded, thinking removed, ID truncated,
+        // orphan padded with synthetic AssistantMessage.
+        // Expected >= 5: User, padded Assistant (orphan), Assistant (truncated),
+        // ToolResult (matched), ToolResult (orphan).
+        assert!(
+            result.len() >= 5,
+            "expected at least 5 messages, got {}",
+            result.len()
+        );
+
+        // User: image should be replaced with text placeholder
+        let user = result.iter().find_map(|m| match m {
+            Message::User(m) => Some(m),
+            _ => None,
+        }).unwrap();
+        let text_count = user.content.iter().filter(|c| matches!(c, Content::Text { .. })).count();
+        assert_eq!(text_count, 2, "image should be downgraded to text alongside original text");
+
+        // Assistant: thinking block should be removed, tool call ID truncated
+        let assists: Vec<_> = result.iter().filter_map(|m| match m {
+            Message::Assistant(m) => Some(m),
+            _ => None,
+        }).collect();
+        // Should have at least 2: one synthetic (orphan padding) + one original
+        assert!(assists.len() >= 2, "expected at least 2 assistants, got {}", assists.len());
+
+        // Find the non-synthetic assistant (has tool call content, provider != "system")
+        let original_assist = assists.iter().find(|m| m.provider != "system").unwrap();
+        let has_thinking = original_assist.content.iter().any(|c| matches!(c, Content::Thinking { .. }));
+        assert!(!has_thinking, "thinking should be removed");
+        let tc_id = original_assist.content.iter().find_map(|c| match c {
+            Content::ToolCall(tc) => Some(tc.id.clone()),
+            _ => None,
+        }).unwrap();
+        assert!(tc_id.len() <= 64, "tool call ID should be truncated");
+        assert_ne!(tc_id, long_id, "truncated ID should differ from original");
+
+        // ToolResult with matching ID: should match truncated tool call ID
+        let matched_tr = result.iter().find_map(|m| match m {
+            Message::ToolResult(m) if m.tool_name == "test" => Some(m),
+            _ => None,
+        }).unwrap();
+        assert_eq!(matched_tr.tool_call_id, tc_id, "matched tool result ID should equal truncated ID");
+
+        // Orphan ToolResult: should still exist, with padding assistant preceding it
+        let orphan_tr = result.iter().find_map(|m| match m {
+            Message::ToolResult(m) if m.tool_name == "orphan" => Some(m),
+            _ => None,
+        }).unwrap();
+        assert_eq!(orphan_tr.tool_call_id, orphan_id, "orphan tool result ID should be preserved");
     }
 }

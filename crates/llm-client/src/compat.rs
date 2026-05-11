@@ -73,7 +73,7 @@ pub struct OpenAiCompat {
 
 // ━━━ Anthropic Messages Compatibility ━━━
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct AnthropicCompat {
     pub supports_eager_tool_input_streaming: Option<bool>,
     pub supports_long_cache_retention: Option<bool>,
@@ -315,5 +315,17 @@ mod tests {
         assert_eq!(merged.supports_developer_role, Some(false));
         // Fields not in explicit retain baseline
         assert!(merged.reasoning_effort_map.is_none());
+    }
+
+    #[test]
+    fn test_detect_anthropic_always_default() {
+        // detect_anthropic_compat currently ignores its arguments and
+        // always returns the default AnthropicCompat. If this function
+        // gains detection logic in the future, this test should be updated.
+        let result = detect_anthropic_compat("anthropic", "https://api.anthropic.com");
+        assert_eq!(result, AnthropicCompat::default());
+
+        let result2 = detect_anthropic_compat("custom", "https://custom.proxy.io");
+        assert_eq!(result2, AnthropicCompat::default());
     }
 }

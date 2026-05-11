@@ -8,8 +8,11 @@ agent-core = { path = "../agent-core" }
 llm-client = { path = "../llm-client" }
 tokio = { workspace = true }
 async-trait = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 serde_json = { workspace = true }
+dashmap = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

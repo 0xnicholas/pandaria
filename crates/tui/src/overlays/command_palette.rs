@@ -59,3 +59,67 @@ impl Overlay for CommandPalette {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::overlays::OverlayAction;
+
+    #[test]
+    fn test_empty_filter_shows_all() {
+        let cp = CommandPalette::new();
+        assert_eq!(cp.filtered().len(), COMMANDS.len());
+    }
+
+    #[test]
+    fn test_filter_matches_command() {
+        let mut cp = CommandPalette::new();
+        cp.handle_input(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE));
+        let f = cp.filtered();
+        assert!(f.iter().any(|(c, _)| c.contains("quit")));
+    }
+
+    #[test]
+    fn test_filter_matches_description() {
+        let mut cp = CommandPalette::new();
+        for ch in "session".chars() {
+            cp.handle_input(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Char(ch), crossterm::event::KeyModifiers::NONE));
+        }
+        let f = cp.filtered();
+        assert!(f.iter().any(|(_, d)| d.to_lowercase().contains("session")));
+    }
+
+    #[test]
+    fn test_enter_confirms_selection() {
+        let mut cp = CommandPalette::new();
+        // /quit is first in list
+        let action = cp.handle_input(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Enter, crossterm::event::KeyModifiers::NONE));
+        assert!(matches!(action, OverlayAction::Confirm(ref v) if v == "/quit"));
+    }
+
+    #[test]
+    fn test_esc_dismisses() {
+        let mut cp = CommandPalette::new();
+        let action = cp.handle_input(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE));
+        assert!(matches!(action, OverlayAction::Dismiss));
+    }
+
+    #[test]
+    fn test_down_arrow_navigates() {
+        let mut cp = CommandPalette::new();
+        cp.handle_input(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Down, crossterm::event::KeyModifiers::NONE));
+        assert_eq!(cp.selected, 1);
+        cp.handle_input(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Down, crossterm::event::KeyModifiers::NONE));
+        assert_eq!(cp.selected, 2);
+    }
+
+    #[test]
+    fn test_up_arrow_wraps_at_zero() {
+        let mut cp = CommandPalette::new();
+        cp.selected = 1;
+        cp.handle_input(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Up, crossterm::event::KeyModifiers::NONE));
+        assert_eq!(cp.selected, 0);
+        cp.handle_input(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Up, crossterm::event::KeyModifiers::NONE));
+        assert_eq!(cp.selected, 0);
+    }
+}

@@ -69,8 +69,20 @@ impl OpenAiProvider {
             "model": model,
             "messages": messages,
             "stream": true,
-            "max_completion_tokens": options.max_tokens.unwrap_or(4096),
         });
+
+        // Determine max_tokens field name from compat (default: max_completion_tokens)
+        let max_tokens_key = match crate::models::get_model("openai", model) {
+            Some(m) => match &m.compat {
+                crate::models::ModelCompat::OpenAI(c) => match c.max_tokens_field {
+                    Some(crate::compat::MaxTokensField::MaxTokens) => "max_tokens",
+                    _ => "max_completion_tokens",
+                },
+                _ => "max_completion_tokens",
+            },
+            None => "max_completion_tokens",
+        };
+        body[max_tokens_key] = serde_json::json!(options.max_tokens.unwrap_or(4096));
 
         if let Some(tools) = &context.tools {
             body["tools"] = serde_json::json!(
@@ -137,7 +149,7 @@ impl OpenAiProvider {
                     let effort = if level == crate::provider::ReasoningLevel::XHigh {
                         "max"
                     } else {
-                        map_reasoning_effort(level)
+                        "high"
                     };
                     body["reasoning_effort"] = serde_json::json!(effort);
                 }
@@ -156,9 +168,9 @@ impl OpenAiProvider {
             }
         }
 
-        // on_payload hook
+        // on_payload hook — use real model metadata when available
         if let Some(hook) = &options.on_payload {
-            let placeholder = crate::Model {
+            let model_meta = crate::models::get_model("openai", model).unwrap_or_else(|| crate::Model {
                 id: model.to_string(),
                 name: model.to_string(),
                 api: "openai-completions".to_string(),
@@ -171,8 +183,8 @@ impl OpenAiProvider {
                 max_tokens: 128_000,
                 headers: None,
                 compat: crate::models::ModelCompat::None,
-            };
-            hook(&mut body, &placeholder).await;
+            });
+            hook(&mut body, &model_meta).await;
         }
 
         // Send request
@@ -191,6 +203,13 @@ impl OpenAiProvider {
             req = req.header("x-client-request-id", sid);
         }
 
+        // Merge custom headers from StreamOptions
+        if let Some(custom) = &options.headers {
+            for (k, v) in custom {
+                req = req.header(k, v);
+            }
+        }
+
         let response = req
             .json(&body)
             .send()
@@ -205,7 +224,7 @@ impl OpenAiProvider {
             .collect();
 
         if let Some(hook) = &options.on_response {
-            let placeholder = crate::Model {
+            let model_meta = crate::models::get_model("openai", model).unwrap_or_else(|| crate::Model {
                 id: model.to_string(),
                 name: model.to_string(),
                 api: "openai-completions".to_string(),
@@ -218,8 +237,8 @@ impl OpenAiProvider {
                 max_tokens: 128_000,
                 headers: None,
                 compat: crate::models::ModelCompat::None,
-            };
-            hook(&crate::ProviderResponse { status, headers }, &placeholder).await;
+            });
+            hook(&crate::ProviderResponse { status, headers }, &model_meta).await;
         }
 
         if !status.to_string().starts_with('2') {
@@ -316,6 +335,13 @@ impl OpenAiProvider {
                             if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data)
                                 && let Some(choices) = chunk["choices"].as_array()
                             {
+                                // Extract response.id from the first chunk that carries it
+                                if partial.response_id.is_none()
+                                    && let Some(id) = chunk["id"].as_str()
+                                {
+                                    partial.response_id = Some(id.to_string());
+                                }
+
                                 for choice in choices {
                                     let delta = &choice["delta"];
 

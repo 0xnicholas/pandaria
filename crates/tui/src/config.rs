@@ -1,5 +1,6 @@
 use clap::Parser;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// CLI arguments for pandaria-tui.
@@ -34,6 +35,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub auth: AuthConfig,
     pub ui: UiConfig,
+    #[serde(default)]
     pub keys: Option<KeysConfig>,
 }
 
@@ -70,9 +72,10 @@ fn default_true() -> bool { true }
 fn default_syntax_theme() -> String { "base16-ocean.dark".to_string() }
 fn default_scrollback() -> usize { 1000 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeysConfig {
-    // User keybinding overrides (TBD MVP)
+    #[serde(flatten)]
+    pub bindings: HashMap<String, toml::Value>,
 }
 
 impl Config {

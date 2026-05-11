@@ -117,6 +117,61 @@ impl Extension for UppercaseToolExt {
     }
 }
 
+struct SequentialToolExt;
+
+#[async_trait]
+impl Extension for SequentialToolExt {
+    fn name(&self) -> &str {
+        "sequential_tool"
+    }
+
+    fn tools(&self) -> Vec<ToolDef> {
+        vec![ToolDef {
+            name: "sequential_tool".to_string(),
+            description: "A tool that must run sequentially".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "type": "string",
+                        "description": "The value to process"
+                    }
+                },
+                "required": ["value"]
+            }),
+        }]
+    }
+
+    fn tool_execution_modes(&self) -> std::collections::HashMap<String, agent_core::types::ToolExecutionMode> {
+        let mut modes = std::collections::HashMap::new();
+        modes.insert(
+            "sequential_tool".to_string(),
+            agent_core::types::ToolExecutionMode::Sequential,
+        );
+        modes
+    }
+
+    async fn execute_tool(
+        &self,
+        _tool_call_id: &str,
+        params: serde_json::Value,
+    ) -> Result<AgentToolResult, AgentError> {
+        let value = params
+            .get("value")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        Ok(AgentToolResult {
+            content: vec![Content::Text {
+                text: format!("sequential result: {}", value),
+                text_signature: None,
+            }],
+            details: None,
+            is_error: false,
+            terminate: false,
+        })
+    }
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -233,4 +288,20 @@ async fn test_extension_tool_with_mutation() {
 
     // Third message: assistant with stop
     assert!(matches!(&results[2], AgentMessage::Assistant(_)));
+}
+
+#[tokio::test]
+async fn test_extension_tool_execution_mode_configurable() {
+    let ext = Arc::new(SequentialToolExt);
+    let manager = ExtensionManager::new(vec![ext]);
+    let (_hook_router, handles, _join_handles) = manager.spawn_all();
+    let tools = manager.collect_agent_tools(&handles);
+
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name(), "sequential_tool");
+    assert_eq!(
+        tools[0].execution_mode(),
+        agent_core::types::ToolExecutionMode::Sequential,
+        "sequential_tool should be configured as Sequential"
+    );
 }

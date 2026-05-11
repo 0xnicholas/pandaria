@@ -6,10 +6,11 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 
 - 实现 ADR-001 定义的 agent loop：`UserMessage → AssistantMessage { ToolCall[] } → ToolResultMessage → ... → stop`
 - 双层循环：外层 follow-up 消息队列、内层 turn tool 执行循环（支持串行/并行）
+- 跨 provider 消息标准化：`llm_client::transform_messages()` 在每次 LLM 调用前自动处理 image downgrade、thinking block、tool call ID normalization、orphan padding
 - `AgentTool` trait：工具抽象（名称、描述、参数 schema、执行模式、执行）
 - `ToolExecutor`：工具执行管道（prepare → on_tool_call → execute → on_tool_result → finalize）
 - `HookDispatcher` trait：hook 分发抽象（阻断型 + 链式 + 观测型），由 extensions crate 实现
-- `SessionActor`：session 状态管理、prompt/steer/followUp/abort 生命周期
+- `SessionActor`：session 状态管理、prompt/steer/followUp/abort/shutdown 生命周期、Drop 清理
 - `SessionStore` trait：持久化抽象，由 persistence crate 实现
 
 ## 公开接口
@@ -25,6 +26,7 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 | `session` | `SessionActor` |
 | `store` | `SessionStore` trait |
 | `error` | `AgentError` |
+| `hook_timeout` | `with_timeout` — 所有 hook 调用的超时 + panic 边界 |
 
 ## 边界
 
@@ -32,6 +34,7 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 - **不知具体 LLM provider**——通过 `LlmProvider` trait 注入
 - **不知具体持久化后端**——通过 `SessionStore` trait 注入，SessionActor 保存为 fire-and-forget，调用方可通过 `flush()` 确保持久化
 - **tenant_id / session_id 贯穿所有操作**——所有 tracing span 和 context 结构体携带租户和会话标识
+- **所有 hook 调用有超时保护**——阻断型/链式 hook 500ms 超时，观测型 hook 100ms 超时；panic 时静默使用默认值
 
 ## 依赖
 

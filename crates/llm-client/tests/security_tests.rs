@@ -30,3 +30,15 @@ fn test_stream_options_api_key_redacted() {
     assert!(debug.contains("[REDACTED]"));
     assert!(!debug.contains("sk-secret-key"));
 }
+
+#[test]
+fn test_api_key_not_in_error_display() {
+    // LlmError should not expose the actual API key in its Display output.
+    // AuthError messages use the env-var name, not the key value.
+    let err = llm_client::LlmError::AuthError(
+        "OPENAI_API_KEY not set".to_string(),
+    );
+    let display = format!("{}", err);
+    assert!(display.contains("OPENAI_API_KEY"));
+    assert!(!display.contains("sk-"));
+}

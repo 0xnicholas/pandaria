@@ -4,6 +4,8 @@ members = [
     "crates/llm-client",
     "crates/agent-core",
     "crates/extensions",
+    "crates/persistence",
+    "crates/observability",
     "crates/tui",
 ]
 
@@ -19,6 +21,8 @@ tokio-util = "0.7"
 futures-util = "0.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+dashmap = "6"
 
 [package]
 name = "pandaria"

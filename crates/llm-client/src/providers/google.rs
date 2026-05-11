@@ -119,10 +119,19 @@ impl GoogleProvider {
         // Send request
         let url = format!("{}/models/{}:streamGenerateContent?alt=sse", base_url, model);
 
-        let response = client
+        let mut req = client
             .post(&url)
             .header("x-goog-api-key", api_key.expose_secret())
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+
+        // Merge custom headers from StreamOptions
+        if let Some(custom) = &options.headers {
+            for (k, v) in custom {
+                req = req.header(k, v);
+            }
+        }
+
+        let response = req
             .json(&body)
             .send()
             .await
@@ -190,6 +199,7 @@ impl GoogleProvider {
 
         let mut content_index: usize = 0;
         let mut buffer = String::new();
+        let mut current_text_block: bool = false;
         while let Some(chunk) = sse_stream.next().await {
             if signal.is_cancelled() {
                 return Err(LlmError::Cancelled);
@@ -219,6 +229,15 @@ impl GoogleProvider {
                                                     })
                                                     .await;
                                             } else {
+                                                if !current_text_block {
+                                                    current_text_block = true;
+                                                    let _ = tx
+                                                        .send(AssistantMessageEvent::TextStart {
+                                                            content_index,
+                                                            partial: partial.clone(),
+                                                        })
+                                                        .await;
+                                                }
                                                 let _ = tx
                                                     .send(AssistantMessageEvent::TextDelta {
                                                         content_index,
@@ -230,6 +249,16 @@ impl GoogleProvider {
                                         }
 
                                         if let Some(fc) = part.get("functionCall") {
+                                            if current_text_block {
+                                                current_text_block = false;
+                                                let _ = tx
+                                                    .send(AssistantMessageEvent::TextEnd {
+                                                        content_index,
+                                                        text: String::new(),
+                                                        partial: partial.clone(),
+                                                    })
+                                                    .await;
+                                            }
                                             let tc = crate::ToolCall {
                                                 id: format!("call_{}", content_index),
                                                 name: fc["name"].as_str().unwrap_or("").to_string(),
@@ -249,6 +278,16 @@ impl GoogleProvider {
                                 }
 
                                 if let Some(reason) = candidate["finishReason"].as_str() {
+                                    if current_text_block {
+                                        current_text_block = false;
+                                        let _ = tx
+                                            .send(AssistantMessageEvent::TextEnd {
+                                                content_index,
+                                                text: String::new(),
+                                                partial: partial.clone(),
+                                            })
+                                            .await;
+                                    }
                                     partial.stop_reason = match reason {
                                         "STOP" => crate::StopReason::Stop,
                                         "MAX_TOKENS" => crate::StopReason::Length,

@@ -1,36 +1,78 @@
 use async_trait::async_trait;
 
-use crate::context::{AgentEndCtx, ContextCtx, SessionCtx, ToolCallCtx, ToolResultCtx, TurnEndCtx};
-use crate::mutations::{ContextMutation, HookDecision, ToolResultMutation};
+use crate::context::{
+    AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx,
+    ProviderRequestCtx, ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx,
+    ToolExecutionStartCtx, ToolExecutionUpdateCtx, ToolResultCtx, TurnEndCtx,
+};
+use crate::mutations::{
+    BeforeAgentStartMutation, CompactDecision, ContextMutation, HookDecision,
+    ProviderRequestMutation, ProviderResponseMutation, ToolCallMutation, ToolResultMutation,
+};
 
 /// Dependency-inversion boundary for extension hook dispatch.
 ///
-/// Blocking hooks (`on_tool_call`) follow first-block-wins semantics.
-/// Chaining hooks (`on_tool_result`, `on_context`) chain-merge mutations.
-/// Observational hooks (`on_turn_end`, `on_agent_end`, `on_session_start`) are fire-and-forget.
+/// Blocking hooks (`on_tool_call`, `on_before_compact`) follow first-block-wins semantics.
+/// Chaining hooks (`on_tool_result`, `on_context`, `on_before_agent_start`,
+/// `on_before_provider_request`, `on_after_provider_response`) chain-merge mutations.
+/// Observational hooks are fire-and-forget.
 #[async_trait]
 pub trait HookDispatcher: Send + Sync {
-    /// Blocking hook — first-block-wins
-    async fn on_tool_call(&self, _ctx: &ToolCallCtx) -> HookDecision {
-        HookDecision::Continue
+    // ═══ Blocking hooks — first-block-wins ═══
+
+    /// Blocking hook with input mutation support.
+    async fn on_tool_call(&self,
+        _ctx: &ToolCallCtx,
+    ) -> (HookDecision, ToolCallMutation) {
+        (HookDecision::Continue, ToolCallMutation::default())
     }
 
-    /// Chaining hook — each handler sees previous mutations
-    async fn on_tool_result(&self, _ctx: &ToolResultCtx) -> ToolResultMutation {
+    /// Blocking hook for compaction.
+    async fn on_before_compact(&self,
+        _ctx: &CompactCtx,
+    ) -> CompactDecision {
+        CompactDecision::Continue
+    }
+
+    // ═══ Chaining hooks — chain merge ═══
+
+    async fn on_tool_result(&self,
+        _ctx: &ToolResultCtx,
+    ) -> ToolResultMutation {
         ToolResultMutation::default()
     }
 
-    /// Chaining hook — each handler transforms context messages
-    async fn on_context(&self, _ctx: &ContextCtx) -> ContextMutation {
+    async fn on_context(&self,
+        _ctx: &ContextCtx,
+    ) -> ContextMutation {
         ContextMutation::default()
     }
 
-    /// Observational hook — fire-and-forget
+    async fn on_before_agent_start(&self,
+        _ctx: &BeforeAgentStartCtx,
+    ) -> BeforeAgentStartMutation {
+        BeforeAgentStartMutation::default()
+    }
+
+    async fn on_before_provider_request(&self,
+        _ctx: &ProviderRequestCtx,
+    ) -> ProviderRequestMutation {
+        ProviderRequestMutation::default()
+    }
+
+    async fn on_after_provider_response(&self,
+        _ctx: &ProviderResponseCtx,
+    ) -> ProviderResponseMutation {
+        ProviderResponseMutation::default()
+    }
+
+    // ═══ Observational hooks — fire-and-forget ═══
+
     async fn on_turn_end(&self, _ctx: &TurnEndCtx) {}
-
-    /// Observational hook — fire-and-forget
     async fn on_agent_end(&self, _ctx: &AgentEndCtx) {}
-
-    /// Observational hook — fire-and-forget
     async fn on_session_start(&self, _ctx: &SessionCtx) {}
+    async fn on_tool_execution_start(&self, _ctx: &ToolExecutionStartCtx) {}
+    async fn on_tool_execution_update(&self, _ctx: &ToolExecutionUpdateCtx) {}
+    async fn on_tool_execution_end(&self, _ctx: &ToolExecutionEndCtx) {}
+    async fn on_compact_end(&self, _ctx: &CompactEndCtx) {}
 }

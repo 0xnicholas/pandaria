@@ -48,19 +48,15 @@ The TUI currently communicates with a server via SSE + HTTP REST, but the server
      ┌──────▼──────┐        ┌──────▼──────┐
      │ LocalBackend│        │ HttpBackend │ (future)
      │             │        │ (RestClient)│
-     │ SessionActor│        └─────────────┘
+     │ SessionData │        └─────────────┘
      │ Streaming   │
      │ Provider    │
      └──────┬──────┘
             │
      ┌──────▼──────────────────────┐
-     │ agent-core::SessionActor    │
-     │   ├── prompt(text)          │
-     │   ├── abort()               │
-     │   └── messages()            │
-     │                             │
      │ agent-core::AgentLoop       │
-     │   └── run() → stream        │
+     │   └── run(messages,         │
+     │          provider) → stream │
      │         ↓                   │
      │ StreamingProvider           │
      │   └── intercept events →    │
@@ -95,19 +91,24 @@ pub trait Backend: Send + Sync {
     /// Delete a session and its history.
     async fn delete_session(&self, id: &str) -> Result<(), String>;
 
+    /// Clear the message history for a session.
+    async fn clear_session(&self, id: &str) -> Result<(), String>;
+
     /// Send a user message to the session.
     ///
-    /// Returns a `Receiver<ServerEvent>` that yields streaming events
-    /// (text deltas, tool calls, turn end, errors). The caller should poll
-    /// this receiver until `TurnEnd` or `Error` is received, then drop it.
+    /// The caller creates the mpsc channel and passes the sender.
+    /// Streaming events (text deltas, tool calls, turn end, errors)
+    /// are written to `tx`. The caller reads from the receiver end
+    /// in the TUI event loop.
     ///
-    /// This is the same channel type used by the SSE client path —
-    /// `App::server_rx` can hold either without code changes.
+    /// This matches the existing SSE client pattern where `submit_input`
+    /// creates the channel and passes the sender to the transport layer.
     async fn send_message(
         &self,
         session_id: &str,
         content: &str,
-    ) -> Result<mpsc::Receiver<ServerEvent>, String>;
+        tx: mpsc::Sender<ServerEvent>,
+    ) -> Result<(), String>;
 
     /// Interrupt an in-flight message stream.
     async fn interrupt(&self, session_id: &str) -> Result<(), String>;
@@ -126,8 +127,11 @@ Defined in `crates/tui/src/backend/local.rs`.
 
 ```rust
 pub struct LocalBackend {
-    /// Active sessions, keyed by session ID.
-    sessions: Arc<Mutex<HashMap<String, SessionActor>>>,
+    /// Active sessions, keyed by session ID. Each session holds message history
+    /// and metadata. No `SessionActor` — the stateless `AgentLoop` is used
+    /// directly in `send_message()` to avoid a circular construction dependency
+    /// (AgentLoop takes the provider at call time, not construction time).
+    sessions: Arc<tokio::sync::Mutex<HashMap<String, SessionData>>>,
 
     /// LLM provider shared across all sessions.
     provider: Arc<dyn LlmProvider>,
@@ -144,50 +148,76 @@ pub struct LocalBackend {
     /// Current model name.
     model: Mutex<String>,
 }
+
+struct SessionData {
+    info: SessionInfo,
+    /// Full message history (user, assistant, tool result). Passed to
+    /// AgentLoop::run() on each prompt; new messages are appended after.
+    messages: Vec<AgentMessage>,
+    /// CancellationToken for aborting the in-flight prompt.
+    cancel_token: CancellationToken,
+}
 ```
 
 **Design decisions:**
 
-- **`Arc<Mutex<HashMap<...>>>`** — The TUI runs on a single thread (the tokio event loop). The `Mutex` guards access to `SessionActor` (which requires `&mut self` for `prompt()`), and `Arc` allows sharing between the event loop and spawned streaming tasks. No actual contention occurs because the TUI serializes all user actions.
+- **`Arc<tokio::sync::Mutex<...>>`** — Tokio's async-aware mutex, safe to hold across `.await` points. The `send_message` flow removes the session from the map (so the lock is released before the prompt), runs AgentLoop, then re-inserts — no lock is held across the LLM call.
+- **`SessionData`, not `SessionActor`** — `SessionActor` stores an `Arc<dyn LlmProvider>` at construction time, which creates a circular dependency with `StreamingProvider` (see §4.2). The stateless `AgentLoop::run()` takes messages + provider as parameters, avoiding this. Steer/follow-up queues and auto-compaction are sacrificed for MV simplicity.
 - **Shared provider** — All sessions use the same `LlmProvider` instance. This avoids re-creating HTTP connection pools per session.
 - **Noop `HookDispatcher`** — Local mode uses `AllowAllDispatcher` (all hooks default to no-op). Extension hooks can be wired in later without changing the `Backend` trait.
 - **`model: Mutex<String>`** — The current model name is shared across all sessions under `LocalBackend`. Per-session model selection is deferred (single-model usage is sufficient for local mode MVP).
 
+**Important limitation — no tools:** Local mode MVP ships with zero registered tools (`AgentLoop` receives `vec![]`). All agent responses will be text-only. The tool call rendering paths in the TUI (ToolCallWidget, ToolCallState) are exercised by the StreamingProvider event mapping code but will never fire from actual LLM tool use. Built-in tools (file read/write, shell, etc.) are deferred to a follow-up work item.
+
 ### 4.2 `send_message` Implementation
 
 ```
-LocalBackend::send_message(session_id, content):
-  1. Lock sessions, get SessionActor
-  2. Create mpsc::channel::<ServerEvent>(32)
-  3. Clone Arc<sessions>, Arc<provider>, tx
-  4. Spawn tokio task:
-     a. Wrap provider with StreamingProvider(provider, tx)
-     b. Build new SessionActor with StreamingProvider
-     c. Call session.prompt(content)
-     d. Map any remaining messages to ServerEvent (catch final tool results)
-     e. Send TurnEnd or Error
+LocalBackend::send_message(session_id, content, tx):
+  1. Create fresh CancellationToken, store in cancel_tokens map
+     ── (so interrupt() works even while session data is removed) ──
+  2. Lock sessions, remove SessionData, drop lock
+     ── (tokio::sync::MutexGuard released before any .await) ──
+  3. Append user message to session.messages
+  4. Build StreamingProvider(inner_provider, tx, state)
+  5. Build AgentLoop(tenant_id, session_id, model,
+                     streaming_provider, hook_dispatcher, vec![])
+  6. Spawn tokio task:
+     a. Call agent_loop.run(system_prompt, messages, cancel_token.child_token())
+     b. The loop streams via StreamingProvider → events land in tx
+     c. After loop returns Vec<AgentMessage>:
+        - Append returned messages to session.messages
+        - Scan for ToolResult messages → emit ToolCallDone events via tx
+        - Emit single TurnEnd { stop_reason, usage } via tx
+     d. If error: emit Error event via tx
+     e. Re-lock sessions, re-insert session data, drop lock
      f. Drop tx (signals end of stream to receiver)
-  5. Return rx to caller
+  7. Return Ok(()) — events are delivered asynchronously via tx
 ```
 
-**Important:** `SessionActor::prompt()` takes `&mut self`. The spawned task owns the `SessionActor` (via `Arc<Mutex<>>` lock held for the duration of the prompt). No other operation on this session can proceed until the prompt completes — this matches the TUI's single-turn-at-a-time model.
+**Key points:**
+
+- **`tx` is provided by the caller** — The TUI's `submit_input()` creates the channel and passes the sender. This matches the existing SSE pattern where `sse::connect()` receives a pre-created `tx`. No channel forwarding hop.
+- **`HashMap::remove` + spawn** — The session data is removed from the map before spawning, so the `tokio::sync::Mutex` guard is dropped immediately. No lock is held across the LLM call.
+- **`cancel_tokens` for interruptability** — A fresh `CancellationToken` is stored in a separate `cancel_tokens` map (not inside `SessionData`). `interrupt()` cancels this token directly, regardless of whether the session is temporarily absent from the sessions map.
+- **`AgentLoop`, not `SessionActor`** — `AgentLoop::run()` takes the provider as a parameter (no construction-time binding). This avoids circular construction between `StreamingProvider` and `SessionActor`.
 
 ### 4.3 `interrupt` Implementation
 
 ```
 LocalBackend::interrupt(session_id):
-  1. Lock sessions, get SessionActor
-  2. Call session.abort()
-  3. The CancellationToken propagates to the LLM stream, which returns LlmError::Cancelled
+  1. Lock sessions, get SessionData by session_id
+  2. Call session.cancel_token.cancel()
+  3. The CancellationToken propagates to the LLM stream,
+     which returns LlmError::Cancelled
   4. The spawned task sends Error { code: "cancelled", ... } via tx
 ```
 
 ### 4.4 Session Lifecycle
 
-- **`/new`**: Generates a UUIDv4 session ID, creates `SessionActor` with the configured model and provider, stores in `sessions` map.
+- **`/new`**: Generates a UUIDv4 session ID, creates `SessionData { info, messages: vec![], cancel_token: new() }`, stores in `sessions` map. Returns `SessionInfo`.
 - **`/switch <id>`**: Updates `State::active_session`. The `LocalBackend` is not involved — session switching only affects the TUI's view state.
-- **`/clear`**: Clears `SessionState::messages` in the TUI state. Does not touch `SessionActor` (agent history remains but UI view is cleared).
-- **`/model <id>`**: Updates `LocalBackend.model`. Future sessions use the new model. Active session is not affected (a new session must be created with `/new`).
+- **`/clear`**: Clears `SessionState::messages` in the TUI state AND `SessionData::messages` in the `LocalBackend` (via `backend.clear_session(id)`). Both sides reset so the next prompt starts with a clean message history.
+- **`/model <id>`**: Updates `LocalBackend.model`. Active session is not affected — a new session must be created with `/new` to use the new model. Displays a status notification: *"Model changed to X. Start a new session (/new) to use it."*
 
 ---
 
@@ -197,16 +227,19 @@ Defined in `crates/tui/src/backend/streaming_provider.rs`.
 
 ### 5.1 Purpose
 
-Intercept the `AssistantMessageEventStream` produced by an inner `LlmProvider`, forward each event through an `mpsc::Sender<ServerEvent>` (after mapping), and yield the same events to the caller (so the agent loop continues to work).
+Intercept the `AssistantMessageEventStream` produced by an inner `LlmProvider`, forward each event through an `mpsc::Sender<ServerEvent>` (after mapping), and yield the same events to the caller (so the agent loop continues to work). `StreamingProvider` is a pure pass-through — it does not track tool call state or execution results. Tool execution sequencing is handled by the spawned task in `LocalBackend::send_message()`.
 
 ### 5.2 Structure
 
 ```rust
 pub struct StreamingProvider {
+    /// The real LLM provider (Anthropic, OpenAI, etc.).
     inner: Arc<dyn LlmProvider>,
+    /// Channel to forward mapped events to the TUI.
     tx: mpsc::Sender<ServerEvent>,
-    /// Tracks pending tool calls by call_id for event mapping.
-    pending_tool_calls: Mutex<HashMap<String, ToolCall>>,
+    /// Per-call_id → name mapping built during streaming.
+    /// Populated when ToolCallEnd reveals the full ToolCall.
+    tool_names: Mutex<HashMap<String, String>>,
 }
 ```
 
@@ -218,61 +251,69 @@ StreamingProvider::stream(model, context, options, signal):
   2. Get the inner stream
   3. Wrap with a custom Stream adapter that:
      For each event in inner stream:
-       a. Map event to ServerEvent (see Section 6)
-       b. Send ServerEvent via tx (non-blocking; if full, log warning and skip)
+       a. Map event to Option<ServerEvent> (see §6)
+       b. If Some(event): try_send via tx (non-blocking; if full, warn! and skip)
        c. Yield the original event to the agent loop
   4. Return the wrapped stream
 ```
 
 **Backpressure handling:** If the `mpsc` channel is full, the event is silently dropped with a `warn!` log. The TUI's 32-element buffer provides ample headroom for normal rendering (text deltas arrive every ~50ms, TUI renders every ~16ms).
 
-### 5.4 Tool Execution Interception
+### 5.4 Tool Execution Sequencing
 
-The agent loop receives tool calls from the LLM stream and executes them via `ToolExecutor`. `StreamingProvider` must:
+The agent loop internally handles tool call execution after the LLM stream delivers `Done { reason: ToolUse }`. `StreamingProvider` does not participate in tool execution — it only forwards the LLM's intent to call tools.
 
-1. Forward `ToolCallStart`/`ToolCallDelta` events to the TUI (so the user sees the tool being called)
-2. Track which tool calls are pending
-3. After the stream delivers `Done { reason: ToolUse }`, the agent loop executes tools. `StreamingProvider` cannot intercept this directly.
-
-Instead, the `LocalBackend::send_message` spawned task handles tool execution sequencing:
+After `AgentLoop::run()` returns `Vec<AgentMessage>`, the spawned task in `LocalBackend::send_message()` inspects the results:
 
 ```
-After SessionActor::prompt() returns Vec<AgentMessage>:
-  For each AgentMessage in results:
-    If AssistantMessage with tool calls:
-      Already forwarded ToolCallStarted/Delta during stream
-      Now need to find matching ToolResult messages
-    If ToolResult:
-      Emit ToolCallDone { call_id, result, is_error }
+After AgentLoop::run() returns Vec<AgentMessage>:
+  For each message in results:
+    If ToolResult { tool_call_id, content, is_error }:
+      Emit ServerEvent::ToolCallDone {
+          call_id: tool_call_id,
+          result: content.first().map(|c| format_content(c)),
+          is_error,
+      }
   After all messages:
-    Emit TurnEnd { stop_reason, usage }
+    Emit ServerEvent::TurnEnd {
+        stop_reason: "stop",
+        usage: last_assistant_usage,
+    }
 ```
-
-**Alternative approach (considered but rejected):** Modifying `AgentLoop` to accept a streaming callback. This would require changes to `agent-core` and couples the loop to TUI-specific event types. The batch approach keeps the integration surface minimal.
 
 ### 5.5 Tool Execution Flow (Detailed)
 
 ```
-LLM stream events (from StreamingProvider):
-  ToolCallStart { call_id: "a", name: "read_file" }
-    → emit ServerEvent::ToolCallStarted { call_id: "a", name: "read_file" }
-  ToolCallDelta { call_id: "a", delta: "{\"path\":" }
-    → emit ServerEvent::ToolCallDelta { call_id: "a", delta: "{\"path\":" }
-  ToolCallEnd { call_id: "a", tool_call: { id: "a", args: {"path": "src/main.rs"} } }
-    → (tool call is now complete in LLM's view; agent loop will execute it)
+LLM stream events (forwarded by StreamingProvider):
+  ToolCallStart { content_index: 0 }
+    → buffered (content_index 0 = pending tool call, no id/name yet)
+  ToolCallDelta { content_index: 0, delta: "{\"path\":" }
+    → buffered by content_index 0
+  ToolCallEnd { content_index: 0, tool_call: { id: "call_a", name: "read_file", args: {...} } }
+    → now we have call_id and name
+    → emit ServerEvent::ToolCallStarted { call_id: "call_a", name: "read_file" }
+    → emit buffered ToolCallDelta { call_id: "call_a", delta: "{\"path\":" }
+    → store ("call_a" → "read_file") in tool_names
+```
 
-Agent loop executes tool → ToolResult { tool_call_id: "a", content: "fn main() {}", is_error: false }
-  → spawn task emits ServerEvent::ToolCallDone {
-        call_id: "a",
+**Note:** `ToolCallStart` only carries `content_index` (no `tool_call`); `ToolCallDelta` only carries `content_index` + `delta` (no `call_id`). The full `ToolCall` (with `id` and `name`) is only available in `ToolCallEnd`. Therefore deltas must be buffered by `content_index` and replayed after `ToolCallEnd` reveals the tool identity.
+
+```
+After AgentLoop returns:
+  ToolResult { tool_call_id: "call_a", content: "fn main() {}", is_error: false }
+    → spawned task emits ServerEvent::ToolCallDone {
+        call_id: "call_a",
         result: Some("fn main() {}"),
         is_error: false,
     }
 
-(If stop_reason is ToolUse, next turn begins with tool results fed back...)
+(If stop_reason was ToolUse, next turn stream begins — already forwarded above)
 
-Eventually:
+Final turn:
   Done { reason: Stop, message: { usage: { input: 500, output: 200 } } }
-    → emit ServerEvent::TurnEnd {
+    → StreamingProvider forwards (mapped to event, but TurnEnd is suppressed — see §6)
+    → AgentLoop returns results
+    → Spawned task emits single ServerEvent::TurnEnd {
         stop_reason: "stop",
         usage: Some(UsageInfo { input_tokens: 500, output_tokens: 200 }),
     }
@@ -291,25 +332,30 @@ Defined in `crates/tui/src/backend/event_mapper.rs`.
 | `Start { partial }` | `MessageStart { message_index }` | Message index increments per turn |
 | `TextDelta { content_index, delta }` | `TextDelta { delta }` | content_index reserved for future multi-block support |
 | `ThinkingDelta { content_index, delta }` | `ThinkingDelta { content_index, delta }` | Direct pass-through |
-| `ToolCallStart { content_index, tool_call }` | `ToolCallStarted { call_id, name }` | Extract `tool_call.id` and `tool_call.name` |
-| `ToolCallDelta { content_index, delta }` | `ToolCallDelta { call_id, delta }` | call_id from current tool call context |
-| `ToolCallEnd { content_index, tool_call }` | *(buffered — no event emitted)* | Tool execution happens after stream; result sent as `ToolCallDone` |
-| `Done { reason, message }` | `TurnEnd { stop_reason, usage }` | With usage stats from `message.usage` |
+| `ToolCallStart { content_index }` | *(buffered — no event emitted)* | Only `content_index` is known; `call_id` and `name` are not available until `ToolCallEnd` |
+| `ToolCallDelta { content_index, delta }` | *(buffered — no event emitted)* | Buffered by `content_index`. Replayed after `ToolCallEnd` as `ToolCallDelta { call_id, delta }` |
+| `ToolCallEnd { content_index, tool_call }` | `ToolCallStarted { call_id, name }` + replay buffered deltas | This is the first event with `call_id` and `name`. Emit `ToolCallStarted`, then emit buffered `ToolCallDelta` items |
+| `Done { reason, message }` | *(suppressed for intermediate turns; see §6.4)* | `Done` fires for each turn including `ToolUse` turns. TurnEnd is emitted once by the spawned task after `AgentLoop::run()` completes |
 | `Error { error }` | `Error { code, message }` | Map `error.stop_reason` + `error.error_message` |
 | `TextStart`, `TextEnd`, `ThinkingStart`, `ThinkingEnd` | *(ignored)* | These are structural events; content is accumulated in deltas |
 
-### 6.2 Tool Call State Machine
+### 6.2 Tool Call Event Sequencing
+
+Because `call_id` and `name` are not available until `ToolCallEnd`, the event mapper buffers deltas by `content_index`:
 
 ```
-                    ┌─────────────────┐
-                    │ ToolCallStarted │  ← LLM decides to call a tool
-                    │ (pending border) │
-                    └───────┬─────────┘
-                            │ ToolCallDelta (streaming args)
-                    ┌───────▼─────────┐
-                    │ ToolCallDone    │  ← tool execution result
-                    │ (success/error) │
-                    └─────────────────┘
+ToolCallStart { content_index: 0 }
+  → mark content_index 0 as pending in a BTreeMap<usize, Vec<String>>
+ToolCallDelta { content_index: 0, delta: "{\"path\":" }
+  → push delta to buffer[0]
+ToolCallDelta { content_index: 0, delta: "\"src/main.rs\"}" }
+  → push delta to buffer[0]
+ToolCallEnd { content_index: 0, tool_call: { id: "call_a", name: "read_file" } }
+  → emit ToolCallStarted { call_id: "call_a", name: "read_file" }
+  → for each buffered delta in buffer[0]:
+      emit ToolCallDelta { call_id: "call_a", delta }
+  → store "call_a" → "read_file" in StreamingProvider.tool_names
+  → clear buffer[0]
 ```
 
 ### 6.3 Error Event Mapping
@@ -326,57 +372,102 @@ Defined in `crates/tui/src/backend/event_mapper.rs`.
 ### 6.4 Implementation
 
 ```rust
+use std::collections::BTreeMap;
+
+/// Mutable state for the event mapper, held by StreamingProvider.
+pub struct EventMapperState {
+    /// Buffered tool call deltas, keyed by content_index (not call_id — not
+    /// available until ToolCallEnd).  BTreeMap is used to guarantee insertion
+    /// order (HashMap would randomise key iteration).
+    pending_tool_deltas: BTreeMap<usize, Vec<String>>,
+    /// Per-call_id → tool_name mapping, built when ToolCallEnd reveals the
+    /// full ToolCall.  Used by the spawned task to provide names for
+    /// ToolCallDone events.
+    tool_names: HashMap<String, String>,
+}
+
 pub fn map_stream_event(
     event: &AssistantMessageEvent,
-    pending_tool_calls: &mut HashMap<String, String>, // call_id → name
+    state: &Mutex<EventMapperState>,
     turn_index: u64,
-) -> Option<ServerEvent> {
+) -> Vec<ServerEvent> {
     match event {
         AssistantMessageEvent::Start { .. } => {
-            Some(ServerEvent::MessageStart { message_index: turn_index })
+            vec![ServerEvent::MessageStart { message_index: turn_index }]
         }
         AssistantMessageEvent::TextDelta { delta, .. } => {
-            Some(ServerEvent::TextDelta { delta: delta.clone() })
+            vec![ServerEvent::TextDelta { delta: delta.clone() }]
         }
         AssistantMessageEvent::ThinkingDelta { content_index, delta } => {
-            Some(ServerEvent::ThinkingDelta { content_index: *content_index, delta: delta.clone() })
+            vec![ServerEvent::ThinkingDelta {
+                content_index: *content_index,
+                delta: delta.clone(),
+            }]
         }
-        AssistantMessageEvent::ToolCallStart { content_index: _, tool_call } => {
-            pending_tool_calls.insert(tool_call.id.clone(), tool_call.name.clone());
-            Some(ServerEvent::ToolCallStarted {
+        // ToolCallStart only has content_index — no call_id or name yet.
+        // Buffer deltas by content_index until ToolCallEnd arrives.
+        AssistantMessageEvent::ToolCallStart { content_index, .. } => {
+            let mut state = state.lock().expect("mutex poisoned");
+            state.pending_tool_deltas.entry(*content_index).or_default();
+            Vec::new() // no event emitted yet
+        }
+        AssistantMessageEvent::ToolCallDelta { content_index, delta } => {
+            let mut state = state.lock().expect("mutex poisoned");
+            state
+                .pending_tool_deltas
+                .entry(*content_index)
+                .or_default()
+                .push(delta.clone());
+            Vec::new() // buffered
+        }
+        // ToolCallEnd reveals the full ToolCall with id and name.
+        // Emit ToolCallStarted + replay any buffered deltas.
+        AssistantMessageEvent::ToolCallEnd { content_index, tool_call } => {
+            let mut state = state.lock().expect("mutex poisoned");
+            state
+                .tool_names
+                .insert(tool_call.id.clone(), tool_call.name.clone());
+
+            let mut events = Vec::new();
+            events.push(ServerEvent::ToolCallStarted {
                 call_id: tool_call.id.clone(),
                 name: tool_call.name.clone(),
-            })
+            });
+
+            // Replay buffered deltas for this content_index
+            if let Some(deltas) = state.pending_tool_deltas.remove(content_index) {
+                for delta in deltas {
+                    events.push(ServerEvent::ToolCallDelta {
+                        call_id: tool_call.id.clone(),
+                        delta,
+                    });
+                }
+            }
+            events
         }
-        AssistantMessageEvent::ToolCallDelta { content_index: _, delta } => {
-            // Delta applies to the most recently started tool call
-            let call_id = pending_tool_calls.keys().last()?.clone();
-            Some(ServerEvent::ToolCallDelta { call_id, delta: delta.clone() })
-        }
-        AssistantMessageEvent::ToolCallEnd { .. } => {
-            // Tool call is complete in LLM's view; execution happens next
-            // No event emitted here — ToolCallDone comes after tool execution
-            None
-        }
-        AssistantMessageEvent::Done { reason, message } => {
-            Some(ServerEvent::TurnEnd {
-                stop_reason: format!("{:?}", reason).to_lowercase(),
-                usage: Some(UsageInfo {
-                    input_tokens: message.usage.input_tokens,
-                    output_tokens: message.usage.output_tokens,
-                }),
-            })
+        // Done fires for every turn (including intermediate ToolUse turns).
+        // Do NOT emit TurnEnd here — the spawned task emits a single TurnEnd
+        // after AgentLoop::run() completes.  ToolCallDone events are emitted
+        // by the spawned task after inspecting AgentLoop results.
+        AssistantMessageEvent::Done { .. } => {
+            Vec::new() // suppressed
         }
         AssistantMessageEvent::Error { error } => {
-            Some(ServerEvent::Error {
+            vec![ServerEvent::Error {
                 code: format!("{:?}", error.stop_reason).to_lowercase(),
                 message: error.error_message.clone().unwrap_or_default(),
-            })
+            }]
         }
-        _ => None,
+        _ => Vec::new(),
     }
 }
 ```
+
+**Design notes:**
+- Returns `Vec<ServerEvent>` (not `Option`) because a single stream event can produce multiple TUI events (e.g., `ToolCallEnd` → `ToolCallStarted` + N × `ToolCallDelta`).
+- `BTreeMap<usize, Vec<String>>` for delta buffering — `usize` key is `content_index` (deterministic ordering), `Vec<String>` accumulates partial JSON arguments.
+- `Done` and `ToolCallEnd` in the LLM protocol are different: `ToolCallEnd` means "the LLM finished describing this tool call" (arguments complete); `Done` means "the LLM finished this turn" (stop reason may be `ToolUse` or `Stop`). Tool execution happens after `Done` with `ToolUse`, inside the agent loop.
+- `tool_names` is read by the spawned task after `AgentLoop::run()` returns, so it can include the tool name in `ToolCallDone` events if desired.
 
 ---
 
@@ -465,12 +556,22 @@ The `--provider` / `PANDARIA_PROVIDER` value maps to an `LlmProvider` implementa
 
 Provider is selected once at startup. The `/model` command can switch models within the same provider.
 
+**Import note:** Only `MistralProvider` is publicly re-exported from `llm-client` (`llm_client::MistralProvider`). Other providers require full module paths:
+```rust
+use llm_client::providers::anthropic::AnthropicProvider;
+use llm_client::providers::openai::OpenAiProvider;
+use llm_client::providers::google::GoogleProvider;
+```
+
 ### 7.5 Config File
 
 ```toml
 # ~/.config/pandaria/tui/config.toml
-[server]
-# url = "http://localhost:8080"     # Uncomment for remote mode
+
+# Omit the entire [server] section (or omit `url`) for local mode.
+# Uncomment `url` to switch to remote mode (future).
+# [server]
+# url = "http://localhost:8080"
 
 [auth]
 token = "${PANDARIA_TOKEN}"
@@ -488,6 +589,8 @@ scrollback = 1000
 [keys]
 "app.quit" = ["ctrl+c", "ctrl+d"]
 ```
+
+**Mode selection from config:** When `ServerConfig` is `None` (i.e., no `[server]` section or `url` is omitted), the TUI defaults to local mode. When `url` is present and `--local` is not set, remote mode is used (deferred).
 
 ---
 
@@ -538,32 +641,38 @@ App::submit_input()
   │     └── Spawns tokio task:
   │           │
   │           ▼
-  │         Creates StreamingProvider(provider, tx)
-  │         Runs SessionActor::prompt(text):
-  │           │
+           │         Creates StreamingProvider(provider, tx)
+           │         Runs AgentLoop::run(system_prompt, messages, cancel_token):
+           │           │
   │           ▼
-  │         AgentLoop::run():
-  │           │
-  │           ├─▶ LLM Stream via StreamingProvider:
-  │           │     ├─ TextDelta("Let") → tx.send(TextDelta { delta: "Let" })
-  │           │     ├─ TextDelta(" me") → tx.send(TextDelta { delta: " me" })
-  │           │     ├─ TextDelta(" look...") → tx.send(TextDelta { delta: " look..." })
-  │           │     ├─ ThinkingDelta("Hmm...") → tx.send(ThinkingDelta { ... })
-  │           │     │
-  │           │     ├─ ToolCallStart("read_file") → tx.send(ToolCallStarted { ... })
-  │           │     ├─ ToolCallDelta("{\"path\":\"src/main.rs\"}") → tx.send(ToolCallDelta { ... })
-  │           │     └─ ToolCallEnd → (buffered)
-  │           │
-  │           ├─▶ Tool Execution:
-  │           │     └─ Tool result: "fn main() {}"
-  │           │       → tx.send(ToolCallDone { call_id, result: "fn main() {}", is_error: false })
-  │           │
-  │           ├─▶ Next turn (if ToolUse):
-  │           │     └─ LLM sees tool result, produces more text:
-  │           │       → tx.send(TextDelta { delta: "The file contains..." })
-  │           │
-  │           └─▶ Done { reason: Stop }:
-  │                 └─ tx.send(TurnEnd { stop_reason: "stop", usage: { ... } })
+         │         AgentLoop::run():
+           │           │
+           │           ├─▶ LLM Stream via StreamingProvider:
+           │           │     ├─ TextDelta("Let") → tx.send(TextDelta { delta: "Let" })
+           │           │     ├─ TextDelta(" me") → tx.send(TextDelta { delta: " me" })
+           │           │     ├─ TextDelta(" look...") → tx.send(TextDelta { delta: " look..." })
+           │           │     ├─ ThinkingDelta("Hmm...") → tx.send(ThinkingDelta { ... })
+           │           │     │
+           │           │     ├─ ToolCallStart { content_index: 0 } → (buffered)
+           │           │     ├─ ToolCallDelta { content_index: 0, delta: "{\"path\":\"src/main.rs\"}" }
+           │           │     │     → (buffered by content_index 0)
+           │           │     └─ ToolCallEnd { content_index: 0, tool_call: { id: "a", name: "read_file" } }
+           │           │           → tx.send(ToolCallStarted { call_id: "a", name: "read_file" })
+           │           │           → tx.send(ToolCallDelta { call_id: "a", delta: "{\"path\":\"src/main.rs\"}" })
+           │           │
+           │           ├─▶ Tool Execution (in agent loop):
+           │           │     └─ Tool result: "fn main() {}"
+           │           │
+           │           ├─▶ Next turn (if stop_reason was ToolUse):
+           │           │     └─ LLM sees tool result, streams more text:
+           │           │       → tx.send(TextDelta { delta: "The file contains..." })
+           │           │
+           │           └─▶ AgentLoop returns Vec<AgentMessage>
+           │                 ├─ Spawned task scans for ToolResult messages:
+           │                 │   → tx.send(ToolCallDone { call_id: "a",
+           │                 │        result: "fn main() {}", is_error: false })
+           │                 └─ Emits single TurnEnd:
+           │                     → tx.send(TurnEnd { stop_reason: "stop", usage: { ... } })
   │
   ├── Stores rx as self.server_rx
   │
@@ -587,7 +696,7 @@ User presses Esc during streaming
   ▼
 App::handle_key_event(Esc) while Busy
   ├── backend.interrupt(session_id)
-  │     └─ LocalBackend: session.abort() → CancellationToken cancelled
+  │     └─ LocalBackend: session_data.cancel_token.cancel() → CancellationToken cancelled
   ├── Marks current assistant message as Aborted
   ├── AppState → Connected
   │
@@ -614,7 +723,7 @@ Command::NewSession dispatch:
   ├── backend.create_session(Some("my session"), &current_model)
   │     └── LocalBackend:
   │           ├── Generate session_id (UUIDv4)
-  │           ├── Create SessionActor(provider, hooks, system_prompt, tools)
+  │           ├── Create SessionData { info, messages: vec![], cancel_token: new() }
   │           ├── Store in sessions map
   │           └── Return SessionInfo { id, title: "my session", model, ... }
   │
@@ -635,7 +744,7 @@ Command::NewSession dispatch:
 | Context overflow | `ServerEvent::Error { code: "context_overflow" }` | `LlmProvider` detects overflow, `LlmError::ContextOverflow` → `Error` event. User should `/clear` or start `/new` |
 | Tool execution panic | `ToolCallDone { is_error: true }` | `AgentLoop` catches panics via `AssertUnwindSafe`. Error message included in result |
 | Stream channel full (backpressure) | Event silently dropped with `warn!` log | 32-element buffer; dropping is safe (next delta provides updated accumulated content) |
-| `SessionActor` not found for session ID | `send_message` returns `Err("session not found")` | Should not happen in normal use (session created before message sent). Treated as `Error` event |
+| Session data not found for session ID | `send_message` returns `Err("session not found")` | Should not happen in normal use (session created before message sent). Treated as `Error` event |
 | Double-submit (user sends message while busy) | Input ignored | `AppState::Busy` check in `submit_input()` prevents this |
 
 ### 10.1 API Key Security
@@ -674,8 +783,9 @@ No new external dependencies beyond `secrecy` (already used by `llm-client`).
 | Test | What it verifies |
 |---|---|
 | `event_mapper::test_text_delta_mapping` | `TextDelta` event is mapped correctly |
-| `event_mapper::test_tool_call_started_mapping` | `ToolCallStart` → `ToolCallStarted` with correct id/name |
-| `event_mapper::test_turn_end_mapping` | `Done` → `TurnEnd` with usage stats |
+| `event_mapper::test_tool_call_end_mapping` | `ToolCallEnd` → `ToolCallStarted` + buffered `ToolCallDelta` events |
+| `event_mapper::test_tool_call_delta_buffering` | Deltas are buffered by content_index and replayed after ToolCallEnd |
+| `event_mapper::test_done_is_suppressed` | `Done` event does not produce TurnEnd |
 | `event_mapper::test_error_mapping` | `Error` → `ServerEvent::Error` |
 | `streaming_provider::test_events_forwarded` | Events pass through to mpsc receiver |
 | `streaming_provider::test_backpressure_no_panic` | Channel full → event dropped, no panic |
@@ -714,8 +824,9 @@ Integration tests use the `EchoProvider` and mock tool providers from `agent-cor
 | **`Backend` trait with `mpsc::Receiver` return** | The TUI's existing `server_rx` field holds exactly this type. No changes needed to `handle_server_event()` or the event loop. Enables swapping local/remote backends without App changes. |
 | **`StreamingProvider` wraps `LlmProvider`, not `AgentLoop`** | The `LlmProvider` trait is the natural interception point — it's where the stream originates. Wrapping at the provider level requires zero changes to `agent-core`. The agent loop continues to work identically. |
 | **Reusing `ServerEvent` for local mode** | The TUI already has complete rendering logic for `ServerEvent` variants. Duplicating rendering for a "local event" type would create divergence. The `ServerEvent` enum is a protocol that both backends speak. |
-| **`Arc<Mutex<HashMap<...>>>` for session storage** | `SessionActor::prompt()` requires `&mut self`. The TUI event loop serializes user actions, so contention is impossible. `Arc<Mutex<>>` is the simplest safe abstraction for the single-threaded TUI. |
-| **Batch tool execution, not streaming** | `AgentLoop` internally executes tools after the LLM stream completes. Intercepting tool execution mid-loop would require modifying `agent-core`. Instead, the spawned task inspects `SessionActor::prompt()` results and emits `ToolCallDone` events for any `ToolResult` messages found. This is simple and correct. |
+| **`Arc<tokio::sync::Mutex<HashMap<...>>>` + remove/re-insert pattern** | `AgentLoop::run()` is an async operation. Using `tokio::sync::Mutex` and removing the session before the prompt, then re-inserting with updated history afterwards, ensures the lock is never held across an `.await` point. No deadlock risk. |
+| **Batch tool execution, not streaming** | `AgentLoop` internally executes tools after the LLM stream completes. Intercepting tool execution mid-loop would require modifying `agent-core`. Instead, the spawned task inspects `AgentLoop::run()` results and emits `ToolCallDone` events for any `ToolResult` messages found. This is simple and correct. |
+| **`Done` suppressed for intermediate turns** | The LLM stream emits `Done` for every turn — including intermediate `ToolUse` turns where more turns follow. The event mapper suppresses these. A single `TurnEnd` is emitted by the spawned task after `AgentLoop::run()` returns, regardless of how many turns occurred. |
 | **API key = `--token` / `PANDARIA_TOKEN`** | Avoids introducing a separate `--api-key` flag. In local mode, the token is the LLM API key. In remote mode (future), it's the server auth token. One concept, one CLI arg. |
 | **Provider resolution from `--provider` string** | String-based provider selection with a static registry (`match provider { "anthropic" => ..., "openai" => ..., ... }`). No dynamic discovery needed for an MVP with 4 providers. |
 | **`--local` flag as override** | When `--url` is set for remote mode, `--local` overrides to local. When neither is set, defaults to local. Clear precedence rules. |
@@ -733,7 +844,7 @@ Integration tests use the `EchoProvider` and mock tool providers from `agent-cor
 - **Model auto-discovery** — Model list is hardcoded or provided via `--model`. The `ModelRegistry` from `llm-client` can be integrated later.
 - **Server mode** — Building the `api-gateway` crate and `src/main.rs` server binary is a separate effort.
 - **Provider hot-swap** — Changing provider requires restarting the TUI.
-- **Per-session model selection** — All sessions under a `LocalBackend` use the same model. Per-session models require storing model preference per `SessionActor`.
+- **Per-session model selection** — All sessions under a `LocalBackend` use the same model. Per-session models require storing model preference per `SessionData`.
 - **Streaming tool output** — Tool results are displayed only after execution completes, not incrementally during execution.
 - **Token cost tracking** — Usage stats are displayed but not aggregated across turns or sessions.
 - **OAuth provider authentication** — Only API key authentication is supported.

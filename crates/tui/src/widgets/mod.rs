@@ -1,6 +1,6 @@
 pub mod chat_view;
+pub mod editor;
 pub mod header;
-pub mod input_bar;
 pub mod session_tabs;
 pub mod spinner;
 pub mod status_bar;

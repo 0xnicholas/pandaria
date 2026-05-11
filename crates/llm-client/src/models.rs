@@ -97,35 +97,86 @@ pub fn supports_xhigh(model_id: &str) -> bool {
 
 use crate::models_data;
 
-pub struct ModelRegistry;
+/// Model registry with optional custom model overrides.
+///
+/// Custom models registered via [`register`](ModelRegistry::register) take
+/// precedence over builtin models with the same `provider/model_id` key.
+pub struct ModelRegistry {
+    custom: HashMap<String, Model>,
+}
+
+impl Default for ModelRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ModelRegistry {
-    pub fn builtin() -> &'static Self {
-        &ModelRegistry
+    /// Create a new registry with no custom models.
+    pub fn new() -> Self {
+        Self {
+            custom: HashMap::new(),
+        }
+    }
+
+    /// Create a registry pre-loaded from builtin models only.
+    pub fn builtin() -> Self {
+        Self::new()
+    }
+
+    /// Register a custom model. Custom models override builtin models
+    /// with the same provider/model_id key.
+    pub fn register(&mut self, model: Model) {
+        let key = format!("{}/{}", model.provider, model.id);
+        self.custom.insert(key, model);
     }
 
     pub fn get(&self, provider: &str, model_id: &str) -> Option<Model> {
         let key = format!("{}/{}", provider, model_id);
-        models_data::MODELS.get(&key).cloned()
+        self.custom
+            .get(&key)
+            .cloned()
+            .or_else(|| models_data::MODELS.get(&key).cloned())
     }
 
     pub fn models_for_provider(&self, provider: &str) -> Vec<Model> {
-        let pm = &*models_data::PROVIDER_MODELS;
-        let models = &*models_data::MODELS;
-        match pm.get(provider) {
-            Some(ids) => ids
-                .iter()
-                .filter_map(|id| {
-                    let key = format!("{}/{}", provider, id);
-                    models.get(&key).cloned()
-                })
-                .collect(),
-            None => Vec::new(),
+        let prefix = format!("{}/", provider);
+        let mut seen: HashMap<String, bool> = HashMap::new();
+        let mut result: Vec<Model> = Vec::new();
+
+        // Custom models first
+        for (k, m) in &self.custom {
+            if k.starts_with(&prefix) {
+                seen.insert(m.id.clone(), true);
+                result.push(m.clone());
+            }
         }
+
+        // Builtin models (skip keys already present in custom)
+        if let Some(ids) = models_data::PROVIDER_MODELS.get(provider) {
+            for id in ids.iter() {
+                if !seen.contains_key(id) {
+                    let key = format!("{}/{}", provider, id);
+                    if let Some(m) = models_data::MODELS.get(&key).cloned() {
+                        result.push(m);
+                    }
+                }
+            }
+        }
+
+        result
     }
 
     pub fn providers(&self) -> Vec<String> {
-        models_data::PROVIDER_MODELS.keys().cloned().collect()
+        let mut p: Vec<String> = models_data::PROVIDER_MODELS.keys().cloned().collect();
+        for k in self.custom.keys() {
+            if let Some(prov) = k.split('/').next() {
+                if !p.iter().any(|x| x == prov) {
+                    p.push(prov.to_string());
+                }
+            }
+        }
+        p
     }
 }
 

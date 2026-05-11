@@ -123,13 +123,22 @@ impl MistralProvider {
         }
 
         // Send request
-        let response = client
+        let mut req = client
             .post(&base_url)
             .header(
                 "Authorization",
                 format!("Bearer {}", api_key.expose_secret()),
             )
-            .header("content-type", "application/json")
+            .header("content-type", "application/json");
+
+        // Merge custom headers from StreamOptions
+        if let Some(custom) = &options.headers {
+            for (k, v) in custom {
+                req = req.header(k, v);
+            }
+        }
+
+        let response = req
             .json(&body)
             .send()
             .await
@@ -310,6 +319,7 @@ impl MistralProvider {
                                             "length" => crate::StopReason::Length,
                                             "tool_calls" => crate::StopReason::ToolUse,
                                             "content_filter" => crate::StopReason::Error,
+                                            "error" => crate::StopReason::Error,
                                             _ => crate::StopReason::Stop,
                                         };
                                     }

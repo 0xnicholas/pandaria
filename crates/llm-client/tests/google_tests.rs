@@ -42,11 +42,17 @@ data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}
     let event = stream.next().await.expect("should have Start");
     assert!(matches!(event, AssistantMessageEvent::Start { .. }));
 
+    let event = stream.next().await.expect("should have TextStart");
+    assert!(matches!(event, AssistantMessageEvent::TextStart { content_index: 0, .. }));
+
     let event = stream.next().await.expect("should have TextDelta 'Hello'");
     assert!(matches!(&event, AssistantMessageEvent::TextDelta { delta, content_index: 0, .. } if delta == "Hello"));
 
     let event = stream.next().await.expect("should have TextDelta ' world'");
     assert!(matches!(&event, AssistantMessageEvent::TextDelta { delta, content_index: 0, .. } if delta == " world"));
+
+    let event = stream.next().await.expect("should have TextEnd");
+    assert!(matches!(event, AssistantMessageEvent::TextEnd { content_index: 0, .. }));
 
     let event = stream.next().await.expect("should have Done");
     match event {

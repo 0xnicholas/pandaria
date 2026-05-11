@@ -1,15 +1,19 @@
+use crate::autocomplete::{
+    AutocompleteContext, AutocompleteProvider, FilePathProvider, SlashCommandProvider,
+};
 use crate::client::model::ServerEvent;
 use crate::client::rest::RestClient;
 use crate::client::sse;
 use crate::command::Command;
 use crate::config::Config;
+use crate::keybindings::{Keybinding, KeybindingsManager};
 use crate::overlays::{OverlayAction, OverlayStack};
 use crate::paste::PasteStore;
 use crate::state::*;
 use crate::ui::theme::Theme;
 use crate::widgets::chat_view::ChatView;
+use crate::widgets::editor::Editor;
 use crate::widgets::header::HeaderBar;
-use crate::widgets::input_bar::InputBar;
 use crate::widgets::session_tabs::SessionTabsWidget;
 use crate::widgets::spinner::SpinnerWidget;
 use crate::widgets::status_bar::StatusBar;
@@ -34,7 +38,9 @@ pub struct App {
     pub config: Config,
     pub theme: Theme,
     pub rest: RestClient,
-    pub input: InputBar,
+    pub editor: Editor,
+    pub keybindings: KeybindingsManager,
+    pub autocomplete_providers: Vec<Box<dyn AutocompleteProvider>>,
     pub spinner: SpinnerWidget,
     pub overlays: OverlayStack,
     pub reqwest_client: reqwest::Client,
@@ -52,13 +58,22 @@ impl App {
         let rest = RestClient::new(&config.server);
         let data = crate::state::State::new(session_id, session_info);
         let context_window = data.active_session().info.context_window;
+        let mut keybindings = KeybindingsManager::new();
+        if let Some(ref keys_config) = config.keys {
+            keybindings.load_user_config(keys_config);
+        }
         Self {
             state: AppState::Connected,
             data,
             config,
             theme: Theme::default(),
             rest,
-            input: InputBar::new(),
+            editor: Editor::new(),
+            keybindings,
+            autocomplete_providers: vec![
+                Box::new(SlashCommandProvider::new()),
+                Box::new(FilePathProvider::new()),
+            ],
             spinner: SpinnerWidget::new(),
             overlays: OverlayStack::new(),
             reqwest_client: reqwest::Client::new(),
@@ -72,13 +87,23 @@ impl App {
         }
     }
 
+    fn build_autocomplete_context(&self) -> AutocompleteContext {
+        let lines = self.editor.lines.join("\n");
+        AutocompleteContext {
+            full_text: lines.clone(),
+            cursor_line: self.editor.cursor_line,
+            cursor_col: self.editor.cursor_col,
+            current_line: self.editor.current_line_text().to_string(),
+            text_before_cursor: self.editor.text_before_cursor(),
+        }
+    }
+
     pub fn handle_key_event(&mut self, key: KeyEvent) {
         // Overlays take priority
         if !self.overlays.is_empty() {
             if let Some(overlay) = self.overlays.top_mut() {
                 // Non-capturing overlays dismiss on any printable input
                 if !overlay.is_capturing() {
-                    use crossterm::event::KeyCode;
                     match key.code {
                         KeyCode::Char(_) | KeyCode::Enter => {
                             self.overlays.pop();
@@ -107,125 +132,139 @@ impl App {
             return;
         }
 
-        match key.code {
-            KeyCode::Enter => self.submit_input(),
-            KeyCode::Esc => {
-                if self.state == AppState::Busy {
-                    let rest = self.rest.clone();
-                    let token = self.config.auth.token.clone().unwrap_or_default();
-                    let sid = self.data.active_session.clone();
-                    tokio::spawn(async move {
-                        let _ = rest.interrupt(&sid, &token).await;
-                    });
-                    if let Some(last) = self.data.active_session_mut().messages.last_mut() {
-                        last.status = MessageStatus::Aborted;
+        // Autocomplete overlay logic
+        let ctx = self.build_autocomplete_context();
+        for provider in &self.autocomplete_providers {
+            if provider.should_trigger(&ctx) {
+                let suggestions = provider.get_suggestions(&ctx);
+                if !suggestions.is_empty() {
+                    self.overlays.push(Box::new(
+                        crate::overlays::autocomplete::AutocompleteOverlay::new(suggestions),
+                    ));
+                    return;
+                }
+            }
+        }
+
+        let kb = &self.keybindings;
+
+        // --- App-level keybindings ---
+        if kb.matches(&key, Keybinding::AppQuit) && self.state != AppState::Busy {
+            self.running = false;
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppInterrupt) {
+            if self.state == AppState::Busy {
+                let rest = self.rest.clone();
+                let token = self.config.auth.token.clone().unwrap_or_default();
+                let sid = self.data.active_session.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = rest.interrupt(&sid, &token).await {
+                        tracing::error!("interrupt failed: {e}");
                     }
-                    self.state = AppState::Connected;
-                } else {
-                    self.input.clear();
+                });
+                if let Some(last) = self.data.active_session_mut().messages.last_mut() {
+                    last.status = MessageStatus::Aborted;
+                }
+                self.state = AppState::Connected;
+            } else {
+                self.editor.clear();
+            }
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppToggleToolCalls) {
+            for msg in &mut self.data.active_session_mut().messages {
+                for block in &mut msg.blocks {
+                    if let MessageBlock::ToolCall(tc) = block { tc.toggle(); }
                 }
             }
-            KeyCode::Up => {
-                if self.input.buffer.is_empty() {
-                    self.input.history_prev();
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppToggleThinking) {
+            for msg in &mut self.data.active_session_mut().messages {
+                for block in &mut msg.blocks {
+                    if let MessageBlock::Thinking(tb) = block { tb.toggle(); }
                 }
             }
-            KeyCode::Down => {
-                if self.input.buffer.is_empty() {
-                    self.input.history_next();
-                }
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppSelectModel) {
+            let models = vec!["gpt-4o".to_string(), "claude-sonnet-4-20250514".to_string()];
+            self.overlays.push(Box::new(
+                crate::overlays::model_selector::ModelSelector::new(models),
+            ));
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppListSessions) {
+            let sessions: Vec<_> = self.data.sessions.iter()
+                .map(|(id, s)| (id.clone(), s.info.title.clone().unwrap_or_else(|| id.chars().take(8).collect())))
+                .collect();
+            self.overlays.push(Box::new(
+                crate::overlays::session_list::SessionListOverlay::new(sessions),
+            ));
+            return;
+        }
+
+        // --- Editor keybindings ---
+        if kb.matches(&key, Keybinding::EditorSubmit) {
+            self.submit_input();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorNewLine) {
+            self.editor.insert_newline();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCursorUp) {
+            if self.editor.cursor_line == 0 && self.editor.is_empty() {
+                self.editor.history_prev();
+            } else {
+                self.editor.cursor_up();
             }
-            KeyCode::Backspace => self.input.delete_backward(),
-            KeyCode::Left => self.input.move_cursor_left(),
-            KeyCode::Right => self.input.move_cursor_right(),
-            KeyCode::Home => self.input.move_cursor_home(),
-            KeyCode::End => self.input.move_cursor_end(),
-            KeyCode::PageUp => {
-                self.scroll_offset = self.scroll_offset.saturating_add(5);
-                self.user_scrolled_up = true;
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCursorDown) {
+            if self.editor.cursor_line + 1 >= self.editor.line_count() {
+                self.editor.history_next();
+            } else {
+                self.editor.cursor_down();
             }
-            KeyCode::PageDown => {
-                if self.scroll_offset >= 5 { self.scroll_offset -= 5; }
-                if self.scroll_offset == 0 { self.user_scrolled_up = false; }
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCursorLeft) { self.editor.cursor_left(); return; }
+        if kb.matches(&key, Keybinding::EditorCursorRight) { self.editor.cursor_right(); return; }
+        if kb.matches(&key, Keybinding::EditorCursorWordLeft) { self.editor.cursor_word_left(); return; }
+        if kb.matches(&key, Keybinding::EditorCursorWordRight) { self.editor.cursor_word_right(); return; }
+        if kb.matches(&key, Keybinding::EditorCursorLineStart) { self.editor.cursor_line_start(); return; }
+        if kb.matches(&key, Keybinding::EditorCursorLineEnd) { self.editor.cursor_line_end(); return; }
+        if kb.matches(&key, Keybinding::EditorPageUp) { self.editor.page_up(); return; }
+        if kb.matches(&key, Keybinding::EditorPageDown) { self.editor.page_down(); return; }
+        if kb.matches(&key, Keybinding::EditorDeleteCharBackward) { self.editor.delete_char_backward(); return; }
+        if kb.matches(&key, Keybinding::EditorDeleteCharForward) { self.editor.delete_char_forward(); return; }
+        if kb.matches(&key, Keybinding::EditorDeleteWordBackward) { self.editor.delete_word_backward(); return; }
+        if kb.matches(&key, Keybinding::EditorDeleteWordForward) { self.editor.delete_word_forward(); return; }
+        if kb.matches(&key, Keybinding::EditorDeleteToLineStart) { self.editor.delete_to_line_start(); return; }
+        if kb.matches(&key, Keybinding::EditorDeleteToLineEnd) { self.editor.delete_to_line_end(); return; }
+        if kb.matches(&key, Keybinding::EditorYank) { self.editor.kill_ring_yank(); return; }
+        if kb.matches(&key, Keybinding::EditorYankPop) { self.editor.kill_ring_yank_pop(); return; }
+        if kb.matches(&key, Keybinding::EditorUndo) { self.editor.undo(); return; }
+        if kb.matches(&key, Keybinding::AutocompleteTrigger) {
+            // Already handled by the autocomplete_providers loop above
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppOpenCommandPalette) {
+            if self.editor.is_empty() {
+                self.overlays.push(Box::new(
+                    crate::overlays::command_palette::CommandPalette::new(),
+                ));
             }
-            KeyCode::Char(c) => {
-                if key.modifiers == KeyModifiers::CONTROL {
-                    match c {
-                        'c' => {
-                            if self.state == AppState::Busy {
-                                let rest = self.rest.clone();
-                                let token = self.config.auth.token.clone().unwrap_or_default();
-                                let sid = self.data.active_session.clone();
-                                tokio::spawn(async move {
-                                    let _ = rest.interrupt(&sid, &token).await;
-                                });
-                                self.state = AppState::Connected;
-                            } else {
-                                self.running = false;
-                            }
-                        }
-                        'd' if self.input.buffer.is_empty() => self.running = false,
-                        'o' => {
-                            for msg in &mut self.data.active_session_mut().messages {
-                                for block in &mut msg.blocks {
-                                    if let MessageBlock::ToolCall(tc) = block {
-                                        tc.toggle();
-                                    }
-                                }
-                            }
-                        }
-                        't' => {
-                            for msg in &mut self.data.active_session_mut().messages {
-                                for block in &mut msg.blocks {
-                                    if let MessageBlock::Thinking(tb) = block {
-                                        tb.toggle();
-                                    }
-                                }
-                            }
-                        }
-                        'l' => {
-                            let models =
-                                vec!["gpt-4o".to_string(), "claude-sonnet-4".to_string()];
-                            self.overlays.push(Box::new(
-                                crate::overlays::model_selector::ModelSelector::new(models),
-                            ));
-                        }
-                        's' => {
-                            let sessions: Vec<_> = self
-                                .data
-                                .sessions
-                                .iter()
-                                .map(|(id, state)| {
-                                    (
-                                        id.clone(),
-                                        state
-                                            .info
-                                            .title
-                                            .clone()
-                                            .unwrap_or_else(|| id.chars().take(8).collect()),
-                                    )
-                                })
-                                .collect();
-                            self.overlays.push(Box::new(
-                                crate::overlays::session_list::SessionListOverlay::new(
-                                    sessions,
-                                ),
-                            ));
-                        }
-                        _ => {}
-                    }
-                } else {
-                    match c {
-                        '/' if self.input.buffer.is_empty() => {
-                            self.overlays.push(Box::new(
-                                crate::overlays::command_palette::CommandPalette::new(),
-                            ));
-                        }
-                        _ => self.input.insert_char(c),
-                    }
-                }
+            return;
+        }
+
+        // Char input (only when no modifier matches caught it)
+        if let KeyCode::Char(ch) = key.code {
+            if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
+                self.editor.insert_char(ch);
             }
-            _ => {}
         }
     }
 
@@ -243,8 +282,12 @@ impl App {
                 Command::NewSession { title } => {
                     let rest = self.rest.clone();
                     let token = self.config.auth.token.clone().unwrap_or_default();
+                    let title_clone = title.clone();
                     tokio::spawn(async move {
-                        let _ = rest.create_session(title.as_deref(), &token).await;
+                        match rest.create_session(title_clone.as_deref(), &token).await {
+                            Ok(info) => tracing::info!(session_id = %info.id, "created new session"),
+                            Err(e) => tracing::error!("create session failed: {e}"),
+                        }
                     });
                 }
                 Command::SwitchSession { id } => {
@@ -294,8 +337,13 @@ impl App {
         }
     }
 
+    pub fn handle_paste(&mut self, data: String) {
+        let result = self.paste_store.store(&data);
+        self.editor.insert_text(&result);
+    }
+
     fn submit_input(&mut self) {
-        let text = self.input.take_text();
+        let text = self.editor.take_text();
         if text.trim().is_empty() {
             return;
         }
@@ -329,11 +377,15 @@ impl App {
         let sid_clone = sid.clone();
         let token_clone = token.clone();
         tokio::spawn(async move {
-            let _ = sse::connect(&reqwest_client, &base_url, &sid_clone, &token_clone, None, tx).await;
+            if let Err(e) = sse::connect(&reqwest_client, &base_url, &sid_clone, &token_clone, None, tx).await {
+                tracing::error!("SSE connect failed: {e}");
+            }
         });
 
         tokio::spawn(async move {
-            let _ = rest.send_message(&sid, &content, &token).await;
+            if let Err(e) = rest.send_message(&sid, &content, &token).await {
+                tracing::error!("send message failed: {e}");
+            }
         });
 
         self.server_rx = Some(rx);
@@ -492,7 +544,7 @@ impl App {
                 Constraint::Length(1),
                 Constraint::Min(1),
                 Constraint::Length(1),
-                Constraint::Length(1),
+                Constraint::Length(3),
             ])
             .split(f.area());
 
@@ -520,7 +572,7 @@ impl App {
             &session.info.model,
         );
 
-        self.input.render(
+        self.editor.render(
             f,
             chunks[4],
             theme,

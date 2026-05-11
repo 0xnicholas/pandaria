@@ -6,6 +6,10 @@ use crate::provider::LlmProvider;
 use crate::streaming::AssistantMessageEventStream;
 use crate::types::LlmContext;
 
+/// **Note:** This provider is a stub and not yet fully implemented.
+/// Enabling the `bedrock` feature and calling `stream()` will always
+/// return `Err(ProviderError)`.
+#[deprecated(note = "Bedrock provider is not yet implemented")]
 #[allow(dead_code)]
 pub struct AwsBedrockProvider {
     client: aws_sdk_bedrockruntime::Client,
@@ -52,14 +56,6 @@ impl LlmProvider for AwsBedrockProvider {
         _options: crate::provider::StreamOptions,
         _signal: CancellationToken,
     ) -> Result<AssistantMessageEventStream, LlmError> {
-        let (_stream, _tx) = AssistantMessageEventStream::new(32);
-        // TODO: Implement Bedrock ConverseStream integration
-        // This is a placeholder - full implementation will handle:
-        // - Message conversion (system, user, assistant, tool_result)
-        // - Tool configuration
-        // - Cache control support
-        // - Reasoning configuration
-        // - ConverseStream event mapping to AssistantMessageEvent
         Err(LlmError::ProviderError(
             "Bedrock provider not yet fully implemented".to_string(),
         ))

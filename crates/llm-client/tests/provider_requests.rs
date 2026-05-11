@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_util::sync::CancellationToken;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use std::time::Duration;
 
 /// Verify Anthropic request body structure.
 #[tokio::test]
@@ -125,4 +126,62 @@ async fn test_openai_request_body_structure() {
         .unwrap();
     while stream.next().await.is_some() {}
     assert!(body_was_valid.load(Ordering::SeqCst));
+}
+
+/// Verify that `with_client()` allows injecting a shared reqwest::Client
+/// for connection pooling.
+#[tokio::test]
+async fn test_provider_with_shared_client() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"1\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"test\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0}}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n"),
+        )
+        .mount(&server)
+        .await;
+
+    // Create a shared client with custom timeout
+    let shared_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap();
+
+    // Inject the shared client into AnthropicProvider
+    let provider = AnthropicProvider::with_client(
+        shared_client,
+        Some(SecretString::new("test-key".into())),
+        &format!("{}/v1/messages", server.uri()),
+    );
+
+    let ctx = LlmContext {
+        system_prompt: None,
+        messages: vec![Message::User(UserMessage {
+            content: vec![Content::Text {
+                text: "hello".into(),
+                text_signature: None,
+            }],
+            timestamp: std::time::SystemTime::now(),
+        })],
+        tools: None,
+    };
+
+    let mut stream = provider
+        .stream(
+            "claude-sonnet-4-20250514",
+            ctx,
+            StreamOptions::default(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    // Drain the stream
+    let mut event_count = 0;
+    while stream.next().await.is_some() {
+        event_count += 1;
+    }
+    assert!(event_count >= 2); // At least Start + Done
 }

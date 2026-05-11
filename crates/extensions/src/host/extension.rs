@@ -28,6 +28,15 @@ pub trait Extension: Send + Sync {
         vec![]
     }
 
+    /// Override the default execution mode for specific tools registered by this extension.
+    ///
+    /// By default every tool runs in `Parallel` mode.  Return a map of
+    /// `tool_name → ToolExecutionMode::Sequential` for tools that must be
+    /// executed one-at-a-time (e.g. stateful side-effect tools).
+    fn tool_execution_modes(&self) -> std::collections::HashMap<String, agent_core::types::ToolExecutionMode> {
+        std::collections::HashMap::new()
+    }
+
     // ═══ Blocking hooks — first-block-wins ═══
 
     /// Blocking hook with input mutation support.

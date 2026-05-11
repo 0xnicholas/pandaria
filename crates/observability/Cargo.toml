@@ -1,0 +1,11 @@
+[package]
+name = "observability"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.15"

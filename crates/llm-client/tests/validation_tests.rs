@@ -165,3 +165,19 @@ fn test_schema_caching() {
     assert!(result2.is_ok());
     assert_eq!(result2.unwrap()["count"], 42);
 }
+
+#[test]
+fn test_wrong_type_uncoercible() {
+    let tool = make_tool(
+        "test",
+        serde_json::json!({"type": "object", "properties": {"count": {"type": "integer"}}, "required": ["count"]}),
+    );
+    let tc = ToolCall {
+        id: "1".into(),
+        name: "test".into(),
+        arguments: serde_json::json!({"count": "abc"}),
+        thought_signature: None,
+    };
+    let result = validate_tool_arguments(&tool, &tc);
+    assert!(matches!(result, Err(ValidationError::SchemaViolation { .. })));
+}

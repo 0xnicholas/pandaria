@@ -111,9 +111,16 @@ crates/
   tenant/            # Tenant Scheduler、配额管理、Session 注册表
   persistence/       # Session 状态序列化、Redis/PG 适配器
   observability/     # tracing 集成、metrics、per-tenant 统计
-  llm-client/        # LLM provider 抽象、连接池、流式 SSE 解析
+  llm-client/        # LLM provider 抽象、流式 SSE 解析、HTTP 通信协议
   api-gateway/       # gRPC / WebSocket 接入、认证、限流
 ```
+
+**llm-client 边界说明：**
+
+- **纯通信层**：不负责 tenant 上下文、session 生命周期、资源配额检查。这些由调用方（`agent-core` / `tenant` 层）通过 tracing span 注入。
+- **HTTP 连接**：由 `reqwest::Client` 内部管理。支持上层通过 `with_client()` 注入统一配置的 Client 以复用连接，但连接池本身不由 llm-client 维护。
+- **可观测性**：llm-client 内部不创建 tracing span。调用方（`agent-core`）应在调用 `stream()` 前创建带 `tenant_id`/`session_id` 的 span。
+- **Token 计量**：llm-client 返回 `Usage` 原始数据，per-tenant 计量由调用方（`agent-core` 或 `tenant` 层）计算。
 
 **依赖方向严格单向**（禁止反向依赖）：
 
@@ -189,10 +196,12 @@ api-gateway → tenant → extensions → agent-core → llm-client
 | Extension 模型（Rust trait） | ✅ 已确定 |
 | Hook 机制（Mailbox + EventBus） | ✅ 已确定 |
 | Session 隔离粒度（tokio task） | ✅ 已确定 |
-| Session 持久化 schema | 🔲 待设计 |
-| LLM provider 抽象接口 | 🟡 部分实现（类型系统+LlmProvider trait 已实现，provider 适配器待完成） |
+| Session 持久化 schema | ✅ 已实现（PostgreSQL adapter，Redis 待实现） |
+| LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral，Bedrock 待完成） |
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST，服务端正式设计文档待补充） |
-| 所有代码实现 | 🟡 部分实现（llm-client、agent-core、extensions 已有代码） |
+| 所有代码实现 | 🟡 核心栈完成（llm-client、agent-core、extensions、persistence），tenant/observability/api-gateway 待实现 |
+| persistence 集成测试 | ✅ 修复（并行测试 tenant/session ID 隔离） |
+| 代码质量 | ✅ 修复（4 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复） |
 
 ---
 

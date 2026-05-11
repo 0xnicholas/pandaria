@@ -1,4 +1,12 @@
-use crate::types::{Content, ToolCall};
+use crate::types::{Content, ToolCall, ToolDef};
+
+/// Build a Vec<ToolDef> from a tool definition slice.
+///
+/// This is semantically equivalent to `tools.to_vec()`, but provides
+/// a named function for clarity at call sites.
+pub fn build_tool_defs(tools: &[ToolDef]) -> Vec<ToolDef> {
+    tools.to_vec()
+}
 
 /// Extract all ToolCall entries from content blocks.
 pub fn extract_tool_calls(content: &[Content]) -> Vec<ToolCall> {

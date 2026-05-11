@@ -34,6 +34,24 @@ macro_rules! define_provider {
                 }
             }
 
+            /// Create a new provider with an externally-managed HTTP client.
+            ///
+            /// This allows the caller (e.g. `agent-core` or `tenant` layer) to inject
+            /// a shared `reqwest::Client` for connection pooling and unified timeout
+            /// configuration. The client is cloned on each `stream()` call.
+            pub fn with_client(
+                client: reqwest::Client,
+                api_key: Option<secrecy::SecretString>,
+                base_url: &str,
+            ) -> Self {
+                Self {
+                    client,
+                    api_key,
+                    base_url: base_url.to_string(),
+                    oauth_provider: None,
+                }
+            }
+
             /// Attach an OAuth provider for automatic token management.
             pub fn with_oauth(
                 mut self,
@@ -92,7 +110,7 @@ macro_rules! define_provider {
                 let model = model.to_string();
                 let base_url = self.base_url.clone();
 
-                tokio::spawn(async move {
+                let handle = tokio::spawn(async move {
                     let result = Self::try_stream(
                         client,
                         base_url,
@@ -133,6 +151,17 @@ macro_rules! define_provider {
                                 },
                             })
                             .await;
+                    }
+                });
+                // Detached watcher: log provider task panics so they are
+                // not silently swallowed.
+                tokio::spawn(async move {
+                    if let Err(e) = handle.await {
+                        tracing::error!(
+                            provider = $provider_str,
+                            error = %e,
+                            "LLM provider task panicked"
+                        );
                     }
                 });
 

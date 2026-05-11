@@ -1,12 +1,16 @@
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::types::{ToolCall, ToolDef};
 
-static SCHEMA_CACHE: LazyLock<Mutex<HashMap<String, serde_json::Value>>> =
+/// Cached compiled schema: (schema_json, compiled_validator).
+/// The schema JSON is kept for equality comparison when tool definitions change.
+type CachedValidator = (serde_json::Value, Arc<jsonschema::Validator>);
+
+static SCHEMA_CACHE: LazyLock<Mutex<HashMap<String, CachedValidator>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug, Clone)]
@@ -57,6 +61,15 @@ fn coerce_value(value: &mut Value, schema: &Value) {
         }
         (Some("string"), Value::Number(n)) => {
             *value = Value::String(n.to_string());
+        }
+        (Some("integer"), Value::Bool(b)) => {
+            *value = Value::Number(if *b { 1.into() } else { 0.into() });
+        }
+        (Some("number"), Value::Bool(b)) => {
+            *value = Value::Number(if *b { 1.into() } else { 0.into() });
+        }
+        (Some("boolean"), Value::Number(n)) => {
+            *value = Value::Bool(n.as_i64().map(|v| v != 0).unwrap_or(true));
         }
         _ => {}
     }
@@ -133,19 +146,10 @@ pub fn validate_tool_arguments(
     // to avoid TOCTOU race where two threads compile the same schema.
     let compiled = {
         let mut cache = SCHEMA_CACHE.lock().expect("schema cache lock poisoned");
-        if let Some(cached) = cache.get(&tool.name) {
-            if cached == &tool.parameters {
-                // Schema unchanged — compile from cached reference
-                jsonschema::validator_for(cached).map_err(|e| {
-                    ValidationError::schema_violation(
-                        tool.name.clone(),
-                        vec![ValidationMessage {
-                            path: String::new(),
-                            message: format!("schema compilation error: {e}"),
-                        }],
-                        args.clone(),
-                    )
-                })?
+        if let Some((cached_schema, cached_validator)) = cache.get(&tool.name) {
+            if cached_schema == &tool.parameters {
+                // Schema unchanged — reuse compiled validator
+                cached_validator.clone()
             } else {
                 // Schema changed — recompile and update cache
                 let compiled = jsonschema::validator_for(&tool.parameters).map_err(|e| {
@@ -158,8 +162,12 @@ pub fn validate_tool_arguments(
                         args.clone(),
                     )
                 })?;
-                cache.insert(tool.name.clone(), tool.parameters.clone());
-                compiled
+                let validator = Arc::new(compiled);
+                cache.insert(
+                    tool.name.clone(),
+                    (tool.parameters.clone(), validator.clone()),
+                );
+                validator
             }
         } else {
             // Not in cache — compile and store
@@ -173,8 +181,12 @@ pub fn validate_tool_arguments(
                     args.clone(),
                 )
             })?;
-            cache.insert(tool.name.clone(), tool.parameters.clone());
-            compiled
+            let validator = Arc::new(compiled);
+            cache.insert(
+                tool.name.clone(),
+                (tool.parameters.clone(), validator.clone()),
+            );
+            validator
         }
     };
 
@@ -353,5 +365,95 @@ mod tests {
         let result = validate_tool_arguments(&tool, &tc);
         assert!(result.is_ok());
         assert_eq!(result.unwrap()["label"], "42");
+    }
+
+    #[test]
+    fn test_coerce_anyof_union() {
+        // anyOf: integer or string. "42" should coerce to integer 42.
+        let tool = make_tool(
+            "test",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "val": {
+                        "anyOf": [
+                            {"type": "integer"},
+                            {"type": "string"}
+                        ]
+                    }
+                },
+                "required": ["val"]
+            }),
+        );
+        let tc = ToolCall {
+            id: "1".into(),
+            name: "test".into(),
+            arguments: serde_json::json!({"val": "42"}),
+            thought_signature: None,
+        };
+        let result = validate_tool_arguments(&tool, &tc);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["val"], 42);
+    }
+
+    #[test]
+    fn test_coerce_oneof_union() {
+        // oneOf: boolean or integer. "true" should coerce to boolean true.
+        let tool = make_tool(
+            "test",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "flag": {
+                        "oneOf": [
+                            {"type": "boolean"},
+                            {"type": "integer"}
+                        ]
+                    }
+                },
+                "required": ["flag"]
+            }),
+        );
+        let tc = ToolCall {
+            id: "1".into(),
+            name: "test".into(),
+            arguments: serde_json::json!({"flag": "true"}),
+            thought_signature: None,
+        };
+        let result = validate_tool_arguments(&tool, &tc);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap()["flag"], true);
+    }
+
+    #[test]
+    fn test_coerce_allof_combined() {
+        // allOf with a single member that describes all properties.
+        // Tests that the allOf union coercion path is exercised.
+        let tool = make_tool(
+            "test",
+            serde_json::json!({
+                "type": "object",
+                "allOf": [
+                    {
+                        "properties": {
+                            "a": {"type": "integer"},
+                            "b": {"type": "string"}
+                        }
+                    }
+                ],
+                "required": ["a", "b"]
+            }),
+        );
+        let tc = ToolCall {
+            id: "1".into(),
+            name: "test".into(),
+            arguments: serde_json::json!({"a": "1", "b": 2}),
+            thought_signature: None,
+        };
+        let result = validate_tool_arguments(&tool, &tc);
+        assert!(result.is_ok());
+        let v = result.unwrap();
+        assert_eq!(v["a"], 1);
+        assert_eq!(v["b"], "2");
     }
 }

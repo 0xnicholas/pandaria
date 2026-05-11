@@ -1,6 +1,6 @@
 use agent_core::context::ToolCallCtx;
 use agent_core::hook_dispatcher::HookDispatcher;
-use agent_core::mutations::HookDecision;
+use agent_core::mutations::{HookDecision, ToolCallMutation};
 use async_trait::async_trait;
 
 struct DefaultDispatcher;
@@ -12,10 +12,13 @@ struct BlockingDispatcher;
 impl HookDispatcher for BlockingDispatcher {
     async fn on_tool_call(&self,
         _ctx: &ToolCallCtx,
-    ) -> HookDecision {
-        HookDecision::Block {
-            reason: "blocked by test".to_string(),
-        }
+    ) -> (HookDecision, ToolCallMutation) {
+        (
+            HookDecision::Block {
+                reason: "blocked by test".to_string(),
+            },
+            ToolCallMutation::default(),
+        )
     }
 }
 
@@ -30,7 +33,7 @@ async fn test_default_dispatcher_allows_all() {
         input: serde_json::json!({}),
     };
 
-    let decision = dispatcher.on_tool_call(&ctx).await;
+    let (decision, _mutation) = dispatcher.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
 }
 
@@ -45,7 +48,7 @@ async fn test_custom_dispatcher_blocks() {
         input: serde_json::json!({}),
     };
 
-    let decision = dispatcher.on_tool_call(&ctx).await;
+    let (decision, _mutation) = dispatcher.on_tool_call(&ctx).await;
     match decision {
         HookDecision::Block { reason } => {
             assert_eq!(reason, "blocked by test");

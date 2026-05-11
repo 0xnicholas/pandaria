@@ -1,402 +1,640 @@
-use agent_core::compaction::{
-    compute_file_lists, estimate_context_tokens, estimate_tokens, extract_file_ops_from_message,
-    find_cut_point, format_file_operations, prepare_compaction,
-    should_compact, CompactionSettings, FileOperations,
+use agent_core::compaction::{CompactionActor, CompactionConfig, should_compact};
+use agent_core::error::CompactionError;
+use agent_core::file_ops::DefaultFileOperationExtractor;
+use agent_core::hook_dispatcher::HookDispatcher;
+use agent_core::session_entry::{CompactionDetails, SessionEntry};
+use agent_core::types::AgentMessage;
+use agent_core::SessionActor;
+use llm_client::{
+    Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, LlmContext,
+    LlmError, LlmProvider, StopReason, StreamOptions, ToolCall, Usage, UserMessage,
 };
-use agent_core::types::{AgentMessage, CompactionEntry, SessionEntry, SessionEntryKind};
+use std::sync::Arc;
+use std::time::SystemTime;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 // ============================================================================
-// Token estimation tests
-// ============================================================================
-
-#[test]
-fn test_estimate_tokens_user_message() {
-    let msg = AgentMessage::User(llm_client::UserMessage {
-        content: vec![llm_client::Content::Text {
-            text: "Hello world".to_string(),
-            text_signature: None,
-        }],
-        timestamp: std::time::SystemTime::now(),
-    });
-    // "Hello world" = 11 chars, ceil(11/4) = 3
-    assert_eq!(estimate_tokens(&msg), 3);
-}
-
-#[test]
-fn test_estimate_tokens_assistant_with_tool_call() {
-    let msg = AgentMessage::Assistant(llm_client::AssistantMessage {
-        content: vec![llm_client::Content::ToolCall(llm_client::ToolCall {
-            id: "call_1".to_string(),
-            name: "read".to_string(),
-            arguments: serde_json::json!({"path": "/tmp/test.txt"}),
-            thought_signature: None,
-        })],
-        provider: "test".to_string(),
-        model: "test".to_string(),
-        api: llm_client::Api {
-            provider: "test".to_string(),
-            model: "test".to_string(),
-        },
-        usage: llm_client::Usage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            total_tokens: 0,
-        },
-        stop_reason: llm_client::StopReason::Stop,
-        response_id: None,
-        error_message: None,
-        timestamp: std::time::SystemTime::now(),
-    });
-    let tokens = estimate_tokens(&msg);
-    assert!(tokens > 0);
-}
-
-#[test]
-fn test_estimate_context_tokens_with_usage() {
-    let messages = vec![
-        AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
-                text: "Hello".to_string(),
-                text_signature: None,
-            }],
-            timestamp: std::time::SystemTime::now(),
-        }),
-        AgentMessage::Assistant(llm_client::AssistantMessage {
-            content: vec![llm_client::Content::Text {
-                text: "Hi".to_string(),
-                text_signature: None,
-            }],
-            provider: "test".to_string(),
-            model: "test".to_string(),
-            api: llm_client::Api {
-                provider: "test".to_string(),
-                model: "test".to_string(),
-            },
-            usage: llm_client::Usage {
-                input_tokens: 10,
-                output_tokens: 5,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                total_tokens: 15,
-            },
-            stop_reason: llm_client::StopReason::Stop,
-            response_id: None,
-            error_message: None,
-            timestamp: std::time::SystemTime::now(),
-        }),
-        AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
-                text: "How are you?".to_string(),
-                text_signature: None,
-            }],
-            timestamp: std::time::SystemTime::now(),
-        }),
-    ];
-
-    let estimate = estimate_context_tokens(&messages);
-    assert_eq!(estimate.usage_tokens, 15);
-    assert_eq!(estimate.last_usage_index, Some(1));
-    // Trailing message: "How are you?" = 12 chars, ceil(12/4) = 3
-    assert_eq!(estimate.trailing_tokens, 3);
-    assert_eq!(estimate.tokens, 18);
-}
-
-// ============================================================================
-// Should compact tests
+// Should compact tests (sync)
 // ============================================================================
 
 #[test]
 fn test_should_compact_enabled() {
-    let settings = CompactionSettings {
-        enabled: true,
-        reserve_tokens: 1000,
-        keep_recent_tokens: 500,
-    };
+    let config = CompactionConfig::new(true, 1000, 500);
     // context_window = 10000, context_tokens = 9500
     // 9500 > 10000 - 1000 = 9000, should trigger
-    assert!(should_compact(9500, 10000, &settings));
+    assert!(should_compact(9500, 10000, &config));
     // 8000 > 9000? No
-    assert!(!should_compact(8000, 10000, &settings));
+    assert!(!should_compact(8000, 10000, &config));
 }
 
 #[test]
 fn test_should_compact_disabled() {
-    let settings = CompactionSettings {
-        enabled: false,
-        reserve_tokens: 1000,
-        keep_recent_tokens: 500,
-    };
-    assert!(!should_compact(9500, 10000, &settings));
+    let config = CompactionConfig::new(false, 1000, 500);
+    assert!(!should_compact(9500, 10000, &config));
 }
 
 // ============================================================================
-// Cut point detection tests
+// CompactionActor preparation tests (sync)
 // ============================================================================
 
-#[test]
-fn test_find_cut_point_simple() {
-    let messages: Vec<AgentMessage> = (0..10).map(|i| {
-        AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
-                text: format!("message {}", i),
-                text_signature: None,
-            }],
-            timestamp: std::time::SystemTime::now(),
-        })
-    }).collect();
+fn make_test_provider() -> Arc<dyn llm_client::LlmProvider> {
+    Arc::new(TestProvider)
+}
 
-    let cut = find_cut_point(&messages, 50); // Large budget, keep all
-    assert_eq!(cut.first_kept_index, 0);
-    assert!(!cut.is_split_turn);
+struct TestProvider;
+#[async_trait::async_trait]
+impl llm_client::LlmProvider for TestProvider {
+    fn provider_name(&self) -> &str {
+        "test"
+    }
+    fn models(&self) -> Vec<String> {
+        vec!["test".to_string()]
+    }
+    async fn stream(
+        &self,
+        _model: &str,
+        _context: llm_client::LlmContext,
+        _options: llm_client::StreamOptions,
+        _signal: tokio_util::sync::CancellationToken,
+    ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
+        unreachable!()
+    }
 }
 
 #[test]
-fn test_find_cut_point_with_tool_result() {
-    let messages = vec![
-        AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+fn test_compaction_actor_prepare_empty() {
+    let actor = CompactionActor::new(
+        CompactionConfig::new(true, 1000, 500),
+        make_test_provider(),
+        "test".to_string(),
+        Arc::new(DefaultFileOperationExtractor::default()),
+    );
+
+    let entries: Vec<SessionEntry> = vec![];
+    let result = actor.prepare(&entries);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_compaction_actor_prepare_single_message() {
+    let actor = CompactionActor::new(
+        CompactionConfig::new(true, 1000, 500),
+        make_test_provider(),
+        "test".to_string(),
+        Arc::new(DefaultFileOperationExtractor::default()),
+    );
+
+    let entries = vec![SessionEntry::Message {
+        id: Uuid::new_v4(),
+        message: AgentMessage::User(UserMessage {
+            content: vec![Content::Text {
                 text: "Hello".to_string(),
                 text_signature: None,
             }],
-            timestamp: std::time::SystemTime::now(),
+            timestamp: SystemTime::now(),
         }),
-        AgentMessage::Assistant(llm_client::AssistantMessage {
-            content: vec![llm_client::Content::ToolCall(llm_client::ToolCall {
-                id: "call_1".to_string(),
-                name: "read".to_string(),
-                arguments: serde_json::json!({"path": "/tmp/test.txt"}),
-                thought_signature: None,
-            })],
-            provider: "test".to_string(),
-            model: "test".to_string(),
-            api: llm_client::Api {
-                provider: "test".to_string(),
-                model: "test".to_string(),
-            },
-            usage: llm_client::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                total_tokens: 0,
-            },
-            stop_reason: llm_client::StopReason::ToolUse,
-            response_id: None,
-            error_message: None,
-            timestamp: std::time::SystemTime::now(),
-        }),
-        AgentMessage::ToolResult(llm_client::ToolResultMessage {
-            tool_call_id: "call_1".to_string(),
-            tool_name: "read".to_string(),
-            content: vec![llm_client::Content::Text {
-                text: "file content".to_string(),
-                text_signature: None,
-            }],
-            details: None,
-            is_error: false,
-            timestamp: std::time::SystemTime::now(),
-        }),
-    ];
+    }];
 
-    let cut = find_cut_point(&messages, 1); // Small budget
-    // Tool result is at index 2, not a valid cut point.
-    // The closest valid cut point before/after index 2 is index 1 (assistant).
-    // But our algorithm walks backwards and finds the first valid cut point >= current index.
-    // Since tool_result has ~3 tokens, accumulated >= budget at index 2.
-    // No valid cut point >= 2, so we fall back to the last found cut point.
-    // In a 3-message list with small budget, we should keep from index 1.
-    // However, if accumulated never exceeds budget before hitting index 0,
-    // first_kept_index might be 0. Let's verify the behavior.
-    assert!(!cut.is_split_turn || cut.first_kept_index < messages.len());
+    let prep = actor.prepare(&entries).unwrap();
+    // With a single short message and large keep_recent, nothing to summarize
+    assert!(prep.messages_to_summarize.is_empty());
 }
 
 // ============================================================================
-// File operations tests
+// Mock LLM providers for async compact() tests
 // ============================================================================
 
-#[test]
-fn test_extract_file_ops_from_message() {
-    let msg = AgentMessage::Assistant(llm_client::AssistantMessage {
-        content: vec![llm_client::Content::ToolCall(llm_client::ToolCall {
-            id: "call_1".to_string(),
-            name: "read".to_string(),
-            arguments: serde_json::json!({"path": "/tmp/test.txt"}),
-            thought_signature: None,
-        })],
-        provider: "test".to_string(),
-        model: "test".to_string(),
-        api: llm_client::Api {
-            provider: "test".to_string(),
-            model: "test".to_string(),
-        },
-        usage: llm_client::Usage {
-            input_tokens: 0,
-            output_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-            total_tokens: 0,
-        },
-        stop_reason: llm_client::StopReason::ToolUse,
+fn default_api() -> Api {
+    Api {
+        provider: "mock".into(),
+        model: "mock".into(),
+    }
+}
+
+fn default_usage() -> Usage {
+    Usage {
+        input_tokens: 0,
+        output_tokens: 1,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+        total_tokens: 1,
+    }
+}
+
+fn make_assistant_message(content: Vec<Content>) -> AssistantMessage {
+    AssistantMessage {
+        content,
+        provider: "mock".into(),
+        model: "mock".into(),
+        api: default_api(),
+        usage: default_usage(),
+        stop_reason: StopReason::Stop,
         response_id: None,
         error_message: None,
-        timestamp: std::time::SystemTime::now(),
-    });
-
-    let mut ops = FileOperations::default();
-    extract_file_ops_from_message(&msg, &mut ops);
-    assert!(ops.read.contains("/tmp/test.txt"));
+        timestamp: SystemTime::now(),
+    }
 }
 
-#[test]
-fn test_compute_file_lists() {
-    let mut ops = FileOperations::default();
-    ops.read.insert("/tmp/a.txt".to_string());
-    ops.read.insert("/tmp/b.txt".to_string());
-    ops.edited.insert("/tmp/b.txt".to_string());
-    ops.written.insert("/tmp/c.txt".to_string());
-
-    let (read_only, modified) = compute_file_lists(&ops);
-    assert_eq!(read_only, vec!["/tmp/a.txt"]);
-    assert_eq!(modified, vec!["/tmp/b.txt", "/tmp/c.txt"]);
+fn mock_provider_with_summary(summary: &str) -> Arc<dyn LlmProvider> {
+    struct SummaryProvider {
+        summary: String,
+    }
+    #[async_trait::async_trait]
+    impl LlmProvider for SummaryProvider {
+        fn provider_name(&self) -> &str {
+            "mock-summary"
+        }
+        fn models(&self) -> Vec<String> {
+            vec!["mock".into()]
+        }
+        async fn stream(
+            &self,
+            _model: &str,
+            _ctx: LlmContext,
+            _opts: StreamOptions,
+            _signal: CancellationToken,
+        ) -> Result<AssistantMessageEventStream, LlmError> {
+            let partial = make_assistant_message(vec![Content::Text {
+                text: self.summary.clone(),
+                text_signature: None,
+            }]);
+            let events = vec![
+                AssistantMessageEvent::Start {
+                    partial: partial.clone(),
+                },
+                AssistantMessageEvent::TextDelta {
+                    content_index: 0,
+                    delta: self.summary.clone(),
+                    partial: partial.clone(),
+                },
+                AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: partial,
+                },
+            ];
+            Ok(AssistantMessageEventStream::from_events(events))
+        }
+    }
+    Arc::new(SummaryProvider {
+        summary: summary.to_string(),
+    })
 }
 
-#[test]
-fn test_format_file_operations() {
-    let read_files = vec!["a.txt".to_string(), "b.txt".to_string()];
-    let modified_files = vec!["c.txt".to_string()];
-    let formatted = format_file_operations(&read_files, &modified_files);
-    assert!(formatted.contains("<read-files>"));
-    assert!(formatted.contains("<modified-files>"));
-    assert!(formatted.contains("a.txt"));
-    assert!(formatted.contains("c.txt"));
+fn mock_provider_with_error(error_msg: &str) -> Arc<dyn LlmProvider> {
+    struct ErrorProvider {
+        error: String,
+    }
+    #[async_trait::async_trait]
+    impl LlmProvider for ErrorProvider {
+        fn provider_name(&self) -> &str {
+            "mock-error"
+        }
+        fn models(&self) -> Vec<String> {
+            vec!["mock".into()]
+        }
+        async fn stream(
+            &self,
+            _model: &str,
+            _ctx: LlmContext,
+            _opts: StreamOptions,
+            _signal: CancellationToken,
+        ) -> Result<AssistantMessageEventStream, LlmError> {
+            let error_message = AssistantMessage {
+                content: vec![],
+                provider: "mock".into(),
+                model: "mock".into(),
+                api: default_api(),
+                usage: default_usage(),
+                stop_reason: StopReason::Error,
+                response_id: None,
+                error_message: Some(self.error.clone()),
+                timestamp: SystemTime::now(),
+            };
+            let events = vec![AssistantMessageEvent::Error {
+                error: error_message,
+            }];
+            Ok(AssistantMessageEventStream::from_events(events))
+        }
+    }
+    Arc::new(ErrorProvider {
+        error: error_msg.to_string(),
+    })
+}
+
+fn mock_provider_empty_done() -> Arc<dyn LlmProvider> {
+    struct EmptyDoneProvider;
+    #[async_trait::async_trait]
+    impl LlmProvider for EmptyDoneProvider {
+        fn provider_name(&self) -> &str {
+            "mock-empty"
+        }
+        fn models(&self) -> Vec<String> {
+            vec!["mock".into()]
+        }
+        async fn stream(
+            &self,
+            _model: &str,
+            _ctx: LlmContext,
+            _opts: StreamOptions,
+            _signal: CancellationToken,
+        ) -> Result<AssistantMessageEventStream, LlmError> {
+            let partial = make_assistant_message(vec![]);
+            let events = vec![
+                AssistantMessageEvent::Start {
+                    partial: partial.clone(),
+                },
+                AssistantMessageEvent::Done {
+                    reason: StopReason::Stop,
+                    message: partial,
+                },
+            ];
+            Ok(AssistantMessageEventStream::from_events(events))
+        }
+    }
+    Arc::new(EmptyDoneProvider)
 }
 
 // ============================================================================
-// Compaction preparation tests
+// Helper: build entries and compaction actor
 // ============================================================================
 
-#[test]
-fn test_prepare_compaction_empty_entries() {
-    let entries: Vec<SessionEntry> = vec![];
-    let settings = CompactionSettings::default();
-    assert!(prepare_compaction(&entries, &settings).is_none());
+fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> CompactionActor {
+    CompactionActor::new(
+        CompactionConfig::new(true, 1000, 100),
+        provider,
+        "mock".to_string(),
+        Arc::new(DefaultFileOperationExtractor::default()),
+    )
 }
 
-#[test]
-fn test_prepare_compaction_simple() {
-    let entries: Vec<SessionEntry> = (0..5).map(|i| SessionEntry {
-        id: i as u64,
-        kind: SessionEntryKind::Message(AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
-                text: format!("msg {}", i),
+fn user_entry(text: &str) -> SessionEntry {
+    SessionEntry::Message {
+        id: Uuid::new_v4(),
+        message: AgentMessage::User(UserMessage {
+            content: vec![Content::Text {
+                text: text.to_string(),
                 text_signature: None,
             }],
-            timestamp: std::time::SystemTime::now(),
-        })),
-    }).collect();
-
-    let settings = CompactionSettings {
-        enabled: true,
-        reserve_tokens: 1000,
-        keep_recent_tokens: 1, // Very small budget to force compaction
-    };
-
-    let prep = prepare_compaction(&entries, &settings).unwrap();
-    assert!(!prep.messages_to_summarize.is_empty());
-    assert_eq!(prep.first_kept_entry_id, entries[prep.first_kept_entry_id as usize].id);
-}
-
-#[test]
-fn test_prepare_compaction_with_previous_compaction() {
-    let mut entries: Vec<SessionEntry> = (0..3).map(|i| SessionEntry {
-        id: i as u64,
-        kind: SessionEntryKind::Message(AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
-                text: format!("msg {}", i),
-                text_signature: None,
-            }],
-            timestamp: std::time::SystemTime::now(),
-        })),
-    }).collect();
-
-    // Add a previous compaction
-    entries.push(SessionEntry {
-        id: 3,
-        kind: SessionEntryKind::Compaction(CompactionEntry {
-            summary: "Previous summary".to_string(),
-            first_kept_entry_id: 1,
-            tokens_before: 100,
-            timestamp: std::time::SystemTime::now(),
-            details: None,
+            timestamp: SystemTime::now(),
         }),
-    });
-
-    // Add more messages after compaction
-    entries.push(SessionEntry {
-        id: 4,
-        kind: SessionEntryKind::Message(AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
-                text: "msg 4".to_string(),
-                text_signature: None,
-            }],
-            timestamp: std::time::SystemTime::now(),
-        })),
-    });
-
-    let settings = CompactionSettings {
-        enabled: true,
-        reserve_tokens: 1000,
-        keep_recent_tokens: 1,
-    };
-
-    let prep = prepare_compaction(&entries, &settings).unwrap();
-    assert_eq!(prep.previous_summary, Some("Previous summary".to_string()));
-    // Should start from first_kept_entry_id = 1, not 0
-    assert!(prep.messages_to_summarize.len() >= 1);
+    }
 }
 
-// ============================================================================
-// Serialization tests
-// ============================================================================
-
-#[test]
-fn test_serialize_conversation() {
-    let messages = vec![
-        AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
-                text: "Hello".to_string(),
-                text_signature: None,
-            }],
-            timestamp: std::time::SystemTime::now(),
-        }),
-        AgentMessage::Assistant(llm_client::AssistantMessage {
-            content: vec![llm_client::Content::Text {
-                text: "Hi there".to_string(),
-                text_signature: None,
-            }],
-            provider: "test".to_string(),
-            model: "test".to_string(),
-            api: llm_client::Api {
-                provider: "test".to_string(),
-                model: "test".to_string(),
-            },
-            usage: llm_client::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
+fn assistant_with_tool_call(tool_name: &str, path: &str) -> SessionEntry {
+    let mut args = serde_json::Map::new();
+    args.insert("path".to_string(), serde_json::Value::String(path.to_string()));
+    SessionEntry::Message {
+        id: Uuid::new_v4(),
+        message: AgentMessage::Assistant(AssistantMessage {
+            content: vec![Content::ToolCall(ToolCall {
+                id: format!("tc_{}", Uuid::new_v4()),
+                name: tool_name.to_string(),
+                arguments: serde_json::Value::Object(args),
+                thought_signature: None,
+            })],
+            provider: "mock".into(),
+            model: "mock".into(),
+            api: default_api(),
+            usage: Usage {
+                input_tokens: 10,
+                output_tokens: 10,
                 cache_creation_input_tokens: None,
                 cache_read_input_tokens: None,
-                total_tokens: 0,
+                total_tokens: 20,
             },
-            stop_reason: llm_client::StopReason::Stop,
+            stop_reason: StopReason::ToolUse,
             response_id: None,
             error_message: None,
-            timestamp: std::time::SystemTime::now(),
+            timestamp: SystemTime::now(),
         }),
-    ];
+    }
+}
 
-    let serialized = agent_core::compaction::serialize_conversation(&messages);
-    assert!(serialized.contains("[User]: Hello"));
-    assert!(serialized.contains("[Assistant]: Hi there"));
+/// Build N entries with sufficient text to trigger summarization.
+/// Each entry is ~300 chars (~75 tokens). With keep_recent=100,
+/// the last ~2 entries are kept and the rest summarized.
+fn build_many_entries(count: usize) -> Vec<SessionEntry> {
+    (0..count)
+        .map(|i| {
+            let padding = "x".repeat(80);
+            user_entry(&format!(
+                "User message {}. We need substantial text here to ensure enough tokens \
+                 for compaction. The quick brown fox jumps over the lazy dog. \
+                 More padding to reach token threshold. Extra content: lorem ipsum \
+                 dolor sit amet consectetur adipiscing elit. Additional padding: {}",
+                i, padding
+            ))
+        })
+        .collect()
+}
+
+fn make_compaction_entry(summary: &str, first_kept_entry_id: Uuid) -> SessionEntry {
+    SessionEntry::Compaction {
+        id: Uuid::new_v4(),
+        summary: summary.to_string(),
+        first_kept_entry_id,
+        tokens_before: 500,
+        details: Some(CompactionDetails {
+            read_files: vec![],
+            modified_files: vec![],
+        }),
+        from_extension: false,
+        timestamp: SystemTime::now(),
+    }
+}
+
+// ============================================================================
+// Integration tests: compact()
+// ============================================================================
+
+#[tokio::test]
+async fn test_compact_basic_success() {
+    let expected_summary = "This is a test summary of the conversation.";
+    let provider = mock_provider_with_summary(expected_summary);
+    let actor = make_compaction_actor(provider);
+    let entries = build_many_entries(10);
+
+    let result = actor.compact(&entries, &CancellationToken::new()).await.unwrap();
+
+    assert_eq!(result.summary, expected_summary);
+    assert!(!result.first_kept_entry_id.is_nil());
+    assert!(result.tokens_before > 0);
+    assert!(result.details.is_some());
+
+    // Verify SessionEntry::Compaction can be constructed from result
+    let compaction_entry = SessionEntry::Compaction {
+        id: Uuid::new_v4(),
+        summary: result.summary.clone(),
+        first_kept_entry_id: result.first_kept_entry_id,
+        tokens_before: result.tokens_before,
+        details: result.details.clone(),
+        from_extension: false,
+        timestamp: SystemTime::now(),
+    };
+    assert_eq!(compaction_entry.id().to_string().len(), 36);
+    // Verify we can retrieve fields back from the entry
+    match compaction_entry {
+        SessionEntry::Compaction {
+            summary,
+            first_kept_entry_id,
+            tokens_before,
+            ..
+        } => {
+            assert_eq!(summary, expected_summary);
+            assert_eq!(first_kept_entry_id, result.first_kept_entry_id);
+            assert_eq!(tokens_before, result.tokens_before);
+        }
+        _ => panic!("Expected Compaction entry"),
+    }
+}
+
+#[tokio::test]
+async fn test_compact_llm_error() {
+    let provider = mock_provider_with_error("LLM API failure");
+    let actor = make_compaction_actor(provider);
+    let entries = build_many_entries(10);
+
+    let result = actor.compact(&entries, &CancellationToken::new()).await;
+
+    match result {
+        Err(CompactionError::LlmError(msg)) => {
+            assert!(msg.contains("LLM API failure"), "unexpected error: {msg}");
+        }
+        other => panic!("Expected CompactionError::LlmError, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_compact_empty_summary_returns_error() {
+    let provider = mock_provider_empty_done();
+    let actor = make_compaction_actor(provider);
+    let entries = build_many_entries(10);
+
+    let result = actor.compact(&entries, &CancellationToken::new()).await;
+
+    match result {
+        Err(CompactionError::LlmError(msg)) => {
+            assert!(
+                msg.contains("empty") || msg.contains("Empty"),
+                "unexpected error: {msg}"
+            );
+        }
+        other => panic!("Expected CompactionError::LlmError, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_compact_with_tool_calls_populates_details() {
+    let expected_summary = "Summary with tool calls.";
+    let provider = mock_provider_with_summary(expected_summary);
+    let actor = make_compaction_actor(provider);
+
+    // Build entries with tool calls in between user messages
+    let mut entries = build_many_entries(5);
+    // Add assistant entries with tool calls that DefaultFileOperationExtractor recognizes
+    entries.push(user_entry("Please read the main file and write to output."));
+    entries.push(assistant_with_tool_call("read", "src/main.rs"));
+    entries.push(user_entry("Now edit the config."));
+    entries.push(assistant_with_tool_call("edit", "config.toml"));
+    entries.push(user_entry("Write the output file."));
+    entries.push(assistant_with_tool_call("write", "target/output.txt"));
+    entries.push(user_entry("Now check the utils."));
+    entries.push(assistant_with_tool_call("read", "src/utils.rs"));
+    entries.push(user_entry("Done."));
+    // Add padding entries to ensure summarization triggers
+    entries.extend(build_many_entries(5));
+
+    let result = actor.compact(&entries, &CancellationToken::new()).await.unwrap();
+
+    assert_eq!(result.summary, expected_summary);
+
+    let details = result.details.expect("details should be present");
+    // DefaultFileOperationExtractor: read_tool_names = ["read"], write_tool_names = ["write"]
+    assert!(
+        details.read_files.contains(&"src/main.rs".to_string()),
+        "read_files should contain src/main.rs, got {:?}",
+        details.read_files
+    );
+    assert!(
+        details.read_files.contains(&"src/utils.rs".to_string()),
+        "read_files should contain src/utils.rs, got {:?}",
+        details.read_files
+    );
+    assert!(
+        details.modified_files.contains(&"target/output.txt".to_string()),
+        "modified_files should contain target/output.txt, got {:?}",
+        details.modified_files
+    );
+    // Edit tools are tracked separately (edited), not in modified_files
+    assert!(
+        !details.modified_files.contains(&"config.toml".to_string()),
+        "edited files should not appear in modified_files"
+    );
+}
+
+#[tokio::test]
+async fn test_compact_with_previous_compaction() {
+    let expected_summary = "Updated summary incorporating new messages.";
+    let provider = mock_provider_with_summary(expected_summary);
+    let actor = make_compaction_actor(provider);
+
+    // Previous compaction with a known first_kept_entry_id
+    let kept_id = Uuid::new_v4();
+    let mut entries = vec![
+        user_entry("Old message that was already compacted."),
+        user_entry("Another old message."),
+        make_compaction_entry("Previous summary of old conversation.", kept_id),
+        SessionEntry::Message {
+            id: kept_id,
+            message: AgentMessage::User(UserMessage {
+                content: vec![Content::Text {
+                    text: "First message after previous compaction.".into(),
+                    text_signature: None,
+                }],
+                timestamp: SystemTime::now(),
+            }),
+        },
+    ];
+    // Add enough new messages to trigger another compaction
+    entries.extend(build_many_entries(10));
+
+    let result = actor.compact(&entries, &CancellationToken::new()).await.unwrap();
+
+    assert_eq!(result.summary, expected_summary);
+    assert!(result.tokens_before > 0);
+    // The first_kept_entry_id should be from one of the new messages (after the
+    // previous compaction boundary), not the old kept_id
+    assert_ne!(result.first_kept_entry_id, kept_id);
+}
+
+#[tokio::test]
+async fn test_compact_empty_entries_returns_error() {
+    let provider = mock_provider_with_summary("should not be used");
+    let actor = make_compaction_actor(provider);
+    let entries: Vec<SessionEntry> = vec![];
+
+    let result = actor.compact(&entries, &CancellationToken::new()).await;
+
+    match result {
+        Err(CompactionError::AlreadyCompacted) => {}
+        other => panic!("Expected CompactionError::AlreadyCompacted, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_compact_session_entry_direct_construction() {
+    // Verify all fields map correctly from CompactionResult to SessionEntry::Compaction
+    let first_kept = Uuid::new_v4();
+    let details = CompactionDetails {
+        read_files: vec!["src/main.rs".into()],
+        modified_files: vec!["src/output.rs".into()],
+    };
+
+    let result = agent_core::compaction::CompactionResult {
+        summary: "Test summary".to_string(),
+        first_kept_entry_id: first_kept,
+        tokens_before: 1200,
+        details: Some(details.clone()),
+    };
+
+    let entry_id = Uuid::new_v4();
+    let entry = SessionEntry::Compaction {
+        id: entry_id,
+        summary: result.summary.clone(),
+        first_kept_entry_id: result.first_kept_entry_id,
+        tokens_before: result.tokens_before,
+        details: result.details.clone(),
+        from_extension: false,
+        timestamp: SystemTime::now(),
+    };
+
+    assert_eq!(entry.id(), entry_id);
+    let SessionEntry::Compaction {
+        id,
+        summary,
+        first_kept_entry_id,
+        tokens_before,
+        details: d,
+        from_extension,
+        ..
+    } = &entry
+    else {
+        panic!("Expected Compaction entry");
+    };
+
+    assert_eq!(*id, entry_id);
+    assert_eq!(summary, "Test summary");
+    assert_eq!(*first_kept_entry_id, first_kept);
+    assert_eq!(*tokens_before, 1200);
+    assert_eq!(d.as_ref().unwrap().read_files, details.read_files);
+    assert_eq!(d.as_ref().unwrap().modified_files, details.modified_files);
+    assert!(!from_extension);
+}
+
+// ============================================================================
+// AllowAllDispatcher for SessionActor tests
+// ============================================================================
+
+struct AllowAllDispatcher;
+#[async_trait::async_trait]
+impl HookDispatcher for AllowAllDispatcher {}
+
+// ============================================================================
+// Integration test: compact() via SessionActor writes SessionEntry
+// ============================================================================
+
+#[tokio::test]
+async fn test_compact_via_session_actor_writes_entry() {
+    let _ = tracing_subscriber::fmt().try_init();
+    let provider = mock_provider_with_summary("Session compaction summary");
+    let dispatcher = Arc::new(AllowAllDispatcher);
+    let mut session = SessionActor::new(
+        "t1".to_string(),
+        "s1".to_string(),
+        "You are helpful.".to_string(),
+        "test".to_string(),
+        provider.clone(),
+        dispatcher,
+        Arc::new(make_compaction_actor(provider)),
+        vec![],
+        None,
+    );
+
+    // Fill entries with sufficient text to trigger summarization
+    let entries = build_many_entries(10);
+    for entry in entries {
+        match entry {
+            SessionEntry::Message { message, .. } => session.push_message(message),
+            _ => {}
+        }
+    }
+
+    let result = session.compact(None).await.unwrap();
+    assert_eq!(result.summary, "Session compaction summary");
+
+    let all_entries = session.entries();
+    assert!(
+        all_entries.len() > 0,
+        "session should have entries after compaction"
+    );
+
+    let last = all_entries.last().unwrap();
+    match last {
+        SessionEntry::Compaction {
+            summary,
+            first_kept_entry_id,
+            tokens_before,
+            details,
+            from_extension,
+            ..
+        } => {
+            assert_eq!(summary, "Session compaction summary");
+            assert!(!first_kept_entry_id.is_nil());
+            assert!(tokens_before > &0);
+            assert!(details.is_some());
+            assert!(!from_extension);
+        }
+        _ => panic!("Expected SessionEntry::Compaction, got {:?}", last),
+    }
 }

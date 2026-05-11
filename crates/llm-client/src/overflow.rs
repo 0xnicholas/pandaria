@@ -180,4 +180,130 @@ mod tests {
             0,
         ));
     }
+
+    #[test]
+    fn test_xai_max_prompt_length() {
+        assert!(is_context_overflow(
+            Some("maximum prompt length is 131072 tokens"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_groq_reduce_length() {
+        assert!(is_context_overflow(
+            Some("reduce the length of the messages"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_openrouter_max_context() {
+        assert!(is_context_overflow(
+            Some("maximum context length is 200000 tokens"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_copilot_exceeds_limit() {
+        assert!(is_context_overflow(
+            Some("exceeds the limit of 128000"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_llama_cpp_context_size() {
+        assert!(is_context_overflow(
+            Some("exceeds the available context size"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_lm_studio_context_length() {
+        assert!(is_context_overflow(
+            Some("greater than the context length"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_minimax_window_exceeds() {
+        assert!(is_context_overflow(
+            Some("context window exceeds limit"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_kimi_token_limit() {
+        assert!(is_context_overflow(
+            Some("exceeded model token limit"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_mistral_too_large() {
+        assert!(is_context_overflow(
+            Some("too large for model with 32768"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_zai_context_window() {
+        assert!(is_context_overflow(
+            Some("model_context_window_exceeded"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_ollama_prompt_too_long() {
+        assert!(is_context_overflow(
+            Some("prompt too long: 250000 > context length"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_cerebras_status_code_400() {
+        assert!(is_context_overflow(
+            Some("400 status code (no body)"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_cerebras_status_code_413() {
+        assert!(is_context_overflow(
+            Some("413 status code (no body)"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
+
+    #[test]
+    fn test_generic_too_many_tokens() {
+        assert!(is_context_overflow(
+            Some("token limit exceeded"),
+            &StopReason::Error,
+            None, 0, 0,
+        ));
+    }
 }

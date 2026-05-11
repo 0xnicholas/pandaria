@@ -16,7 +16,6 @@ use crate::streaming::AssistantMessageEventStream;
 /// the request fails immediately to avoid unreasonably long waits.
 ///
 /// Maximum retry count configurable via `max_retries`.
-#[tracing::instrument(skip(operation), fields(retry_count))]
 pub async fn with_retry<F, Fut>(
     operation: F,
     max_retries: u32,

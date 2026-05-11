@@ -67,3 +67,12 @@ fn test_sanitize_unicode_noop() {
     let output = sanitize_unicode(input);
     assert_eq!(output, input);
 }
+
+#[test]
+fn test_sanitize_unicode_replacement_chars() {
+    // U+FFFD replacement characters (from invalid UTF-8) should be preserved
+    // since they are not in the surrogate range
+    let input = "hello \u{FFFD}world";
+    let output = sanitize_unicode(input);
+    assert_eq!(output, input);
+}

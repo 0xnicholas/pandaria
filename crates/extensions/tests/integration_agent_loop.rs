@@ -30,7 +30,6 @@ fn make_loop_config(
         tools,
         system_prompt,
         stream_options: StreamOptions::default(),
-        max_retries: 3,
         steer_queue: Arc::new(Mutex::new(vec![])),
         follow_up_queue: Arc::new(Mutex::new(vec![])),
         event_sink: Arc::new(|event| {
@@ -403,6 +402,10 @@ async fn test_agent_loop_turn_end_observed() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let counter = Arc::new(TurnEndCounterExt { count: AtomicUsize::new(0) });
     let (handle, _) = ExtensionActor::spawn(counter.clone(), bus.clone(), 8);
+
+    // Wait for ExtensionActor to subscribe to EventBus before emitting events
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
     let router = HookRouter::new(vec![handle], bus.clone());
 
     let provider = Arc::new(EchoProvider {

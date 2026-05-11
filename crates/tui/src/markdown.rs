@@ -6,6 +6,10 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
+use std::sync::LazyLock;
+
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 pub fn render_markdown(text: &str, theme: &Theme) -> Vec<Line<'static>> {
     let mut options = Options::empty();
@@ -75,8 +79,8 @@ pub fn render_markdown(text: &str, theme: &Theme) -> Vec<Line<'static>> {
 }
 
 fn highlight_code(code: &str, lang: Option<&str>) -> Vec<Vec<Span<'static>>> {
-    let ps = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
+    let ps = &*SYNTAX_SET;
+    let ts = &*THEME_SET;
     let syntax = lang.and_then(|l| ps.find_syntax_by_token(l).or_else(|| ps.find_syntax_by_extension(l))).unwrap_or_else(|| ps.find_syntax_plain_text());
     let mut h = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
     let mut result = Vec::new();

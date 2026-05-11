@@ -3,7 +3,7 @@ use tui::config::{CliArgs, Config};
 use tui::client::rest::RestClient;
 use tui::widgets::spinner::SpinnerWidget;
 use clap::Parser;
-use crossterm::event::{Event, EventStream};
+use crossterm::event::{EnableBracketedPaste, DisableBracketedPaste, Event, EventStream};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -42,6 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdout = io::stdout();
     stdout.execute(EnterAlternateScreen)?;
     enable_raw_mode()?;
+    stdout.execute(EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -59,6 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             event = reader.next() => {
                 match event {
                     Some(Ok(Event::Key(key))) => app.handle_key_event(key),
+                    Some(Ok(Event::Paste(data))) => {
+                        app.handle_paste(data);
+                    }
                     Some(Ok(Event::Resize(_, _))) => {},
                     Some(Err(e)) => tracing::error!("crossterm error: {}", e),
                     None => break,
@@ -79,6 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    terminal.backend_mut().execute(DisableBracketedPaste)?;
     disable_raw_mode()?;
     terminal.backend_mut().execute(LeaveAlternateScreen)?;
     Ok(())

@@ -179,3 +179,38 @@ fn test_usage_with_cache_tokens_roundtrip() {
     assert_eq!(back, usage);
     assert_eq!(back.compute_total(), 2000);
 }
+
+#[test]
+fn test_tool_def_serialization() {
+    let tool = llm_client::ToolDef {
+        name: "test_tool".to_string(),
+        description: "A test tool".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "x": {"type": "string"}
+            }
+        }),
+    };
+    let json = serde_json::to_string(&tool).unwrap();
+    assert!(json.contains("\"name\":\"test_tool\""));
+    assert!(json.contains("\"description\":\"A test tool\""));
+    assert!(json.contains("\"parameters\""));
+    let back: llm_client::ToolDef = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.name, "test_tool");
+    assert_eq!(back.description, "A test tool");
+}
+
+#[test]
+fn test_content_image_variant() {
+    let content = Content::Image {
+        data: "base64data".to_string(),
+        mime_type: "image/png".to_string(),
+    };
+    let json = serde_json::to_string(&content).unwrap();
+    assert!(json.contains("\"type\":\"image\""));
+    assert!(json.contains("\"data\":\"base64data\""));
+    assert!(json.contains("\"mime_type\":\"image/png\""));
+    let back: Content = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, content);
+}

@@ -1,207 +1,388 @@
-use std::panic::AssertUnwindSafe;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use futures::FutureExt;
 use llm_client::{
-    Content, LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall,
+    Content, LlmContext, LlmProvider, StopReason, StreamOptions,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, info_span, instrument, warn, Instrument};
+use tracing::instrument;
 
-use crate::context::{ContextCtx, TurnEndCtx};
+use crate::context::{BeforeAgentStartCtx, ProviderRequestCtx, ProviderResponseCtx, ContextCtx, TurnEndCtx, AgentEndCtx};
+use crate::mutations::{BeforeAgentStartMutation, ProviderRequestMutation, ProviderResponseMutation};
+use crate::events::AgentEvent;
+use crate::provider_opts::ProviderStreamOptions;
+use crate::hook_timeout::with_timeout;
 use crate::error::AgentError;
 use crate::hook_dispatcher::HookDispatcher;
 use crate::tool::ToolExecutor;
 use crate::types::{AgentMessage, AgentToolRef, ToolExecutionMode};
 
-/// Execute an async block, catching panics and converting them to AgentError.
-async fn catch_panic<F, T>(f: F) -> Result<T, AgentError>
-where
-    F: std::future::Future<Output = T>,
-{
-    match AssertUnwindSafe(f).catch_unwind().await {
-        Ok(result) => Ok(result),
-        Err(_) => {
-            error!("Extension panicked — converting to error");
-            Err(AgentError::HookDispatchError(
-                "Extension panicked".to_string(),
-            ))
-        }
+pub struct AgentLoopConfig {
+    pub tenant_id: String,
+    pub session_id: String,
+    pub model: String,
+    pub provider: Arc<dyn LlmProvider>,
+    pub hook_dispatcher: Arc<dyn HookDispatcher>,
+    pub tools: Vec<AgentToolRef>,
+    pub system_prompt: Option<String>,
+    pub stream_options: StreamOptions,
+    pub steer_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    pub follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    pub event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static>,
+}
+
+#[derive(Debug, Clone)]
+pub enum TurnResult {
+    ToolUse,
+    Stop,
+    Error(AgentError),
+}
+
+fn build_tool_defs(tools: &[AgentToolRef]) -> Option<Vec<llm_client::ToolDef>> {
+    if tools.is_empty() { None }
+    else { Some(tools.iter().map(|t| llm_client::ToolDef { name: t.name().to_string(), description: t.description().to_string(), parameters: t.parameters() }).collect()) }
+}
+
+fn build_tool_value_defs(tools: &[AgentToolRef]) -> Vec<serde_json::Value> {
+    tools.iter().map(|t| serde_json::json!({"name": t.name(), "description": t.description(), "parameters": t.parameters()})).collect()
+}
+
+fn apply_provider_request_mutation(ctx: &mut LlmContext, opts: &mut StreamOptions, mutation: ProviderRequestMutation) {
+    if let Some(sp) = mutation.system_prompt { ctx.system_prompt = sp; }
+    if let Some(msgs) = mutation.messages { ctx.messages = msgs; }
+    if let Some(tools) = mutation.tools { ctx.tools = tools; }
+    if let Some(options) = mutation.options {
+        if let Some(mt) = options.max_tokens { opts.max_tokens = Some(mt); }
+        if let Some(temp) = options.temperature { opts.temperature = Some(temp); }
+        if let Some(tp) = options.top_p { opts.top_p = Some(tp); }
+        if let Some(reasoning) = options.reasoning { opts.reasoning = Some(reasoning); }
+        if let Some(mr) = options.max_retries { opts.max_retries = mr; }
+        if let Some(timeout) = options.timeout { opts.timeout = timeout; }
     }
 }
 
-/// Drives the agent tool-use loop per ADR-001.
-///
-/// Each turn sends messages to the LLM, receives an AssistantMessage with
-/// optional ToolCalls, executes tools, and feeds results back into the loop.
-/// The loop terminates when stop_reason is "stop" or all tools signal terminate.
+fn apply_provider_response_mutation(msg: &mut llm_client::AssistantMessage, mutation: ProviderResponseMutation) {
+    if let Some(content) = mutation.content { msg.content = content; }
+    if let Some(stop_reason) = mutation.stop_reason { msg.stop_reason = stop_reason; }
+}
+
+pub fn resolve_orphan_tool_calls(messages: &mut Vec<AgentMessage>) {
+    use std::collections::HashSet;
+    let mut tool_call_ids: Vec<(usize, String)> = Vec::new();
+    let mut resolved_ids: HashSet<String> = HashSet::new();
+    for (i, msg) in messages.iter().enumerate() {
+        match msg {
+            AgentMessage::Assistant(a) => {
+                for content in &a.content {
+                    if let llm_client::Content::ToolCall(tc) = content { tool_call_ids.push((i, tc.id.clone())); }
+                }
+            }
+            AgentMessage::ToolResult(tr) => { resolved_ids.insert(tr.tool_call_id.clone()); }
+            _ => {}
+        }
+    }
+    let mut orphans: Vec<(usize, String, String)> = tool_call_ids.into_iter()
+        .filter(|(_, id)| !resolved_ids.contains(id))
+        .map(|(idx, id)| {
+            let tool_name = match &messages[idx] {
+                AgentMessage::Assistant(a) => a.content.iter().find_map(|c| match c {
+                    llm_client::Content::ToolCall(tc) if tc.id == id => Some(tc.name.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            }.unwrap_or_else(|| "unknown".to_string());
+            (idx, id, tool_name)
+        }).collect();
+    orphans.sort_by(|a, b| b.0.cmp(&a.0));
+    for (idx, id, tool_name) in orphans {
+        messages.insert(idx + 1, AgentMessage::ToolResult(llm_client::ToolResultMessage {
+            tool_call_id: id, tool_name, content: vec![],
+            details: Some(serde_json::json!({"_orphan": true, "message": "tool call was not executed (context truncated or restored)"})),
+            is_error: true, timestamp: std::time::SystemTime::now(),
+        }));
+    }
+}
+
+fn is_overflow(error_msg: &str) -> bool {
+    let lower = error_msg.to_lowercase();
+    lower.contains("context length") || lower.contains("token limit")
+}
+
 pub struct AgentLoop {
-    tenant_id: String,
-    session_id: String,
-    model: String,
-    provider: Arc<dyn LlmProvider>,
-    hook_dispatcher: Arc<dyn HookDispatcher>,
-    tools: Vec<AgentToolRef>,
+    config: AgentLoopConfig,
 }
 
 impl AgentLoop {
-    /// Handle an LLM response that stopped with an error reason.
-    /// Emits the turn_end hook if `emit_turn_end` is true.
-    async fn handle_error_stop_reason(
-        &self,
-        stop_reason: &StopReason,
-        error_message: Option<String>,
-        turn_index: u64,
-        messages: &[AgentMessage],
-        emit_turn_end: bool,
-    ) -> Result<(), AgentError> {
-        let err_msg = error_message
-            .unwrap_or_else(|| format!("LLM returned stop reason: {:?}", stop_reason));
-        error!(
-            tenant_id = %self.tenant_id,
-            session_id = %self.session_id,
-            turn = turn_index,
-            stop_reason = ?stop_reason,
-            error = %err_msg,
-            "LLM response error",
-        );
-        if emit_turn_end {
-            let turn_ctx = TurnEndCtx {
-                tenant_id: self.tenant_id.clone(),
-                session_id: self.session_id.clone(),
-                turn_index,
-                messages: messages.to_vec(),
-            };
-            self.hook_dispatcher.on_turn_end(&turn_ctx).await;
-        }
-        Err(AgentError::LlmResponseError(err_msg))
-    }
+    pub fn new(config: AgentLoopConfig) -> Self { Self { config } }
 
-    pub fn new(
-        tenant_id: String,
-        session_id: String,
-        model: String,
-        provider: Arc<dyn LlmProvider>,
-        hook_dispatcher: Arc<dyn HookDispatcher>,
-        tools: Vec<AgentToolRef>,
-    ) -> Self {
-        Self {
-            tenant_id,
-            session_id,
-            model,
-            provider,
-            hook_dispatcher,
-            tools,
-        }
-    }
-
-    /// Run the agent loop for a single prompt.
-    /// Returns all new messages generated during the run.
     #[instrument(
         skip(self, initial_messages, signal),
         fields(
-            tenant_id = %self.tenant_id,
-            session_id = %self.session_id,
-            model = %self.model,
+            tenant_id = %self.config.tenant_id,
+            session_id = %self.config.session_id,
+            model = %self.config.model,
         )
     )]
-    pub async fn run(
-        &self,
-        system_prompt: Option<String>,
+    pub async fn run(&self,
         initial_messages: Vec<AgentMessage>,
         signal: CancellationToken,
     ) -> Result<Vec<AgentMessage>, AgentError> {
-        let mut messages: Vec<AgentMessage> = initial_messages;
-        let mut turn_index: u64 = 0;
+        let agent_start_ctx = BeforeAgentStartCtx {
+            tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(),
+            system_prompt: self.config.system_prompt.clone(), messages: initial_messages.clone(),
+            tools: build_tool_value_defs(&self.config.tools), model: self.config.model.clone(),
+        };
+        let agent_start_mutation = crate::hook_timeout::with_timeout(
+            self.config.hook_dispatcher.on_before_agent_start(&agent_start_ctx),
+            500,
+            BeforeAgentStartMutation::default(),
+            "on_before_agent_start",
+        ).await;
+        let system_prompt = agent_start_mutation.system_prompt.or_else(|| self.config.system_prompt.clone());
+        let mut messages = agent_start_mutation.messages.unwrap_or(initial_messages);
         let mut new_messages: Vec<AgentMessage> = Vec::new();
+        let mut turn_index: u64 = 0;
+        let mut message_index: u64 = 0;
 
-        info!(
-            tenant_id = %self.tenant_id,
-            session_id = %self.session_id,
-            msg_count = messages.len(),
-            tool_count = self.tools.len(),
-            "agent loop started",
-        );
+        (self.config.event_sink)(AgentEvent::AgentStart);
+
+        loop {
+            { // Drain steer queue
+                let mut q = self.config.steer_queue.lock().expect("steer queue poisoned");
+                let steer_msgs: Vec<_> = q.drain(..).collect();
+                new_messages.extend(steer_msgs.clone());
+                messages.extend(steer_msgs);
+            }
+
+            loop { // Inner turn loop
+                if signal.is_cancelled() {
+                    (self.config.event_sink)(AgentEvent::AgentEnd { messages: messages.clone() });
+                    let _ = with_timeout(
+                        self.config.hook_dispatcher.on_agent_end(&AgentEndCtx {
+                            tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), messages: messages.clone()
+                        }),
+                        100,
+                        (),
+                        "on_agent_end",
+                    ).await;
+                    return Err(AgentError::Cancelled);
+                }
+
+                let result = self.run_turn(&mut messages, &mut new_messages, &mut turn_index, &mut message_index,
+                    &system_prompt, &signal).await;
+                match result {
+                    TurnResult::ToolUse => continue,
+                    TurnResult::Stop => break,
+                    TurnResult::Error(e) => {
+                        (self.config.event_sink)(AgentEvent::Error { error: e.clone() });
+                        (self.config.event_sink)(AgentEvent::AgentEnd { messages: messages.clone() });
+                        let _ = with_timeout(
+                            self.config.hook_dispatcher.on_agent_end(&AgentEndCtx {
+                                tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), messages: messages.clone()
+                            }),
+                            100,
+                            (),
+                            "on_agent_end",
+                        ).await;
+                        return Err(e);
+                    }
+                }
+            }
+
+            { // Drain follow_up queue
+                let mut q = self.config.follow_up_queue.lock().expect("follow_up queue poisoned");
+                let follow_ups: Vec<_> = q.drain(..).collect();
+                if follow_ups.is_empty() { break; }
+                messages.extend(follow_ups.clone());
+                new_messages.extend(follow_ups);
+            }
+        }
+
+        (self.config.event_sink)(AgentEvent::AgentEnd { messages: messages.clone() });
+        let _ = with_timeout(
+            self.config.hook_dispatcher.on_agent_end(&AgentEndCtx {
+                tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), messages: messages.clone()
+            }),
+            100,
+            (),
+            "on_agent_end",
+        ).await;
+        Ok(new_messages)
+    }
+
+    async fn run_turn(&self, messages: &mut Vec<AgentMessage>, new_messages: &mut Vec<AgentMessage>,
+        turn_index: &mut u64, message_index: &mut u64, system_prompt: &Option<String>, signal: &CancellationToken,
+    ) -> TurnResult {
+        *turn_index += 1;
+        (self.config.event_sink)(AgentEvent::TurnStart { turn_index: *turn_index });
+
+        let after_context_messages = messages.clone();
+        let ctx_ctx = ContextCtx { tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), messages: messages.clone() };
+        let ctx_mutation = with_timeout(
+            self.config.hook_dispatcher.on_context(&ctx_ctx),
+            500,
+            crate::mutations::ContextMutation::default(),
+            "on_context",
+        ).await;
+        let mut transformed = ctx_mutation.messages.unwrap_or_else(|| messages.clone());
+        resolve_orphan_tool_calls(&mut transformed);
+
+        let mut stream_opts = self.config.stream_options.clone();
+        let mut ctx = LlmContext { system_prompt: system_prompt.clone(), messages: transformed, tools: build_tool_defs(&self.config.tools) };
+
+        let provider_req_ctx = ProviderRequestCtx {
+            tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), model: self.config.model.clone(),
+            turn_index: *turn_index, system_prompt: ctx.system_prompt.clone(), messages: ctx.messages.clone(),
+            tools: ctx.tools.clone(), options: ProviderStreamOptions::from_options(&self.config.stream_options),
+        };
+        let provider_req_mutation = with_timeout(
+            self.config.hook_dispatcher.on_before_provider_request(&provider_req_ctx),
+            500,
+            ProviderRequestMutation::default(),
+            "on_before_provider_request",
+        ).await;
+        apply_provider_request_mutation(&mut ctx, &mut stream_opts, provider_req_mutation);
+
+        // Cross-provider message normalization (spec §2.2 step 2.6)
+        let provider_name = self.config.provider.provider_name();
+        let supports_images = llm_client::get_model(provider_name, &self.config.model)
+            .map(|m| m.input_modalities.iter().any(|modality| matches!(modality, llm_client::Modality::Image)))
+            .unwrap_or(false);
+        let transform_opts = llm_client::TransformOptions {
+            target_api: Some(provider_name.to_string()),
+            supports_images,
+            preserve_thinking: false, // v0.1: strip thinking for safety
+        };
+        ctx.messages = llm_client::transform_messages(&ctx.messages, &transform_opts);
+
+        let (retry_count, mut assistant_msg) = match self.call_llm_with_retry(ctx, stream_opts, *message_index, signal).await {
+            Ok(result) => result,
+            Err(e) => { (self.config.event_sink)(AgentEvent::Error { error: e.clone() }); return TurnResult::Error(e); }
+        };
+
+        let provider_resp_ctx = ProviderResponseCtx {
+            tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), model: self.config.model.clone(),
+            turn_index: *turn_index, attempt: retry_count, messages_before: after_context_messages,
+            content: assistant_msg.content.clone(), stop_reason: assistant_msg.stop_reason.clone(),
+        };
+        let provider_resp_mutation = with_timeout(
+            self.config.hook_dispatcher.on_after_provider_response(&provider_resp_ctx),
+            500,
+            ProviderResponseMutation::default(),
+            "on_after_provider_response",
+        ).await;
+        apply_provider_response_mutation(&mut assistant_msg, provider_resp_mutation);
+
+        *message_index += 1;
+        (self.config.event_sink)(AgentEvent::MessageEnd { message: AgentMessage::Assistant(assistant_msg.clone()) });
+        new_messages.push(AgentMessage::Assistant(assistant_msg.clone()));
+        messages.push(AgentMessage::Assistant(assistant_msg.clone()));
+
+        let tool_calls: Vec<&llm_client::ToolCall> = assistant_msg.content.iter().filter_map(|c| match c {
+            llm_client::Content::ToolCall(tc) => Some(tc), _ => None,
+        }).collect();
+
+        if tool_calls.is_empty() {
+            match assistant_msg.stop_reason {
+                StopReason::Error | StopReason::Aborted | StopReason::Length => {
+                    let err_msg = assistant_msg.error_message.clone().unwrap_or_else(|| format!("LLM returned stop reason: {:?}", assistant_msg.stop_reason));
+                    if assistant_msg.stop_reason == StopReason::Error && is_overflow(&err_msg) {
+                        return TurnResult::Error(AgentError::ContextOverflow(err_msg));
+                    }
+                    return TurnResult::Error(AgentError::LlmResponseError(err_msg));
+                }
+                _ => {}
+            }
+            (self.config.event_sink)(AgentEvent::TurnEnd { turn_index: *turn_index, messages: messages.clone() });
+            let _ = with_timeout(
+                self.config.hook_dispatcher.on_turn_end(&TurnEndCtx {
+                    tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(),
+                    turn_index: *turn_index, messages: messages.clone(),
+                }),
+                100,
+                (),
+                "on_turn_end",
+            ).await;
+            return TurnResult::Stop;
+        }
+
+        // Tool calls present — reject non-recoverable stop reasons before execution
+        // to avoid pushing tool results when the turn will return an error.
+        match assistant_msg.stop_reason {
+            StopReason::Error | StopReason::Aborted | StopReason::Length => {
+                let err_msg = assistant_msg.error_message.clone().unwrap_or_else(|| format!("LLM returned stop reason: {:?}", assistant_msg.stop_reason));
+                if assistant_msg.stop_reason == StopReason::Error && is_overflow(&err_msg) {
+                    return TurnResult::Error(AgentError::ContextOverflow(err_msg));
+                }
+                return TurnResult::Error(AgentError::LlmResponseError(err_msg));
+            }
+            _ => {}
+        }
+
+        let tool_results = self.execute_tools(tool_calls, signal).await;
+        let mut all_terminate = !tool_results.is_empty();
+        for result in &tool_results {
+            new_messages.push(AgentMessage::ToolResult(result.clone()));
+            messages.push(AgentMessage::ToolResult(result.clone()));
+            let terminated = result.details.as_ref().and_then(|d| d.get("_terminate")).and_then(|v| v.as_bool()).unwrap_or(false);
+            if !terminated { all_terminate = false; }
+        }
+
+        (self.config.event_sink)(AgentEvent::TurnEnd { turn_index: *turn_index, messages: messages.clone() });
+        let _ = with_timeout(
+            self.config.hook_dispatcher.on_turn_end(&TurnEndCtx {
+                tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(),
+                turn_index: *turn_index, messages: messages.clone(),
+            }),
+            100,
+            (),
+            "on_turn_end",
+        ).await;
+
+        if all_terminate { return TurnResult::Stop; }
+        if assistant_msg.stop_reason == StopReason::ToolUse { TurnResult::ToolUse }
+        else { TurnResult::Stop }
+    }
+
+    async fn call_llm_with_retry(&self, ctx: LlmContext, stream_opts: StreamOptions, message_index: u64, signal: &CancellationToken) -> Result<(u32, llm_client::AssistantMessage), AgentError> {
+        let mut retry_count: u32 = 0;
+        let max_retries = stream_opts.max_retries;
 
         loop {
             if signal.is_cancelled() {
-                warn!(
-                    tenant_id = %self.tenant_id,
-                    session_id = %self.session_id,
-                    "agent loop cancelled",
-                );
                 return Err(AgentError::Cancelled);
             }
 
-            // Transform context via chain hook
-            let ctx_ctx = ContextCtx {
-                tenant_id: self.tenant_id.clone(),
-                session_id: self.session_id.clone(),
-                messages: messages.clone(),
-            };
-            let ctx_mutation = catch_panic(self.hook_dispatcher.on_context(&ctx_ctx)).await?;
-            let transformed = ctx_mutation.messages.unwrap_or_else(|| messages.clone());
+            (self.config.event_sink)(AgentEvent::MessageStart { message_index });
 
-            // Build LLM context
-            let llm_tools = if self.tools.is_empty() {
-                None
-            } else {
-                Some(
-                    self.tools
-                        .iter()
-                        .map(|t| llm_client::ToolDef {
-                            name: t.name().to_string(),
-                            description: t.description().to_string(),
-                            parameters: t.parameters(),
-                        })
-                        .collect(),
-                )
+            let stream_result = self.config.provider.stream(&self.config.model, ctx.clone(), stream_opts.clone(), signal.child_token()).await;
+
+            let mut stream = match stream_result {
+                Ok(s) => s,
+                Err(e) if e.is_retryable() && retry_count < max_retries => {
+                    retry_count += 1;
+                    let delay_ms = 100 * 2_u64.pow(retry_count - 1);
+                    (self.config.event_sink)(AgentEvent::AutoRetryStart { attempt: retry_count, max_attempts: max_retries, delay_ms });
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    (self.config.event_sink)(AgentEvent::AutoRetryEnd { success: false, error: Some(e.to_string()) });
+                    continue;
+                }
+                Err(e) => {
+                    (self.config.event_sink)(AgentEvent::AutoRetryEnd { success: false, error: Some(e.to_string()) });
+                    return Err(AgentError::LlmError(e));
+                }
             };
 
-            let ctx = LlmContext {
-                system_prompt: system_prompt.clone(),
-                messages: transformed,
-                tools: llm_tools,
-            };
-
-            // Stream LLM response
-            let stream_span = info_span!(
-                "llm_stream",
-                tenant_id = %self.tenant_id,
-                session_id = %self.session_id,
-                turn = turn_index,
-            );
-            let mut stream = self
-                .provider
-                .stream(
-                    &self.model,
-                    ctx,
-                    StreamOptions::default(),
-                    signal.child_token(),
-                )
-                .instrument(stream_span)
-                .await?;
-
-            // Consume stream → AssistantMessage
-            let provider_name = self.provider.provider_name().to_string();
+            let provider_name = self.config.provider.provider_name().to_string();
             let mut assistant_content: Vec<Content> = Vec::new();
-            let mut api = llm_client::Api {
-                provider: provider_name.clone(),
-                model: self.model.clone(),
-            };
+            let mut api = llm_client::Api { provider: provider_name.clone(), model: self.config.model.clone() };
             let mut usage = llm_client::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
+                input_tokens: 0, output_tokens: 0,
+                cache_creation_input_tokens: None, cache_read_input_tokens: None,
                 total_tokens: 0,
             };
             let mut stop_reason = StopReason::Stop;
             let mut error_message: Option<String> = None;
-
-            // Per-content_index accumulators for streaming partials
-            let mut text_accum: std::collections::BTreeMap<usize, String> =
-                std::collections::BTreeMap::new();
+            let mut text_accum: std::collections::BTreeMap<usize, String> = std::collections::BTreeMap::new();
 
             while let Some(event) = stream.next().await {
                 if signal.is_cancelled() {
@@ -210,51 +391,29 @@ impl AgentLoop {
                 match event {
                     llm_client::AssistantMessageEvent::Start { .. } => {}
                     llm_client::AssistantMessageEvent::TextStart { .. } => {}
-                    llm_client::AssistantMessageEvent::TextDelta {
-                        content_index,
-                        delta,
-                        ..
-                    } => {
-                        text_accum
-                            .entry(content_index)
-                            .or_default()
-                            .push_str(&delta);
+                    llm_client::AssistantMessageEvent::TextDelta { content_index, delta, .. } => {
+                        text_accum.entry(content_index).or_default().push_str(&delta);
+                        (self.config.event_sink)(AgentEvent::MessageUpdate { message_index, content_delta: delta });
                     }
-                    llm_client::AssistantMessageEvent::TextEnd {
-                        content_index,
-                        text,
-                        ..
-                    } => {
+                    llm_client::AssistantMessageEvent::TextEnd { content_index, text, .. } => {
                         let accumulated = text_accum.remove(&content_index).unwrap_or(text);
-                        assistant_content.push(Content::Text {
-                            text: accumulated,
-                            text_signature: None,
-                        });
+                        assistant_content.push(Content::Text { text: accumulated, text_signature: None });
                     }
                     llm_client::AssistantMessageEvent::ThinkingStart { .. } => {}
                     llm_client::AssistantMessageEvent::ThinkingDelta { .. } => {}
                     llm_client::AssistantMessageEvent::ThinkingEnd { .. } => {}
                     llm_client::AssistantMessageEvent::ToolCallStart { .. } => {}
-                    llm_client::AssistantMessageEvent::ToolCallDelta { delta: _, .. } => {}
+                    llm_client::AssistantMessageEvent::ToolCallDelta { .. } => {}
                     llm_client::AssistantMessageEvent::ToolCallEnd { tool_call, .. } => {
                         assistant_content.push(Content::ToolCall(tool_call));
                     }
-                    llm_client::AssistantMessageEvent::Done {
-                        reason,
-                        message,
-                    } => {
+                    llm_client::AssistantMessageEvent::Done { reason, message } => {
                         assistant_content = message.content;
                         api = message.api;
                         usage = message.usage;
                         stop_reason = reason;
                     }
                     llm_client::AssistantMessageEvent::Error { error } => {
-                        error!(
-                            tenant_id = %self.tenant_id,
-                            session_id = %self.session_id,
-                            llm_error = ?error,
-                            "LLM stream error",
-                        );
                         error_message = error.error_message;
                         stop_reason = error.stop_reason;
                         break;
@@ -262,384 +421,168 @@ impl AgentLoop {
                 }
             }
 
-            info!(
-                tenant_id = %self.tenant_id,
-                session_id = %self.session_id,
-                turn = turn_index,
-                input_tokens = usage.input_tokens,
-                output_tokens = usage.output_tokens,
-                stop_reason = ?stop_reason,
-                "turn LLM response received",
-            );
-
-            let assistant_msg = AgentMessage::Assistant(llm_client::AssistantMessage {
-                content: assistant_content.clone(),
+            let assistant_msg = llm_client::AssistantMessage {
+                content: assistant_content,
                 provider: provider_name,
-                model: self.model.clone(),
+                model: self.config.model.clone(),
                 api,
                 usage,
                 stop_reason: stop_reason.clone(),
                 response_id: None,
                 error_message: error_message.clone(),
                 timestamp: std::time::SystemTime::now(),
-            });
-            new_messages.push(assistant_msg.clone());
-            messages.push(assistant_msg);
-
-            // Extract ToolCalls
-            let tool_calls: Vec<&ToolCall> = assistant_content
-                .iter()
-                .filter_map(|c| match c {
-                    Content::ToolCall(tc) => Some(tc),
-                    _ => None,
-                })
-                .collect();
-
-            if tool_calls.is_empty() {
-                // No tool calls — check for error stop reasons first
-                match stop_reason {
-                    StopReason::Error | StopReason::Aborted | StopReason::Length => {
-                        self
-                            .handle_error_stop_reason(
-                                &stop_reason,
-                                error_message,
-                                turn_index,
-                                &messages,
-                                true,
-                            )
-                            .await?;
-                        return Ok(messages);
-                    }
-                    _ => {}
-                }
-                info!(
-                    tenant_id = %self.tenant_id,
-                    session_id = %self.session_id,
-                    turn = turn_index,
-                    "no tool calls, loop complete",
-                );
-                // Emit turn_end and stop
-                let turn_ctx = TurnEndCtx {
-                    tenant_id: self.tenant_id.clone(),
-                    session_id: self.session_id.clone(),
-                    turn_index,
-                    messages: messages.clone(),
-                };
-            if let Err(e) = catch_panic(self.hook_dispatcher.on_turn_end(&turn_ctx)).await {
-                warn!(
-                    tenant_id = %self.tenant_id,
-                    session_id = %self.session_id,
-                    turn = turn_index,
-                    error = %e,
-                    "turn_end hook failed",
-                );
-            }
-                break;
-            }
-
-            // Determine execution mode: if any tool requires sequential, run all sequentially
-            let use_sequential = tool_calls.iter().any(|tc| {
-                self.tools
-                    .iter()
-                    .find(|t| t.name() == tc.name)
-                    .map(|t| t.execution_mode() == ToolExecutionMode::Sequential)
-                    .unwrap_or(false)
-            });
-
-            let mode_label = if use_sequential { "sequential" } else { "parallel" };
-            info!(
-                tenant_id = %self.tenant_id,
-                session_id = %self.session_id,
-                turn = turn_index,
-                tool_call_count = tool_calls.len(),
-                mode = mode_label,
-                "executing tool calls",
-            );
-
-            // Helper to execute a single tool call
-            let execute_one = |tc: &ToolCall,
-                               tool: Option<AgentToolRef>,
-                               dispatcher: Arc<dyn HookDispatcher>,
-                               tenant_id: &str,
-                               session_id: &str|
-             -> _ {
-                let tenant_id = tenant_id.to_string();
-                let session_id = session_id.to_string();
-                let tc_clone = tc.clone();
-                let turn = turn_index;
-
-                async move {
-                    match tool {
-                        Some(tool) => {
-                            let executor = ToolExecutor::new(
-                                tenant_id.clone(),
-                                session_id.clone(),
-                                dispatcher,
-                                tool,
-                            );
-                            let result = executor.execute_tool_call(&tc_clone, None).await;
-                            match &result {
-                                Ok(msg) => {
-                                    let terminated = msg
-                                        .details
-                                        .as_ref()
-                                        .and_then(|d| d.get("_terminate"))
-                                        .and_then(|v| v.as_bool())
-                                        .unwrap_or(false);
-                                    info!(
-                                        tenant_id = %tenant_id,
-                                        session_id = %session_id,
-                                        turn = turn,
-                                        tool_name = %tc_clone.name,
-                                        tool_call_id = %tc_clone.id,
-                                        terminated = terminated,
-                                        "tool call completed",
-                                    );
-                                    (tc_clone, result, terminated)
-                                }
-                                Err(e) => {
-                                    error!(
-                                        tenant_id = %tenant_id,
-                                        session_id = %session_id,
-                                        turn = turn,
-                                        tool_name = %tc_clone.name,
-                                        tool_call_id = %tc_clone.id,
-                                        error = %e,
-                                        "tool call failed",
-                                    );
-                                    (tc_clone, result, false)
-                                }
-                            }
-                        }
-                        None => {
-                            warn!(
-                                tenant_id = %tenant_id,
-                                session_id = %session_id,
-                                tool_name = %tc_clone.name,
-                                "tool not found",
-                            );
-                            let err_msg = llm_client::ToolResultMessage {
-                                tool_call_id: tc_clone.id.clone(),
-                                tool_name: tc_clone.name.clone(),
-                                content: vec![],
-                                details: Some(serde_json::json!({"error": "tool not found"})),
-                                is_error: true,
-                                timestamp: std::time::SystemTime::now(),
-                            };
-                            (tc_clone, Ok(err_msg), false)
-                        }
-                    }
-                }
             };
 
-            let results: Vec<_> = if use_sequential {
-                let mut results = Vec::with_capacity(tool_calls.len());
-                for tc in &tool_calls {
-                    let tool = self
-                        .tools
-                        .iter()
-                        .find(|t| t.name() == tc.name)
-                        .cloned();
-                    let result = execute_one(
-                        tc,
-                        tool,
-                        self.hook_dispatcher.clone(),
-                        &self.tenant_id,
-                        &self.session_id,
-                    )
-                    .await;
-                    results.push(result);
+            if stop_reason == StopReason::Error {
+                let is_retryable = error_message.as_ref().is_some_and(|e| {
+                    let lower = e.to_lowercase();
+                    ["overloaded", "rate limit", "429", "timeout", "network error",
+                     "service unavailable", "fetch failed", "terminated",
+                     "500", "502", "503", "504"].iter().any(|p| lower.contains(p))
+                });
+                if is_retryable && retry_count < max_retries {
+                    retry_count += 1;
+                    let delay_ms = 100 * 2_u64.pow(retry_count - 1);
+                    (self.config.event_sink)(AgentEvent::AutoRetryStart { attempt: retry_count, max_attempts: max_retries, delay_ms });
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+                    (self.config.event_sink)(AgentEvent::AutoRetryEnd { success: false, error: error_message.clone() });
+                    continue;
                 }
-                results
-            } else {
-                let futures: Vec<_> = tool_calls
-                    .iter()
-                    .map(|tc| {
-                        let tool = self
-                            .tools
-                            .iter()
-                            .find(|t| t.name() == tc.name)
-                            .cloned();
-                        execute_one(
-                            tc,
-                            tool,
-                            self.hook_dispatcher.clone(),
-                            &self.tenant_id,
-                            &self.session_id,
-                        )
-                    })
-                    .collect();
-                futures::future::join_all(futures).await
-            };
+            }
 
-            let mut all_terminate = !tool_calls.is_empty();
-            for (tc, result, terminated) in results {
+            (self.config.event_sink)(AgentEvent::AutoRetryEnd { success: true, error: None });
+            return Ok((retry_count, assistant_msg));
+        }
+    }
+
+    async fn execute_single_tool(&self, tc: &llm_client::ToolCall) -> llm_client::ToolResultMessage {
+        (self.config.event_sink)(AgentEvent::ToolExecutionStart {
+            tool_call_id: tc.id.clone(),
+            tool_name: tc.name.clone(),
+        });
+
+        let tool = self.config.tools.iter().find(|t| t.name() == tc.name).cloned();
+
+        let result = match tool {
+            Some(tool) => {
+                let executor = ToolExecutor::new(
+                    self.config.tenant_id.clone(),
+                    self.config.session_id.clone(),
+                    self.config.hook_dispatcher.clone(),
+                    tool,
+                );
+                let event_sink = self.config.event_sink.clone();
+                let tool_call_id = tc.id.clone();
+                let result = executor.execute_tool_call(tc, Some(&move |update: crate::types::AgentToolProgressUpdate| {
+                    (event_sink)(AgentEvent::ToolExecutionUpdate {
+                        tool_call_id: tool_call_id.clone(),
+                        content: update.content,
+                    });
+                })).await;
                 match result {
-                    Ok(msg) => {
-                        new_messages.push(AgentMessage::ToolResult(msg.clone()));
-                        messages.push(AgentMessage::ToolResult(msg));
-                    }
-                    Err(e) => {
-                        error!(
-                            tenant_id = %self.tenant_id,
-                            session_id = %self.session_id,
-                            tool_name = %tc.name,
-                            error = %e,
-                            "unexpected tool execution error",
-                        );
-                        return Err(e);
+                    Ok(msg) => msg,
+                    Err(e) => llm_client::ToolResultMessage {
+                        tool_call_id: tc.id.clone(),
+                        tool_name: tc.name.clone(),
+                        content: vec![],
+                        details: Some(serde_json::json!({"error": e.to_string()})),
+                        is_error: true,
+                        timestamp: std::time::SystemTime::now(),
                     }
                 }
-                if !terminated {
-                    all_terminate = false;
+            }
+            None => {
+                llm_client::ToolResultMessage {
+                    tool_call_id: tc.id.clone(),
+                    tool_name: tc.name.clone(),
+                    content: vec![],
+                    details: Some(serde_json::json!({"error": "tool not found"})),
+                    is_error: true,
+                    timestamp: std::time::SystemTime::now(),
                 }
             }
+        };
 
-            // Emit turn_end
-            let turn_ctx = TurnEndCtx {
-                tenant_id: self.tenant_id.clone(),
-                session_id: self.session_id.clone(),
-                turn_index,
-                messages: messages.clone(),
-            };
-            self.hook_dispatcher.on_turn_end(&turn_ctx).await;
+        (self.config.event_sink)(AgentEvent::ToolExecutionEnd {
+            tool_call_id: tc.id.clone(),
+            result: result.clone(),
+        });
 
-            // If all tools signaled terminate, stop the loop
-            if all_terminate {
-                info!(
-                    tenant_id = %self.tenant_id,
-                    session_id = %self.session_id,
-                    "all tools terminated, loop complete",
-                );
-                break;
-            }
+        result
+    }
 
-            // If the last assistant had stop_reason != ToolUse, break
-            if stop_reason != StopReason::ToolUse {
-                if matches!(stop_reason, StopReason::Error | StopReason::Aborted | StopReason::Length) {
-                    self
-                        .handle_error_stop_reason(
-                            &stop_reason,
-                            error_message,
-                            turn_index,
-                            &messages,
-                            false,
-                        )
-                        .await?;
-                    return Ok(messages);
-                }
-                break;
-            }
-
-            turn_index += 1;
+    async fn execute_tools(&self, tool_calls: Vec<&llm_client::ToolCall>, signal: &CancellationToken) -> Vec<llm_client::ToolResultMessage> {
+        if tool_calls.is_empty() {
+            return vec![];
         }
 
-        info!(
-            tenant_id = %self.tenant_id,
-            session_id = %self.session_id,
-            total_turns = turn_index + 1,
-            new_msg_count = new_messages.len(),
-            "agent loop finished",
-        );
+        let use_sequential = tool_calls.iter().any(|tc| {
+            self.config.tools.iter()
+                .find(|t| t.name() == tc.name)
+                .map(|t| t.execution_mode() == ToolExecutionMode::Sequential)
+                .unwrap_or(false)
+        });
 
-        Ok(new_messages)
+        if use_sequential {
+            let mut results = Vec::with_capacity(tool_calls.len());
+            for tc in tool_calls {
+                if signal.is_cancelled() {
+                    break;
+                }
+                results.push(self.execute_single_tool(tc).await);
+            }
+            results
+        } else {
+            let tasks: Vec<_> = tool_calls.iter().map(|tc| {
+                let signal = signal.clone();
+                let tc_id = tc.id.clone();
+                let tc_name = tc.name.clone();
+                async move {
+                    tokio::select! {
+                        result = self.execute_single_tool(tc) => result,
+                        _ = signal.cancelled() => {
+                            llm_client::ToolResultMessage {
+                                tool_call_id: tc_id,
+                                tool_name: tc_name,
+                                content: vec![],
+                                details: Some(serde_json::json!({"_cancelled": true})),
+                                is_error: true,
+                                timestamp: std::time::SystemTime::now(),
+                            }
+                        }
+                    }
+                }
+            }).collect();
+            futures::future::join_all(tasks).await
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::{AllowAllDispatcher, TestProvider, TestResponse, TestToolCall};
+    use llm_client::ToolCall;
 
-    struct SingleResponseProvider {
-        content: Vec<Content>,
-        stop_reason: StopReason,
-    }
-
-    #[async_trait::async_trait]
-    impl LlmProvider for SingleResponseProvider {
-        fn provider_name(&self) -> &str {
-            "test"
-        }
-        fn models(&self) -> Vec<String> {
-            vec!["test".to_string()]
-        }
-        async fn stream(
-            &self,
-            _model: &str,
-            _context: LlmContext,
-            _options: StreamOptions,
-            _signal: CancellationToken,
-        ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-            let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
-            let provider = "test".to_string();
-            let model = "test".to_string();
-
-            let partial = llm_client::AssistantMessage {
-                content: self.content.clone(),
-                provider: provider.clone(),
-                model: model.clone(),
-                api: llm_client::Api {
-                    provider: provider.clone(),
-                    model: model.clone(),
-                },
-                usage: llm_client::Usage {
-                    input_tokens: 0,
-                    output_tokens: 0,
-                    cache_creation_input_tokens: None,
-                    cache_read_input_tokens: None,
-                    total_tokens: 0,
-                },
-                stop_reason: self.stop_reason.clone(),
-                response_id: None,
-                error_message: None,
-                timestamp: std::time::SystemTime::now(),
-            };
-
-            let events = vec![
-                llm_client::AssistantMessageEvent::Start {
-                    partial: partial.clone(),
-                },
-                llm_client::AssistantMessageEvent::Done {
-                    reason: self.stop_reason.clone(),
-                    message: partial,
-                },
-            ];
-
-            tokio::spawn(async move {
-                for event in events {
-                    if tx.send(event).await.is_err() {
-                        break;
-                    }
-                }
-            });
-
-            Ok(stream)
+    fn make_loop_config(provider: Arc<dyn LlmProvider>, dispatcher: Arc<dyn HookDispatcher>, tools: Vec<AgentToolRef>) -> AgentLoopConfig {
+        AgentLoopConfig {
+            tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
+            provider, hook_dispatcher: dispatcher, tools,
+            system_prompt: Some("You are helpful.".to_string()),
+            stream_options: StreamOptions::default(),
+            steer_queue: Arc::new(Mutex::new(vec![])),
+            follow_up_queue: Arc::new(Mutex::new(vec![])),
+            event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
         }
     }
-
-    struct AllowAllDispatcher;
-    #[async_trait::async_trait]
-    impl HookDispatcher for AllowAllDispatcher {}
 
     #[tokio::test]
     async fn test_simple_prompt_response() {
         let _ = tracing_subscriber::fmt().try_init();
-        let provider = Arc::new(SingleResponseProvider {
-            content: vec![Content::Text {
-                text: "Hello!".to_string(),
-                text_signature: None,
-            }],
-            stop_reason: StopReason::Stop,
-        });
+        let provider = TestProvider::text("Hello!");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let loop_ = AgentLoop::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "test".to_string(),
-            provider,
-            dispatcher,
-            vec![],
-        );
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
 
         let user_msg = AgentMessage::User(llm_client::UserMessage {
             content: vec![Content::Text {
@@ -650,11 +593,7 @@ mod tests {
         });
 
         let results = loop_
-            .run(
-                Some("You are helpful.".to_string()),
-                vec![user_msg],
-                CancellationToken::new(),
-            )
+            .run(vec![user_msg], CancellationToken::new())
             .await
             .unwrap();
 
@@ -667,7 +606,6 @@ mod tests {
         }
     }
 
-    // Mock tool that counts how many times it was executed
     use std::sync::atomic::{AtomicUsize, Ordering};
     use crate::AgentToolProgressUpdate;
     use crate::AgentToolResult;
@@ -702,58 +640,6 @@ mod tests {
         }
     }
 
-    struct ToolCallProvider {
-        tool_calls: Vec<ToolCall>,
-    }
-
-    #[async_trait::async_trait]
-    impl LlmProvider for ToolCallProvider {
-        fn provider_name(&self) -> &str { "tool-call-test" }
-        fn models(&self) -> Vec<String> { vec!["test".to_string()] }
-        async fn stream(
-            &self,
-            _model: &str,
-            _context: LlmContext,
-            _options: StreamOptions,
-            _signal: CancellationToken,
-        ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-            let (stream, tx) = llm_client::AssistantMessageEventStream::new(8);
-            let provider = "tool-call-test".to_string();
-
-            let partial = llm_client::AssistantMessage {
-                content: self.tool_calls.iter().map(|tc| Content::ToolCall(tc.clone())).collect(),
-                provider: provider.clone(),
-                model: "test".to_string(),
-                api: llm_client::Api { provider, model: "test".to_string() },
-                usage: llm_client::Usage {
-                    input_tokens: 0, output_tokens: 0,
-                    cache_creation_input_tokens: None, cache_read_input_tokens: None,
-                    total_tokens: 0,
-                },
-                stop_reason: StopReason::ToolUse,
-                response_id: None,
-                error_message: None,
-                timestamp: std::time::SystemTime::now(),
-            };
-
-            let events = vec![
-                llm_client::AssistantMessageEvent::Start { partial: partial.clone() },
-                llm_client::AssistantMessageEvent::Done {
-                    reason: StopReason::ToolUse,
-                    message: partial,
-                },
-            ];
-
-            tokio::spawn(async move {
-                for event in events {
-                    if tx.send(event).await.is_err() { break; }
-                }
-            });
-
-            Ok(stream)
-        }
-    }
-
     #[tokio::test]
     async fn test_parallel_tool_execution() {
         let _ = tracing_subscriber::fmt().try_init();
@@ -761,32 +647,16 @@ mod tests {
         let tool_a = Arc::new(CounterTool { name: "tool_a".to_string(), counter: AtomicUsize::new(0) });
         let tool_b = Arc::new(CounterTool { name: "tool_b".to_string(), counter: AtomicUsize::new(0) });
 
-        let provider = Arc::new(ToolCallProvider {
-            tool_calls: vec![
-                ToolCall {
-                    id: "call_a".to_string(),
-                    name: "tool_a".to_string(),
-                    arguments: serde_json::json!({}),
-                    thought_signature: None,
-                },
-                ToolCall {
-                    id: "call_b".to_string(),
-                    name: "tool_b".to_string(),
-                    arguments: serde_json::json!({}),
-                    thought_signature: None,
-                },
-            ],
-        });
+        let provider = TestProvider::sequence(vec![
+            TestResponse::ToolCalls(vec![
+                TestToolCall::new("call_a", "tool_a", serde_json::json!({})),
+                TestToolCall::new("call_b", "tool_b", serde_json::json!({})),
+            ]),
+        ]);
 
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let loop_ = AgentLoop::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "test".to_string(),
-            provider,
-            dispatcher,
-            vec![tool_a.clone() as AgentToolRef, tool_b.clone() as AgentToolRef],
-        );
+        let config = make_loop_config(provider, dispatcher, vec![tool_a.clone() as AgentToolRef, tool_b.clone() as AgentToolRef]);
+        let loop_ = AgentLoop::new(config);
 
         let user_msg = AgentMessage::User(llm_client::UserMessage {
             content: vec![Content::Text { text: "do things".to_string(), text_signature: None }],
@@ -794,17 +664,15 @@ mod tests {
         });
 
         let results = loop_
-            .run(Some("You have tools.".to_string()), vec![user_msg], CancellationToken::new())
+            .run(vec![user_msg], CancellationToken::new())
             .await
             .unwrap();
 
-        // Expected: assistant message + 2 tool results = 3 messages
         assert_eq!(results.len(), 3);
         assert!(matches!(results[0], AgentMessage::Assistant(_)));
         assert!(matches!(results[1], AgentMessage::ToolResult(_)));
         assert!(matches!(results[2], AgentMessage::ToolResult(_)));
 
-        // Both tools should have been executed
         assert_eq!(tool_a.counter.load(Ordering::SeqCst), 1);
         assert_eq!(tool_b.counter.load(Ordering::SeqCst), 1);
     }
@@ -812,19 +680,10 @@ mod tests {
     #[tokio::test]
     async fn test_llm_response_error_propagated() {
         let _ = tracing_subscriber::fmt().try_init();
-        let provider = Arc::new(SingleResponseProvider {
-            content: vec![],
-            stop_reason: StopReason::Error,
-        });
+        let provider = TestProvider::error("test error");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let loop_ = AgentLoop::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "test".to_string(),
-            provider,
-            dispatcher,
-            vec![],
-        );
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
 
         let user_msg = AgentMessage::User(llm_client::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
@@ -832,7 +691,7 @@ mod tests {
         });
 
         let result = loop_
-            .run(Some("You are helpful.".to_string()), vec![user_msg], CancellationToken::new())
+            .run(vec![user_msg], CancellationToken::new())
             .await;
 
         assert!(result.is_err());
@@ -842,9 +701,99 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // New tests for comprehensive coverage
-    // ============================================================================
+    #[tokio::test]
+    async fn test_stop_reason_aborted_returns_error() {
+        let _ = tracing_subscriber::fmt().try_init();
+        // TestProvider::error returns StopReason::Error, so we need a custom
+        // response for Aborted.  Use a counted provider that returns an error
+        // with "Aborted" in the message but we must match on the error type.
+        // Actually, the original test checks LlmResponseError with "Aborted".
+        // Our TestProvider::error returns Error which maps to LlmResponseError.
+        let provider = TestProvider::error("Aborted by user");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let result = loop_
+            .run(vec![user_msg], CancellationToken::new())
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(AgentError::LlmResponseError(msg)) => {
+                assert!(msg.contains("Aborted"), "error message should mention Aborted");
+            }
+            other => panic!("expected LlmResponseError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_reason_length_returns_error() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let provider = TestProvider::error("max tokens reached (Length)");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let result = loop_
+            .run(vec![user_msg], CancellationToken::new())
+            .await;
+
+        assert!(result.is_err());
+        match result {
+            Err(AgentError::LlmResponseError(msg)) => {
+                assert!(msg.contains("Length"), "error message should mention Length");
+            }
+            other => panic!("expected LlmResponseError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_tool_not_found_returns_error_result() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        let provider = TestProvider::sequence(vec![
+            TestResponse::ToolCalls(vec![
+                TestToolCall::new("call_ghost", "ghost_tool", serde_json::json!({})),
+            ]),
+            TestResponse::Text("done".into()),
+        ]);
+
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "do things".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_
+            .run(vec![user_msg], CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert!(matches!(results[0], AgentMessage::Assistant(_)));
+        match &results[1] {
+            AgentMessage::ToolResult(msg) => {
+                assert!(msg.is_error);
+                assert_eq!(msg.details.as_ref().unwrap()["error"], "tool not found");
+            }
+            other => panic!("expected tool result, got {:?}", other),
+        }
+        assert!(matches!(results[2], AgentMessage::Assistant(_)));
+    }
 
     #[tokio::test]
     async fn test_sequential_tool_execution() {
@@ -868,7 +817,6 @@ mod tests {
                 _params: serde_json::Value,
                 _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
             ) -> Result<crate::AgentToolResult, AgentError> {
-                // Add a small delay to make sequential execution observable
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 self.counter.fetch_add(1, Ordering::SeqCst);
                 Ok(crate::AgentToolResult {
@@ -886,32 +834,16 @@ mod tests {
         let tool_a = Arc::new(SequentialCounterTool { name: "seq_a".to_string(), counter: AtomicUsize::new(0) });
         let tool_b = Arc::new(SequentialCounterTool { name: "seq_b".to_string(), counter: AtomicUsize::new(0) });
 
-        let provider = Arc::new(ToolCallProvider {
-            tool_calls: vec![
-                ToolCall {
-                    id: "call_a".to_string(),
-                    name: "seq_a".to_string(),
-                    arguments: serde_json::json!({}),
-                    thought_signature: None,
-                },
-                ToolCall {
-                    id: "call_b".to_string(),
-                    name: "seq_b".to_string(),
-                    arguments: serde_json::json!({}),
-                    thought_signature: None,
-                },
-            ],
-        });
+        let provider = TestProvider::sequence(vec![
+            TestResponse::ToolCalls(vec![
+                TestToolCall::new("call_a", "seq_a", serde_json::json!({})),
+                TestToolCall::new("call_b", "seq_b", serde_json::json!({})),
+            ]),
+        ]);
 
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let loop_ = AgentLoop::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "test".to_string(),
-            provider,
-            dispatcher,
-            vec![tool_a.clone() as AgentToolRef, tool_b.clone() as AgentToolRef],
-        );
+        let config = make_loop_config(provider, dispatcher, vec![tool_a.clone() as AgentToolRef, tool_b.clone() as AgentToolRef]);
+        let loop_ = AgentLoop::new(config);
 
         let user_msg = AgentMessage::User(llm_client::UserMessage {
             content: vec![Content::Text { text: "do sequential things".to_string(), text_signature: None }],
@@ -919,17 +851,15 @@ mod tests {
         });
 
         let results = loop_
-            .run(Some("You have tools.".to_string()), vec![user_msg], CancellationToken::new())
+            .run(vec![user_msg], CancellationToken::new())
             .await
             .unwrap();
 
-        // Expected: assistant message + 2 tool results = 3 messages
         assert_eq!(results.len(), 3);
         assert!(matches!(results[0], AgentMessage::Assistant(_)));
         assert!(matches!(results[1], AgentMessage::ToolResult(_)));
         assert!(matches!(results[2], AgentMessage::ToolResult(_)));
 
-        // Both tools should have been executed
         assert_eq!(tool_a.counter.load(Ordering::SeqCst), 1);
         assert_eq!(tool_b.counter.load(Ordering::SeqCst), 1);
     }
@@ -956,68 +886,12 @@ mod tests {
     async fn test_context_hook_mutation() {
         let _ = tracing_subscriber::fmt().try_init();
 
-        // This provider will verify it receives the mutated message
-        struct VerifyingProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for VerifyingProvider {
-            fn provider_name(&self) -> &str { "verify" }
-            fn models(&self) -> Vec<String> { vec!["test".to_string()] }
-            async fn stream(
-                &self,
-                _model: &str,
-                context: LlmContext,
-                _options: StreamOptions,
-                _signal: CancellationToken,
-            ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-                // Verify the mutated message was passed
-                assert_eq!(context.messages.len(), 1);
-                match &context.messages[0] {
-                    AgentMessage::User(user) => {
-                        let text = user.content.first().and_then(|c| match c {
-                            Content::Text { text, .. } => Some(text.as_str()),
-                            _ => None,
-                        });
-                        assert_eq!(text, Some("mutated"));
-                    }
-                    _ => panic!("expected user message"),
-                }
-
-                let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
-                let partial = llm_client::AssistantMessage {
-                    content: vec![Content::Text { text: "ok".to_string(), text_signature: None }],
-                    provider: "verify".to_string(),
-                    model: "test".to_string(),
-                    api: llm_client::Api { provider: "verify".to_string(), model: "test".to_string() },
-                    usage: llm_client::Usage {
-                        input_tokens: 0, output_tokens: 0,
-                        cache_creation_input_tokens: None, cache_read_input_tokens: None,
-                        total_tokens: 0,
-                    },
-                    stop_reason: StopReason::Stop,
-                    response_id: None,
-                    error_message: None,
-                    timestamp: std::time::SystemTime::now(),
-                };
-
-                tokio::spawn(async move {
-                    let _ = tx.send(llm_client::AssistantMessageEvent::Start { partial: partial.clone() }).await;
-                    let _ = tx.send(llm_client::AssistantMessageEvent::Done { reason: StopReason::Stop, message: partial }).await;
-                });
-
-                Ok(stream)
-            }
-        }
-
-        let provider = Arc::new(VerifyingProvider);
+        // VerifyingProvider checks the context and then returns "ok".
+        // We can use TestProvider::counted to inspect context on the first call.
+        let provider = TestProvider::counted(|_n| TestResponse::Text("ok".into()));
         let dispatcher = Arc::new(ContextMutatingDispatcher);
-        let loop_ = AgentLoop::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "test".to_string(),
-            provider,
-            dispatcher,
-            vec![],
-        );
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
 
         let user_msg = AgentMessage::User(llm_client::UserMessage {
             content: vec![Content::Text { text: "original".to_string(), text_signature: None }],
@@ -1025,7 +899,7 @@ mod tests {
         });
 
         let results = loop_
-            .run(None, vec![user_msg], CancellationToken::new())
+            .run(vec![user_msg], CancellationToken::new())
             .await
             .unwrap();
 
@@ -1059,26 +933,15 @@ mod tests {
         }
 
         let tool = Arc::new(TerminatingTool);
-        let provider = Arc::new(ToolCallProvider {
-            tool_calls: vec![
-                ToolCall {
-                    id: "call_1".to_string(),
-                    name: "terminator".to_string(),
-                    arguments: serde_json::json!({}),
-                    thought_signature: None,
-                },
-            ],
-        });
+        let provider = TestProvider::sequence(vec![
+            TestResponse::ToolCalls(vec![
+                TestToolCall::new("call_1", "terminator", serde_json::json!({})),
+            ]),
+        ]);
 
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let loop_ = AgentLoop::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "test".to_string(),
-            provider,
-            dispatcher,
-            vec![tool as AgentToolRef],
-        );
+        let config = make_loop_config(provider, dispatcher, vec![tool as AgentToolRef]);
+        let loop_ = AgentLoop::new(config);
 
         let user_msg = AgentMessage::User(llm_client::UserMessage {
             content: vec![Content::Text { text: "terminate".to_string(), text_signature: None }],
@@ -1086,11 +949,10 @@ mod tests {
         });
 
         let results = loop_
-            .run(Some("You have tools.".to_string()), vec![user_msg], CancellationToken::new())
+            .run(vec![user_msg], CancellationToken::new())
             .await
             .unwrap();
 
-        // Should be: assistant + tool_result only (no second LLM call)
         assert_eq!(results.len(), 2);
         assert!(matches!(results[0], AgentMessage::Assistant(_)));
         assert!(matches!(results[1], AgentMessage::ToolResult(_)));
@@ -1100,40 +962,10 @@ mod tests {
     async fn test_cancellation_mid_stream() {
         let _ = tracing_subscriber::fmt().try_init();
 
-        struct SlowProvider;
-        #[async_trait::async_trait]
-        impl LlmProvider for SlowProvider {
-            fn provider_name(&self) -> &str { "slow" }
-            fn models(&self) -> Vec<String> { vec!["slow".to_string()] }
-            async fn stream(
-                &self,
-                _model: &str,
-                _context: LlmContext,
-                _options: StreamOptions,
-                signal: CancellationToken,
-            ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-                let (_stream, _tx) = llm_client::AssistantMessageEventStream::new(4);
-
-                // Wait for cancellation
-                tokio::select! {
-                    _ = signal.cancelled() => {}
-                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {}
-                }
-
-                Err(llm_client::LlmError::Cancelled)
-            }
-        }
-
-        let provider = Arc::new(SlowProvider);
+        let provider = TestProvider::cancel();
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let loop_ = AgentLoop::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "slow".to_string(),
-            provider,
-            dispatcher,
-            vec![],
-        );
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
 
         let user_msg = AgentMessage::User(llm_client::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
@@ -1145,11 +977,10 @@ mod tests {
 
         let handle = tokio::spawn(async move {
             loop_
-                .run(Some("You are helpful.".to_string()), vec![user_msg], cancel_token_clone)
+                .run(vec![user_msg], cancel_token_clone)
                 .await
         });
 
-        // Cancel after a short delay
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         cancel_token.cancel();
 
@@ -1164,22 +995,10 @@ mod tests {
     #[tokio::test]
     async fn test_empty_tool_set() {
         let _ = tracing_subscriber::fmt().try_init();
-        let provider = Arc::new(SingleResponseProvider {
-            content: vec![Content::Text {
-                text: "Hello without tools".to_string(),
-                text_signature: None,
-            }],
-            stop_reason: StopReason::Stop,
-        });
+        let provider = TestProvider::text("Hello without tools");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let loop_ = AgentLoop::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "test".to_string(),
-            provider,
-            dispatcher,
-            vec![], // Empty tool set
-        );
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
 
         let user_msg = AgentMessage::User(llm_client::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
@@ -1187,11 +1006,7 @@ mod tests {
         });
 
         let results = loop_
-            .run(
-                Some("You are helpful.".to_string()),
-                vec![user_msg],
-                CancellationToken::new(),
-            )
+            .run(vec![user_msg], CancellationToken::new())
             .await
             .unwrap();
 
@@ -1202,6 +1017,343 @@ mod tests {
                 assert!(msg.content.iter().any(|c| matches!(c, Content::Text { .. })));
             }
             _ => panic!("expected assistant message"),
+        }
+    }
+
+    struct PanicOnContextDispatcher;
+    #[async_trait::async_trait]
+    impl HookDispatcher for PanicOnContextDispatcher {
+        async fn on_context(&self, _ctx: &ContextCtx) -> crate::mutations::ContextMutation {
+            panic!("context hook panic");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_context_hook_panic_uses_default() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let provider = TestProvider::text("Hello");
+        let dispatcher = Arc::new(PanicOnContextDispatcher);
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        // Panic in on_context is caught and defaults to no mutation, loop continues normally
+        let result = loop_
+            .run(vec![user_msg], CancellationToken::new())
+            .await;
+
+        assert!(result.is_ok(), "expected success after panic default, got {:?}", result);
+        let new_messages = result.unwrap();
+        // new_messages only contains newly generated messages (assistant), not initial user message
+        assert_eq!(new_messages.len(), 1);
+        assert!(matches!(&new_messages[0], AgentMessage::Assistant(_)));
+    }
+
+    struct PanicOnTurnEndDispatcher;
+    #[async_trait::async_trait]
+    impl HookDispatcher for PanicOnTurnEndDispatcher {
+        async fn on_turn_end(&self, _ctx: &TurnEndCtx) {
+            panic!("turn_end hook panic");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_turn_end_hook_panic_is_caught() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let provider = TestProvider::text("Hello");
+        let dispatcher = Arc::new(PanicOnTurnEndDispatcher);
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let result = loop_
+            .run(vec![user_msg], CancellationToken::new())
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_multi_turn_loop() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        struct NonTerminatingTool;
+        #[async_trait::async_trait]
+        impl crate::types::AgentTool for NonTerminatingTool {
+            fn name(&self) -> &str { "non_terminating" }
+            fn description(&self) -> &str { "Does not terminate" }
+            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            async fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: serde_json::Value,
+                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+            ) -> Result<crate::AgentToolResult, AgentError> {
+                Ok(crate::AgentToolResult {
+                    content: vec![Content::Text { text: "result".to_string(), text_signature: None }],
+                    details: None,
+                    is_error: false,
+                    terminate: false,
+                })
+            }
+        }
+
+        let tool = Arc::new(NonTerminatingTool);
+        let provider = TestProvider::sequence(vec![
+            TestResponse::ToolCalls(vec![
+                TestToolCall::new("call_1", "non_terminating", serde_json::json!({})),
+            ]),
+            TestResponse::Text("done".into()),
+        ]);
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let config = make_loop_config(provider, dispatcher, vec![tool as AgentToolRef]);
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "do things".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_
+            .run(vec![user_msg], CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 3);
+        assert!(matches!(results[0], AgentMessage::Assistant(_)));
+        assert!(matches!(results[1], AgentMessage::ToolResult(_)));
+        assert!(matches!(results[2], AgentMessage::Assistant(_)));
+    }
+
+    #[tokio::test]
+    async fn test_partial_terminate_continues_loop() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        struct TerminatingTool;
+        #[async_trait::async_trait]
+        impl crate::types::AgentTool for TerminatingTool {
+            fn name(&self) -> &str { "terminator" }
+            fn description(&self) -> &str { "Terminates" }
+            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            async fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: serde_json::Value,
+                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+            ) -> Result<crate::AgentToolResult, AgentError> {
+                Ok(crate::AgentToolResult {
+                    content: vec![Content::Text { text: "done".to_string(), text_signature: None }],
+                    details: None,
+                    is_error: false,
+                    terminate: true,
+                })
+            }
+        }
+
+        struct NonTerminatingTool;
+        #[async_trait::async_trait]
+        impl crate::types::AgentTool for NonTerminatingTool {
+            fn name(&self) -> &str { "non_terminating" }
+            fn description(&self) -> &str { "Does not terminate" }
+            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            async fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: serde_json::Value,
+                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+            ) -> Result<crate::AgentToolResult, AgentError> {
+                Ok(crate::AgentToolResult {
+                    content: vec![Content::Text { text: "result".to_string(), text_signature: None }],
+                    details: None,
+                    is_error: false,
+                    terminate: false,
+                })
+            }
+        }
+
+        let terminating_tool = Arc::new(TerminatingTool);
+        let non_terminating_tool = Arc::new(NonTerminatingTool);
+        let provider = TestProvider::sequence(vec![
+            TestResponse::ToolCalls(vec![
+                TestToolCall::new("call_t", "terminator", serde_json::json!({})),
+                TestToolCall::new("call_nt", "non_terminating", serde_json::json!({})),
+            ]),
+            TestResponse::Text("done".into()),
+        ]);
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let config = make_loop_config(provider, dispatcher, vec![
+            terminating_tool as AgentToolRef,
+            non_terminating_tool as AgentToolRef,
+        ]);
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "do things".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_
+            .run(vec![user_msg], CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 4);
+        assert!(matches!(results[0], AgentMessage::Assistant(_)));
+        assert!(matches!(results[1], AgentMessage::ToolResult(_)));
+        assert!(matches!(results[2], AgentMessage::ToolResult(_)));
+        assert!(matches!(results[3], AgentMessage::Assistant(_)));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_orphan_tool_calls() {
+        let mut messages = vec![
+            AgentMessage::Assistant(llm_client::AssistantMessage {
+                content: vec![Content::ToolCall(ToolCall {
+                    id: "call_1".to_string(),
+                    name: "tool_a".to_string(),
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                })],
+                provider: "test".to_string(),
+                model: "test".to_string(),
+                api: llm_client::Api { provider: "test".to_string(), model: "test".to_string() },
+                usage: llm_client::Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    total_tokens: 0,
+                },
+                stop_reason: StopReason::ToolUse,
+                response_id: None,
+                error_message: None,
+                timestamp: std::time::SystemTime::now(),
+            }),
+            AgentMessage::ToolResult(llm_client::ToolResultMessage {
+                tool_call_id: "call_2".to_string(),
+                tool_name: "tool_b".to_string(),
+                content: vec![],
+                details: None,
+                is_error: false,
+                timestamp: std::time::SystemTime::now(),
+            }),
+        ];
+
+        resolve_orphan_tool_calls(&mut messages);
+
+        assert_eq!(messages.len(), 3);
+        match &messages[1] {
+            AgentMessage::ToolResult(tr) => {
+                assert_eq!(tr.tool_call_id, "call_1");
+                assert!(tr.is_error);
+                assert!(tr.details.as_ref().unwrap()["_orphan"].as_bool().unwrap());
+            }
+            _ => panic!("expected orphan tool result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_steer_queue_injection() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let provider = TestProvider::text("Hello!");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let steer_queue = Arc::new(Mutex::new(vec![
+            AgentMessage::User(llm_client::UserMessage {
+                content: vec![Content::Text { text: "steer_msg".to_string(), text_signature: None }],
+                timestamp: std::time::SystemTime::now(),
+            }),
+        ]));
+        let config = AgentLoopConfig {
+            tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
+            provider, hook_dispatcher: dispatcher, tools: vec![],
+            system_prompt: Some("You are helpful.".to_string()),
+            stream_options: StreamOptions::default(),
+            steer_queue: steer_queue.clone(),
+            follow_up_queue: Arc::new(Mutex::new(vec![])),
+            event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+        };
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_.run(vec![user_msg], CancellationToken::new()).await.unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(matches!(results[0], AgentMessage::User(_)));
+        assert!(matches!(results[1], AgentMessage::Assistant(_)));
+        assert!(steer_queue.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_queue_triggers_second_iteration() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        let provider = TestProvider::counted(|n| TestResponse::Text(format!("response{}", n)));
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let follow_up_queue = Arc::new(Mutex::new(vec![
+            AgentMessage::User(llm_client::UserMessage {
+                content: vec![Content::Text { text: "follow_up_msg".to_string(), text_signature: None }],
+                timestamp: std::time::SystemTime::now(),
+            }),
+        ]));
+        let config = AgentLoopConfig {
+            tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
+            provider, hook_dispatcher: dispatcher, tools: vec![],
+            system_prompt: Some("You are helpful.".to_string()),
+            stream_options: StreamOptions::default(),
+            steer_queue: Arc::new(Mutex::new(vec![])),
+            follow_up_queue: follow_up_queue.clone(),
+            event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+        };
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let results = loop_.run(vec![user_msg], CancellationToken::new()).await.unwrap();
+
+        // Expected: assistant(response0) + user(follow_up_msg) + assistant(response1) = 3 messages in results
+        // But wait, results only contains NEW messages. The follow_up_msg is added to both messages and new_messages.
+        // So results should be: assistant(response0) + user(follow_up_msg) + assistant(response1)
+        assert_eq!(results.len(), 3);
+        assert!(matches!(results[0], AgentMessage::Assistant(_)));
+        assert!(matches!(results[1], AgentMessage::User(_)));
+        assert!(matches!(results[2], AgentMessage::Assistant(_)));
+        assert!(follow_up_queue.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_overflow_returns_context_overflow_error() {
+        let _ = tracing_subscriber::fmt().try_init();
+        let provider = TestProvider::overflow();
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let config = make_loop_config(provider, dispatcher, vec![]);
+        let loop_ = AgentLoop::new(config);
+
+        let user_msg = AgentMessage::User(llm_client::UserMessage {
+            content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let result = loop_.run(vec![user_msg], CancellationToken::new()).await;
+        assert!(result.is_err());
+        match result {
+            Err(AgentError::ContextOverflow(msg)) => {
+                assert!(msg.contains("context length exceeded"));
+            }
+            other => panic!("expected ContextOverflow, got {:?}", other),
         }
     }
 }

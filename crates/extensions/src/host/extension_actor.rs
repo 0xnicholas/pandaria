@@ -72,9 +72,11 @@ pub(crate) enum ExtensionCommand {
 // AskError — errors from ExtensionHandle::ask
 // ============================================================================
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AskError {
+    #[error("extension handler timed out")]
     Timeout,
+    #[error("extension actor is gone")]
     ActorGone,
 }
 

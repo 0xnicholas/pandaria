@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use agent_core::types::{AgentToolRef, ToolExecutionMode};
+use agent_core::types::AgentToolRef;
 use llm_client::ToolDef;
 
 use super::event_bus::EventBus;
@@ -81,12 +81,17 @@ impl ExtensionManager {
             if let Some(handle) = handles.get(i) {
                 for tool_def in ext.tools() {
                     if seen.insert(tool_def.name.clone()) {
+                        let execution_mode = ext
+                            .tool_execution_modes()
+                            .get(&tool_def.name)
+                            .copied()
+                            .unwrap_or_default();
                         tools.push(Arc::new(ExtensionTool {
                             name: tool_def.name,
                             description: tool_def.description,
                             parameters: tool_def.parameters,
                             handle: handle.clone(),
-                            execution_mode: ToolExecutionMode::Parallel,
+                            execution_mode,
                         }) as AgentToolRef);
                     }
                 }

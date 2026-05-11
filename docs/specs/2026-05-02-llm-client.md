@@ -1161,12 +1161,13 @@ agent-core spec 中引用的 llm-client 类型必须准确匹配：
 | `CacheRetention` | None/Short/Long + env var 解析 | 同 | 已对齐 |
 | Hooks | OnPayloadFn/OnResponseFn + 3 个 provider 集成 | 同 | 已对齐 |
 | Anthropic Provider | 完整 SSE 解析 + cache_control body + thinking params + beta headers | §9.1 完整 spec | 已对齐 |
-| OpenAI Provider | SSE 解析 + reasoning delta + prompt_cache_key | §9.2 | 已对齐（thinking_format multi-provider 待补） |
+| OpenAI Provider | SSE 解析 + reasoning delta + prompt_cache_key + thinking_format 多 provider 映射 | §9.2 | 已对齐 |
 | Google Provider | JSON 流解析 + x-goog-api-key header | §9.3 | 已对齐 |
-| Message Transformation | `transform_messages()` 含 ID 截断/图片降级/thinking 移除 | §25 | `pad_orphan_tool_results` 和 `short_hash` stubs 待补 |
-| Mistral/Bedrock Provider | 未实现 | §9.4-9.5 | P3 优先级 |
-| OAuth | 未实现 | §26 | P3 优先级 |
-| `tests/` integration tests | 内联 `#[cfg(test)]` 单元测试（87 tests） | wiremock HTTP mock tests | 未创建 |
+| Message Transformation | `transform_messages()` 含 ID 截断/图片降级/thinking 移除/orphan padding | §26 | 已对齐 |
+| Mistral Provider | SSE + tool_call_id 截断 + reasoning + OAuth | §9.4 | 已对齐 |
+| AWS Bedrock Provider | 占位实现（ConverseStream 待实现） | §9.5 | P3（可选 feature） |
+| OAuth | trait + Provider 集成 + 测试 | §27 | 已对齐 |
+| `tests/` integration tests | wiremock HTTP mock + 模块集成测试（~89 tests） | 全部创建 | 已对齐 |
 
 ---
 
@@ -2179,16 +2180,16 @@ pub trait OAuthProvider: Send + Sync {
     fn provider_name(&self) -> &str;
 
     /// Acquire initial credentials (e.g., browser OAuth flow or device code).
-    async fn login(&self) -> Result<OAuthToken, std::io::Error>;
+    async fn login(&self) -> Result<OAuthToken, LlmError>;
 
     /// Refresh expired token.
-    async fn refresh(&self, token: &OAuthToken) -> Result<OAuthToken, std::io::Error>;
+    async fn refresh(&self, token: &OAuthToken) -> Result<OAuthToken, LlmError>;
 
     /// Read persisted token from disk (if supported).
     fn load_token(&self) -> Option<OAuthToken>;
 
     /// Persist token to disk (if supported).
-    fn save_token(&self, token: &OAuthToken) -> std::io::Result<()>;
+    fn save_token(&self, token: &OAuthToken) -> Result<(), LlmError>;
 }
 ```
 
@@ -2201,11 +2202,11 @@ pub trait OAuthProvider: Send + Sync {
 
 ### 26.4 与 LlmProvider 集成
 
-Provider 实现中，`stream()` 方法在解析 API key 时按优先级查找：
+Provider 实现中，`stream()` 方法在解析 API key 时按优先级查找（代码实际实现）：
 ```
-1. StreamOptions::api_key
-2. LlmProvider state (constructor-set key)
-3. OAuth token (load/refresh as needed)
+1. OAuth token (load/refresh as needed) — 如果配置了 OAuthProvider
+2. StreamOptions::api_key (per-request override)
+3. LlmProvider state (constructor-set key)
 4. Env var (provider-specific)
 5. Err(AuthError)
 ```
