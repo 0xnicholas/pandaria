@@ -10,12 +10,29 @@ fn test_secret_string_debug_redacted() {
 
 #[test]
 fn test_provider_error_no_raw_body() {
-    let err = llm_client::LlmError::ProviderError("HTTP 500: internal server error".to_string());
+    // HTML response should be sanitized to generic status
+    let err = llm_client::LlmError::ProviderError(
+        "HTTP 500 Internal Server Error".to_string(),
+    );
     let display = format!("{}", err);
     // Error message should not contain raw HTTP body
     assert!(!display.contains("<html>"));
     assert!(!display.contains("<!DOCTYPE"));
-    assert!(display.contains("internal server error"));
+    assert!(display.contains("500"));
+}
+
+#[test]
+fn test_provider_error_extracts_json_message() {
+    let body = r#"{"error":{"message":"The model does not exist","type":"invalid_request_error"}}"#;
+    let msg = llm_client::http_error::sanitize_http_error_body(400, body);
+    assert_eq!(msg, "The model does not exist");
+}
+
+#[test]
+fn test_provider_error_sanitizes_html() {
+    let body = "<html><body><h1>502 Bad Gateway</h1></body></html>";
+    let msg = llm_client::http_error::sanitize_http_error_body(502, body);
+    assert_eq!(msg, "HTTP 502 Bad Gateway");
 }
 
 #[test]

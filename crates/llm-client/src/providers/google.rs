@@ -165,11 +165,18 @@ impl GoogleProvider {
             hook(&crate::ProviderResponse { status, headers }, &placeholder).await;
         }
 
-        if !status.to_string().starts_with('2') {
+        if status < 200 || status >= 300 {
             let body = response.text().await.map_err(|e| {
                 LlmError::ProviderError(format!("failed to read response body: {e}"))
             })?;
-            return Err(LlmError::ProviderError(format!("HTTP {status}: {body}")));
+            tracing::error!(
+                status = %status,
+                body = %body,
+                provider = "google",
+                "HTTP error response from provider"
+            );
+            let msg = crate::http_error::sanitize_http_error_body(status, &body);
+            return Err(LlmError::ProviderError(msg));
         }
 
         // Process SSE stream (Google Gemini format)

@@ -2,6 +2,7 @@ pub mod cache;
 pub mod compat;
 pub mod error;
 pub mod hooks;
+pub mod http_error;
 pub mod models;
 mod models_data;
 pub mod oauth;
