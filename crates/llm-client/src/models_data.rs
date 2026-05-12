@@ -455,6 +455,26 @@ fn build_models() -> HashMap<String, Model> {
         8192
     );
 
+    // Fill compat fields using auto-detection logic
+    for (_key, model) in m.iter_mut() {
+        model.compat = match model.api.as_str() {
+            "openai-completions" => {
+                crate::models::ModelCompat::OpenAI(crate::compat::detect_openai_compat(
+                    &model.provider,
+                    &model.base_url,
+                    &model.id,
+                ))
+            }
+            "anthropic-messages" => {
+                crate::models::ModelCompat::Anthropic(crate::compat::detect_anthropic_compat(
+                    &model.provider,
+                    &model.base_url,
+                ))
+            }
+            _ => crate::models::ModelCompat::None,
+        };
+    }
+
     m
 }
 
