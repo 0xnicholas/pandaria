@@ -206,7 +206,10 @@ impl AnthropicProvider {
                     }
                 }
                 Err(e) => {
-                    return Err(LlmError::StreamError(format!("SSE stream error: {e}")));
+                    return Err(LlmError::StreamError {
+                        kind: crate::StreamErrorKind::Network,
+                        message: format!("SSE stream error: {e}"),
+                    });
                 }
             }
         }

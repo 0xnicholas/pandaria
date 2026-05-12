@@ -157,6 +157,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_retry_success_after_stream_error_network() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let c = counter.clone();
+        let result = with_retry(
+            move || {
+                let c = c.clone();
+                async move {
+                    let count = c.fetch_add(1, Ordering::SeqCst);
+                    if count < 2 {
+                        Err(LlmError::StreamError {
+                            kind: crate::StreamErrorKind::Network,
+                            message: "connection reset".to_string(),
+                        })
+                    } else {
+                        let (stream, _tx) = AssistantMessageEventStream::new(1);
+                        Ok(stream)
+                    }
+                }
+            },
+            3,
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn test_no_retry_on_stream_error_protocol() {
+        let counter = Arc::new(AtomicU32::new(0));
+        let c = counter.clone();
+        let result = with_retry(
+            move || {
+                let c = c.clone();
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    Err(LlmError::StreamError {
+                        kind: crate::StreamErrorKind::Protocol,
+                        message: "invalid model".to_string(),
+                    })
+                }
+            },
+            3,
+            None,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            Err(LlmError::StreamError {
+                kind: crate::StreamErrorKind::Protocol,
+                ..
+            })
+        ));
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn test_max_retry_delay_caps() {
         let result = with_retry(
             || async { Err(LlmError::RateLimited("try again".to_string())) },

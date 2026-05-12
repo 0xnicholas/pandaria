@@ -174,18 +174,20 @@ impl AssistantMessageEventStream {
                     return Ok(message);
                 }
                 AssistantMessageEvent::Error { error } => {
-                    return Err(LlmError::StreamError(
-                        error
+                    return Err(LlmError::StreamError {
+                        kind: crate::StreamErrorKind::Protocol,
+                        message: error
                             .error_message
                             .unwrap_or_else(|| "stream terminated with error".to_string()),
-                    ));
+                    });
                 }
                 _ => continue,
             }
         }
-        Err(LlmError::StreamError(
-            "stream ended without Done or Error".to_string(),
-        ))
+        Err(LlmError::StreamError {
+            kind: crate::StreamErrorKind::Network,
+            message: "stream ended without Done or Error".to_string(),
+        })
     }
 
     /// Drain remaining events without processing. Used to ensure sender
@@ -375,7 +377,10 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            crate::LlmError::StreamError(_)
+            crate::LlmError::StreamError {
+                kind: crate::StreamErrorKind::Protocol,
+                ..
+            }
         ));
     }
 
@@ -390,7 +395,10 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            crate::LlmError::StreamError(_)
+            crate::LlmError::StreamError {
+                kind: crate::StreamErrorKind::Network,
+                ..
+            }
         ));
     }
 }

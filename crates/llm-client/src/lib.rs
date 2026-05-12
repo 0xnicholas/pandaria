@@ -23,7 +23,7 @@ pub use compat::{
     ThinkingFormat, VercelGatewayRouting, detect_anthropic_compat, detect_openai_compat,
     merge_anthropic_compat, merge_openai_compat,
 };
-pub use error::LlmError;
+pub use error::{LlmError, StreamErrorKind};
 pub use hooks::{OnPayloadFn, OnResponseFn, ProviderResponse};
 pub use models::{
     Modality, Model, ModelRegistry, TokenCost, calculate_cost, get_model, models_are_equal,

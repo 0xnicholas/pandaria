@@ -264,7 +264,10 @@ impl AwsBedrockProvider {
                     {
                         let bytes = bytes.as_ref();
                         let event: serde_json::Value = serde_json::from_slice(bytes)
-                            .map_err(|e| LlmError::StreamError(format!("JSON parse error: {e}")))?;
+                            .map_err(|e| LlmError::StreamError {
+                                kind: crate::StreamErrorKind::Parse,
+                                message: format!("JSON parse error: {e}"),
+                            })?;
 
                         if let Ok(Some(_)) = parser.process_event(&event, tx).await {
                             return Ok(());

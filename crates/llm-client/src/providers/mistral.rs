@@ -351,7 +351,10 @@ impl MistralProvider {
                         }
                     }
                 }
-                Err(e) => return Err(LlmError::StreamError(format!("SSE error: {e}"))),
+                Err(e) => return Err(LlmError::StreamError {
+                    kind: crate::StreamErrorKind::Network,
+                    message: format!("SSE error: {e}"),
+                }),
             }
         }
 
