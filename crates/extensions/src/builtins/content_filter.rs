@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use async_trait::async_trait;
 
@@ -15,6 +16,27 @@ pub enum PIIType {
     Phone,
     CreditCard,
 }
+
+static EMAIL_RE: LazyLock<Arc<Regex>> = LazyLock::new(|| {
+    Arc::new(
+        Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+            .expect("hardcoded PII email regex is valid"),
+    )
+});
+
+static PHONE_RE: LazyLock<Arc<Regex>> = LazyLock::new(|| {
+    Arc::new(
+        Regex::new(r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b")
+            .expect("hardcoded PII phone regex is valid"),
+    )
+});
+
+static CREDIT_CARD_RE: LazyLock<Arc<Regex>> = LazyLock::new(|| {
+    Arc::new(
+        Regex::new(r"\b(?:\d[ -]*?){13,16}\b")
+            .expect("hardcoded PII credit card regex is valid"),
+    )
+});
 
 /// 过滤规则
 #[derive(Debug, Clone)]
@@ -66,14 +88,11 @@ impl ContentFilterExtension {
                 FilterRule::Regex(pattern) => {
                     Some(Arc::new(Regex::new(pattern).expect("invalid regex in content filter")))
                 }
-                FilterRule::PII(pii_type) => {
-                    let pattern = match pii_type {
-                        PIIType::Email => r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",
-                        PIIType::Phone => r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",
-                        PIIType::CreditCard => r"\b(?:\d[ -]*?){13,16}\b",
-                    };
-                    Some(Arc::new(Regex::new(pattern).expect("invalid PII regex in content filter")))
-                }
+                FilterRule::PII(pii_type) => Some(Arc::clone(match pii_type {
+                    PIIType::Email => &EMAIL_RE,
+                    PIIType::Phone => &PHONE_RE,
+                    PIIType::CreditCard => &CREDIT_CARD_RE,
+                })),
                 _ => None,
             };
             regex_cache.push(re);

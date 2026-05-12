@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use agent_core::context::{
     AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx,
     ProviderRequestCtx, ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx,
-    ToolExecutionStartCtx, ToolExecutionUpdateCtx, ToolResultCtx, TurnEndCtx,
+    ToolExecutionStartCtx, ToolResultCtx, TurnEndCtx,
 };
 use agent_core::mutations::{
     BeforeAgentStartMutation, CompactDecision, ContextMutation, HookDecision,
@@ -86,13 +86,13 @@ pub trait Extension: Send + Sync {
         ProviderResponseMutation::default()
     }
 
-    // ═══ Tool execution — runs to completion, no timeout ═══
+    // ═══ Tool execution — spawned with 30s framework timeout ═══
 
     /// Execute a tool registered by this extension.
     ///
     /// Called when the LLM invokes a tool whose name matches one of this
     /// extension's `tools()` definitions. Unlike blocking/chain hooks,
-    /// tool execution has NO framework-imposed timeout.
+    /// tool execution has a 30s framework-imposed timeout.
     async fn execute_tool(
         &self,
         _tool_call_id: &str,
@@ -109,7 +109,6 @@ pub trait Extension: Send + Sync {
     async fn on_agent_end(&self, _ctx: &AgentEndCtx) {}
     async fn on_session_start(&self, _ctx: &SessionCtx) {}
     async fn on_tool_execution_start(&self, _ctx: &ToolExecutionStartCtx) {}
-    async fn on_tool_execution_update(&self, _ctx: &ToolExecutionUpdateCtx) {}
     async fn on_tool_execution_end(&self, _ctx: &ToolExecutionEndCtx) {}
     async fn on_compact_end(&self, _ctx: &CompactEndCtx) {}
 }

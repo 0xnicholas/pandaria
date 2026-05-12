@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::context::{
     AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx,
     ProviderRequestCtx, ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx,
-    ToolExecutionStartCtx, ToolExecutionUpdateCtx, ToolResultCtx, TurnEndCtx,
+    ToolExecutionStartCtx, ToolResultCtx, TurnEndCtx,
 };
 use crate::mutations::{
     BeforeAgentStartMutation, CompactDecision, ContextMutation, HookDecision,
@@ -72,7 +72,6 @@ pub trait HookDispatcher: Send + Sync {
     async fn on_agent_end(&self, _ctx: &AgentEndCtx) {}
     async fn on_session_start(&self, _ctx: &SessionCtx) {}
     async fn on_tool_execution_start(&self, _ctx: &ToolExecutionStartCtx) {}
-    async fn on_tool_execution_update(&self, _ctx: &ToolExecutionUpdateCtx) {}
     async fn on_tool_execution_end(&self, _ctx: &ToolExecutionEndCtx) {}
     async fn on_compact_end(&self, _ctx: &CompactEndCtx) {}
 }

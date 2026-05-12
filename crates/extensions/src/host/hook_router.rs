@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use agent_core::context::{
     AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx,
     ProviderRequestCtx, ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx,
-    ToolExecutionStartCtx, ToolExecutionUpdateCtx, ToolResultCtx, TurnEndCtx,
+    ToolExecutionStartCtx, ToolResultCtx, TurnEndCtx,
 };
 use agent_core::mutations::{
     BeforeAgentStartMutation, CompactDecision, ContextMutation, HookDecision,
@@ -231,10 +231,6 @@ impl agent_core::HookDispatcher for HookRouter {
 
     async fn on_tool_execution_start(&self, ctx: &ToolExecutionStartCtx) {
         self.event_bus.emit(ObsEvent::ToolExecutionStart(ctx.clone()));
-    }
-
-    async fn on_tool_execution_update(&self, ctx: &ToolExecutionUpdateCtx) {
-        self.event_bus.emit(ObsEvent::ToolExecutionUpdate(ctx.clone()));
     }
 
     async fn on_tool_execution_end(&self, ctx: &ToolExecutionEndCtx) {

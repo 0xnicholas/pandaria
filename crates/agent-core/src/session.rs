@@ -395,7 +395,11 @@ impl SessionActor {
         // newer ones.
         if let Some(ref store) = self.store {
             if let Some(handle) = self.last_save.take() {
-                let _ = handle.await;
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    handle,
+                )
+                .await;
             }
             let entries = self.entries.clone();
             let tenant_id = self.tenant_id.clone();
@@ -498,9 +502,7 @@ impl SessionActor {
 
         // 3. Truncate entries before the compaction boundary to prevent
         // unbounded memory growth.
-        if let Some(kept_idx) = self.entries.iter().position(|e| e.id() == result.first_kept_entry_id) {
-            self.entries.drain(..kept_idx);
-        }
+        self.truncate_entries_before(result.first_kept_entry_id);
 
         // 4. Emit compaction_end
         if let Some(tx) = &self.event_tx {
@@ -585,11 +587,23 @@ impl SessionActor {
 
         // Truncate entries before the compaction boundary to prevent
         // unbounded memory growth.
-        if let Some(kept_idx) = self.entries.iter().position(|e| e.id() == result.first_kept_entry_id) {
-            self.entries.drain(..kept_idx);
-        }
+        self.truncate_entries_before(result.first_kept_entry_id);
 
         Ok(result)
+    }
+
+    /// Remove entries before the given boundary entry ID.
+    ///
+    /// Called after compaction to prevent unbounded in-memory growth
+    /// of the session history `Vec`.
+    fn truncate_entries_before(&mut self, first_kept_entry_id: uuid::Uuid) {
+        if let Some(kept_idx) = self
+            .entries
+            .iter()
+            .position(|e| e.id() == first_kept_entry_id)
+        {
+            self.entries.drain(..kept_idx);
+        }
     }
 
     pub fn push_message(&mut self, msg: AgentMessage) {
@@ -613,6 +627,11 @@ impl SessionActor {
     /// The session state is saved asynchronously (fire-and-forget) after each
     /// `prompt()` call. Call `flush()` before shutdown to guarantee all writes
     /// have completed. Returns `Ok(())` if no store is configured.
+    ///
+    /// **Breaking change (v0.x):** This method now takes `&mut self` instead of
+    /// `&self` to consume the in-flight `last_save` handle. Callers that
+    /// previously held a shared reference must obtain a mutable reference
+    /// before calling `flush()`.
     pub async fn flush(&mut self) -> Result<(), AgentError> {
         if let Some(handle) = self.last_save.take() {
             let _ = handle.await;
@@ -711,6 +730,13 @@ impl Drop for SessionActor {
         if let Some(handle) = self.event_processor_handle.take() {
             handle.abort();
         }
+
+        // NOTE: `last_save` is intentionally NOT awaited here because
+        // `Drop` cannot be async. Callers MUST call `shutdown()` (which
+        // awaits `last_save` with a 5s timeout) before dropping the
+        // `SessionActor` to guarantee all persistence writes complete.
+        // A bare `drop()` will abort the in-flight save task, potentially
+        // losing the last write.
     }
 }
 

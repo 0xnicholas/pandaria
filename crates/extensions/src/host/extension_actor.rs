@@ -6,7 +6,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use agent_core::context::{
     AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx,
     ProviderRequestCtx, ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx,
-    ToolExecutionStartCtx, ToolExecutionUpdateCtx, ToolResultCtx, TurnEndCtx,
+    ToolExecutionStartCtx, ToolResultCtx, TurnEndCtx,
 };
 use agent_core::error::AgentError;
 use agent_core::mutations::{
@@ -19,6 +19,7 @@ use super::event_bus::EventBus;
 use super::extension::Extension;
 
 const INTERCEPT_TIMEOUT: Duration = Duration::from_millis(500);
+const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 // ============================================================================
 // ExtensionCommand — messages sent to an ExtensionActor via its mpsc mailbox
@@ -57,7 +58,7 @@ pub(crate) enum ExtensionCommand {
         reply: oneshot::Sender<ProviderResponseMutation>,
     },
 
-    // Tool execution — no timeout, runs to completion
+    // Tool execution — spawned with 30s timeout
     OnExecuteTool {
         tool_call_id: String,
         params: serde_json::Value,
@@ -194,7 +195,7 @@ impl ExtensionHandle {
         .unwrap_or_else(|_| ProviderResponseMutation::default())
     }
 
-    /// Execute a tool via this extension's actor. No timeout.
+    /// Execute a tool via this extension's actor, with a timeout.
     pub async fn execute_tool(
         &self,
         tool_call_id: String,
@@ -210,7 +211,11 @@ impl ExtensionHandle {
             .send(cmd)
             .await
             .map_err(|_| AgentError::ToolExecutionFailed("extension actor terminated".into()))?;
-        rx.await
+        tokio::time::timeout(TOOL_EXECUTION_TIMEOUT, rx)
+            .await
+            .map_err(|_| AgentError::ToolExecutionFailed(
+                format!("tool execution timed out after {:?}", TOOL_EXECUTION_TIMEOUT)
+            ))?
             .map_err(|_| AgentError::ToolExecutionFailed("extension actor terminated during execution".into()))?
     }
 
@@ -230,7 +235,6 @@ pub enum ObsEvent {
     AgentEnd(AgentEndCtx),
     SessionStart(SessionCtx),
     ToolExecutionStart(ToolExecutionStartCtx),
-    ToolExecutionUpdate(ToolExecutionUpdateCtx),
     ToolExecutionEnd(ToolExecutionEndCtx),
     CompactEnd(CompactEndCtx),
 }
@@ -355,7 +359,8 @@ async fn run_actor(
                         ).await;
                     }
                     Some(ExtensionCommand::OnExecuteTool { tool_call_id, params, reply }) => {
-                        // Tool execution: spawn without timeout, but catch panics
+                        // Tool execution: spawn for panic isolation.
+                        // Timeout is enforced by ExtensionHandle::execute_tool.
                         let ext = extension.clone();
                         tokio::spawn(async move {
                             let result = ext.execute_tool(&tool_call_id, params).await;
@@ -380,7 +385,6 @@ async fn run_actor(
                                         ObsEvent::AgentEnd(ctx) => ext.on_agent_end(&ctx).await,
                                         ObsEvent::SessionStart(ctx) => ext.on_session_start(&ctx).await,
                                         ObsEvent::ToolExecutionStart(ctx) => ext.on_tool_execution_start(&ctx).await,
-                                        ObsEvent::ToolExecutionUpdate(ctx) => ext.on_tool_execution_update(&ctx).await,
                                         ObsEvent::ToolExecutionEnd(ctx) => ext.on_tool_execution_end(&ctx).await,
                                         ObsEvent::CompactEnd(ctx) => ext.on_compact_end(&ctx).await,
                                     }
@@ -631,5 +635,51 @@ mod tests {
         // Actor should exit
         let result = tokio::time::timeout(Duration::from_secs(2), join_handle).await;
         assert!(result.is_ok(), "actor should exit after shutdown");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_execute_tool_timeout() {
+        struct SlowToolExtension;
+        #[async_trait]
+        impl Extension for SlowToolExtension {
+            fn name(&self) -> &str { "slow_tool" }
+            async fn execute_tool(
+                &self,
+                _tool_call_id: &str,
+                _params: serde_json::Value,
+            ) -> Result<AgentToolResult, AgentError> {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                Ok(AgentToolResult {
+                    content: vec![],
+                    details: None,
+                    is_error: false,
+                    terminate: false,
+                })
+            }
+        }
+
+        let ext = Arc::new(SlowToolExtension);
+        let bus = Arc::new(EventBus::<ObsEvent>::new(16));
+        let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
+
+        let start = std::time::Instant::now();
+        let result = handle.execute_tool(
+            "call_1".to_string(),
+            serde_json::json!({}),
+        ).await;
+
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "expected timeout within a few seconds, but took {:?}",
+            elapsed
+        );
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("timed out"),
+            "expected timeout error, got: {}",
+            err_msg
+        );
     }
 }

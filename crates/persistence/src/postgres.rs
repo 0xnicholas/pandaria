@@ -59,8 +59,8 @@ impl PgSessionStore {
         Ok(())
     }
 
-    /// List all session IDs for a given tenant.
-    pub async fn list_sessions(
+    /// List all session IDs for a given tenant (internal helper).
+    async fn list_sessions_inner(
         &self,
         tenant_id: &str,
     ) -> Result<Vec<String>, PersistenceError> {
@@ -74,8 +74,8 @@ impl PgSessionStore {
         Ok(rows.into_iter().map(|(sid,)| sid).collect())
     }
 
-    /// Delete a specific session.
-    pub async fn delete_session(
+    /// Delete a specific session (internal helper).
+    async fn delete_session_inner(
         &self,
         tenant_id: &str,
         session_id: &str,
@@ -148,7 +148,7 @@ impl SessionStore for PgSessionStore {
         tenant_id: &str,
         session_id: &str,
     ) -> Result<(), AgentError> {
-        Self::delete_session(self, tenant_id, session_id)
+        self.delete_session_inner(tenant_id, session_id)
             .await
             .map_err(|e| AgentError::Persistence(e.to_string()))
     }
@@ -157,7 +157,7 @@ impl SessionStore for PgSessionStore {
         &self,
         tenant_id: &str,
     ) -> Result<Vec<String>, AgentError> {
-        Self::list_sessions(self, tenant_id)
+        self.list_sessions_inner(tenant_id)
             .await
             .map_err(|e| AgentError::Persistence(e.to_string()))
     }

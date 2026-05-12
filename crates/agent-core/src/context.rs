@@ -121,15 +121,6 @@ pub struct ToolExecutionStartCtx {
     pub input: serde_json::Value,
 }
 
-/// Context passed to Extension::on_tool_execution_update
-#[derive(Debug, Clone)]
-pub struct ToolExecutionUpdateCtx {
-    pub tenant_id: String,
-    pub session_id: String,
-    pub tool_call_id: String,
-    pub update: serde_json::Value,
-}
-
 /// Context passed to Extension::on_tool_execution_end
 #[derive(Debug, Clone)]
 pub struct ToolExecutionEndCtx {
