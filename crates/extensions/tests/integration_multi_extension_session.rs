@@ -132,6 +132,27 @@ impl SessionStore for MemoryStore {
             .find_map(|(tid, sid, msgs)| if tid == tenant_id && sid == session_id { Some(msgs.clone()) } else { None })
             .unwrap_or_default())
     }
+
+    async fn delete_session(&self, tenant_id: &str, session_id: &str
+    ) -> Result<(), AgentError> {
+        let mut data = self.data.lock().unwrap();
+        data.retain(|(tid, sid, _)| !(tid == tenant_id && sid == session_id));
+        Ok(())
+    }
+
+    async fn list_sessions(&self, tenant_id: &str
+    ) -> Result<Vec<String>, AgentError> {
+        let data = self.data.lock().unwrap();
+        let mut sids: Vec<String> = data
+            .iter()
+            .filter(|(tid, _, _)| tid == tenant_id)
+            .map(|(_, sid, _)| sid.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        sids.sort();
+        Ok(sids)
+    }
 }
 
 // ============================================================================

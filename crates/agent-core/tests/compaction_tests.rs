@@ -638,3 +638,117 @@ async fn test_compact_via_session_actor_writes_entry() {
         _ => panic!("Expected SessionEntry::Compaction, got {:?}", last),
     }
 }
+
+#[tokio::test]
+async fn test_compact_truncates_old_entries() {
+    let _ = tracing_subscriber::fmt().try_init();
+    let provider = mock_provider_with_summary("Truncation test summary");
+    let dispatcher = Arc::new(AllowAllDispatcher);
+    let mut session = SessionActor::new(
+        "t1".to_string(),
+        "s1".to_string(),
+        "You are helpful.".to_string(),
+        "test".to_string(),
+        provider.clone(),
+        dispatcher,
+        Arc::new(make_compaction_actor(provider)),
+        vec![],
+        None,
+    );
+
+    let entries = build_many_entries(10);
+    let _kept_id = entries[8].id(); // Keep reference to an entry near the end
+    for entry in entries {
+        match entry {
+            SessionEntry::Message { message, .. } => session.push_message(message),
+            _ => {}
+        }
+    }
+
+    let before_count = session.entries().len();
+    assert_eq!(before_count, 10);
+
+    let result = session.compact(None).await.unwrap();
+
+    let after_entries = session.entries();
+    // Old entries before first_kept_entry_id should have been removed.
+    // Only kept entries + the new Compaction entry remain.
+    assert!(
+        after_entries.len() < before_count + 1,
+        "entries should have been truncated, before={}, after={}",
+        before_count,
+        after_entries.len()
+    );
+
+    // The first entry in the truncated list should be the first kept entry
+    let first_id = after_entries.first().unwrap().id();
+    assert_eq!(
+        first_id, result.first_kept_entry_id,
+        "first remaining entry should match first_kept_entry_id"
+    );
+
+    // The last entry should be the Compaction marker
+    assert!(
+        matches!(after_entries.last().unwrap(), SessionEntry::Compaction { .. }),
+        "last entry should be Compaction"
+    );
+}
+
+#[tokio::test]
+async fn test_multiple_compactions_truncate_incrementally() {
+    let _ = tracing_subscriber::fmt().try_init();
+    let provider = mock_provider_with_summary("Multi compaction summary");
+    let dispatcher = Arc::new(AllowAllDispatcher);
+    let mut session = SessionActor::new(
+        "t1".to_string(),
+        "s1".to_string(),
+        "You are helpful.".to_string(),
+        "test".to_string(),
+        provider.clone(),
+        dispatcher,
+        Arc::new(make_compaction_actor(provider)),
+        vec![],
+        None,
+    );
+
+    // First batch
+    let entries1 = build_many_entries(10);
+    for entry in entries1 {
+        match entry {
+            SessionEntry::Message { message, .. } => session.push_message(message),
+            _ => {}
+        }
+    }
+
+    let _result1 = session.compact(None).await.unwrap();
+    let after_first = session.entries().len();
+
+    // Second batch
+    let entries2 = build_many_entries(10);
+    for entry in entries2 {
+        match entry {
+            SessionEntry::Message { message, .. } => session.push_message(message),
+            _ => {}
+        }
+    }
+
+    let result2 = session.compact(None).await.unwrap();
+    let after_second = session.entries().len();
+
+    // After second compaction, entries from the first kept set of compaction 1
+    // that are before compaction 2's kept boundary should be gone.
+    // The list should not grow monotonically.
+    assert!(
+        after_second <= after_first + 3,
+        "second compaction should truncate, not accumulate indefinitely: first={}, second={}",
+        after_first,
+        after_second
+    );
+
+    // Verify the first remaining entry matches compaction 2's kept boundary
+    let first_id = session.entries().first().unwrap().id();
+    assert_eq!(
+        first_id, result2.first_kept_entry_id,
+        "first remaining entry should match latest first_kept_entry_id"
+    );
+}

@@ -44,6 +44,10 @@ pub struct SessionActor {
     follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
     /// Optional persistence backend for session history
     store: Option<Arc<dyn SessionStore>>,
+    /// Handle of the most recent fire-and-forget persistence task.
+    /// Awaiting this before spawning a new save guarantees write ordering
+    /// and prevents stale snapshots from overwriting newer ones.
+    last_save: Option<tokio::task::JoinHandle<()>>,
     abort_token: CancellationToken,
 
     recovery: RecoveryStateMachine,
@@ -125,6 +129,7 @@ impl SessionActor {
             steer_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
             store,
+            last_save: None,
             abort_token: CancellationToken::new(),
             recovery: RecoveryStateMachine::new(3),
             event_listeners: Arc::new(Mutex::new(Vec::new())),
@@ -385,12 +390,18 @@ impl SessionActor {
 
         // Persist AFTER check_compaction so that newly-added compaction
         // entries are included in the snapshot.
+        // Serialize saves per-session by awaiting the previous task before
+        // spawning the next one, preventing stale snapshots from overwriting
+        // newer ones.
         if let Some(ref store) = self.store {
+            if let Some(handle) = self.last_save.take() {
+                let _ = handle.await;
+            }
             let entries = self.entries.clone();
             let tenant_id = self.tenant_id.clone();
             let session_id = self.session_id.clone();
             let store = store.clone();
-            tokio::spawn(async move {
+            self.last_save = Some(tokio::spawn(async move {
                 if let Err(e) = store.save_session(&tenant_id, &session_id, &entries).await {
                     warn!(
                         tenant_id = %tenant_id,
@@ -399,7 +410,7 @@ impl SessionActor {
                         "failed to persist session",
                     );
                 }
-            });
+            }));
         }
 
         Ok(all_new_msgs)
@@ -485,7 +496,13 @@ impl SessionActor {
         };
         self.entries.push(compaction_entry);
 
-        // 3. Emit compaction_end
+        // 3. Truncate entries before the compaction boundary to prevent
+        // unbounded memory growth.
+        if let Some(kept_idx) = self.entries.iter().position(|e| e.id() == result.first_kept_entry_id) {
+            self.entries.drain(..kept_idx);
+        }
+
+        // 4. Emit compaction_end
         if let Some(tx) = &self.event_tx {
             tx.send(QueuedEvent {
                 event: AgentEvent::CompactionEnd {
@@ -565,7 +582,13 @@ impl SessionActor {
             timestamp: std::time::SystemTime::now(),
         };
         self.entries.push(compaction_entry);
-        
+
+        // Truncate entries before the compaction boundary to prevent
+        // unbounded memory growth.
+        if let Some(kept_idx) = self.entries.iter().position(|e| e.id() == result.first_kept_entry_id) {
+            self.entries.drain(..kept_idx);
+        }
+
         Ok(result)
     }
 
@@ -590,7 +613,10 @@ impl SessionActor {
     /// The session state is saved asynchronously (fire-and-forget) after each
     /// `prompt()` call. Call `flush()` before shutdown to guarantee all writes
     /// have completed. Returns `Ok(())` if no store is configured.
-    pub async fn flush(&self) -> Result<(), AgentError> {
+    pub async fn flush(&mut self) -> Result<(), AgentError> {
+        if let Some(handle) = self.last_save.take() {
+            let _ = handle.await;
+        }
         if let Some(ref store) = self.store {
             store.save_session(&self.tenant_id, &self.session_id, &self.entries).await?;
             info!(
@@ -627,10 +653,15 @@ impl SessionActor {
         // 1. Cancel any ongoing prompt or compaction
         self.abort_token.cancel();
 
-        // 2. Drop event sender to signal the processor to exit
+        // 2. Wait for in-flight persistence to complete
+        if let Some(handle) = self.last_save.take() {
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+        }
+
+        // 3. Drop event sender to signal the processor to exit
         self.event_tx.take();
 
-        // 3. Wait for the event processor with a timeout
+        // 4. Wait for the event processor with a timeout
         if let Some(handle) = self.event_processor_handle.take() {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(1), handle).await;
         }
@@ -749,6 +780,32 @@ mod tests {
                 })
                 .unwrap_or_default();
             Ok(msgs)
+        }
+
+        async fn delete_session(
+            &self,
+            tenant_id: &str,
+            session_id: &str,
+        ) -> Result<(), AgentError> {
+            let mut data = self.data.lock().unwrap();
+            data.retain(|(tid, sid, _)| !(tid == tenant_id && sid == session_id));
+            Ok(())
+        }
+
+        async fn list_sessions(
+            &self,
+            tenant_id: &str,
+        ) -> Result<Vec<String>, AgentError> {
+            let data = self.data.lock().unwrap();
+            let mut sids: Vec<String> = data
+                .iter()
+                .filter(|(tid, _, _)| tid == tenant_id)
+                .map(|(_, sid, _)| sid.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            sids.sort();
+            Ok(sids)
         }
     }
 
@@ -954,6 +1011,40 @@ mod tests {
         assert!(restored > 0);
         let msgs = session2.messages();
         assert!(msgs.len() >= 2); // user + assistant
+    }
+
+    #[tokio::test]
+    async fn test_consecutive_prompts_persist_all_entries() {
+        let _ = tracing_subscriber::fmt().try_init();
+
+        let store = Arc::new(MemoryStore::new());
+        let provider = TestProvider::text("response");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "prompt".to_string(),
+            "echo".to_string(),
+            provider.clone(),
+            dispatcher,
+            Arc::new(make_compaction_actor(provider)),
+            vec![],
+            Some(store.clone()),
+        );
+
+        // Two consecutive prompts — each triggers a fire-and-forget save.
+        // With the fix, the second save awaits the first, guaranteeing
+        // ordering and preventing stale snapshots from overwriting newer ones.
+        session.prompt("hello".to_string()).await.unwrap();
+        session.prompt("world".to_string()).await.unwrap();
+        session.flush().await.unwrap();
+
+        let loaded = store.load_session("t1", "s1").await.unwrap();
+        let msg_count = loaded
+            .iter()
+            .filter(|e| matches!(e, SessionEntry::Message { .. }))
+            .count();
+        assert_eq!(msg_count, 4, "expected 4 messages (2 user + 2 assistant)");
     }
 
     #[tokio::test]

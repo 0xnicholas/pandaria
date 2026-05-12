@@ -28,17 +28,13 @@ pub trait SessionStore: Send + Sync {
     /// Delete a session and all its data.
     async fn delete_session(
         &self,
-        _tenant_id: &str,
-        _session_id: &str,
-    ) -> Result<(), AgentError> {
-        Ok(())
-    }
+        tenant_id: &str,
+        session_id: &str,
+    ) -> Result<(), AgentError>;
 
     /// List all session IDs for a given tenant.
     async fn list_sessions(
         &self,
-        _tenant_id: &str,
-    ) -> Result<Vec<String>, AgentError> {
-        Ok(Vec::new())
-    }
+        tenant_id: &str,
+    ) -> Result<Vec<String>, AgentError>;
 }
