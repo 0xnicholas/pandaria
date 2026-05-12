@@ -109,7 +109,7 @@ crates/
     host/            #   Extension trait、Actor Mailbox、EventBus、Hook 路由
     builtins/        #   内置 Extension 实现（audit、rate-limit、tool-guard 等）
   tenant/            # Tenant Scheduler、配额管理、Session 注册表
-  persistence/       # Session 状态序列化、Redis/PG 适配器
+  session-store/    # Session 状态序列化、Redis/PG 适配器
   observability/     # tracing 集成、metrics、per-tenant 统计
   llm-client/        # LLM provider 抽象、流式 SSE 解析、HTTP 通信协议
   api-gateway/       # gRPC / WebSocket 接入、认证、限流
@@ -127,7 +127,7 @@ crates/
 ```
 api-gateway → tenant → extensions → agent-core → llm-client
                    ↓         ↓
-             persistence  observability
+             session-store  observability
 ```
 
 ---
@@ -199,8 +199,8 @@ api-gateway → tenant → extensions → agent-core → llm-client
 | Session 持久化 schema | ✅ 已实现（PostgreSQL adapter，Redis 待实现） |
 | LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral，Bedrock 待完成） |
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST，服务端正式设计文档待补充） |
-| 所有代码实现 | 🟡 核心栈完成（llm-client、agent-core、extensions、persistence），tenant/observability/api-gateway 待实现 |
-| persistence 集成测试 | ✅ 修复（并行测试 tenant/session ID 隔离） |
+| 所有代码实现 | 🟡 核心栈完成（llm-client、agent-core、extensions、session-store），tenant/observability/api-gateway 待实现 |
+| session-store 集成测试 | ✅ 修复（并行测试 tenant/session ID 隔离） |
 | 代码质量 | ✅ 修复（4 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复） |
 
 ---

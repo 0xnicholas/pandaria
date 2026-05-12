@@ -1,6 +1,6 @@
-# persistence
+# session-store
 
-Session history persistence layer for pandaria.
+Session history storage layer for pandaria.
 
 ## Overview
 
@@ -19,7 +19,7 @@ enabling session history to survive process restarts and node migrations.
 ### PostgreSQL
 
 ```rust
-use persistence::postgres::PgSessionStore;
+use session_store::postgres::PgSessionStore;
 use sqlx::PgPool;
 
 let pool = PgPool::connect("postgres://user@localhost/pandaria").await?;
@@ -31,7 +31,7 @@ store.save_session("tenant_1", "session_1", &entries).await?;
 ### Redis
 
 ```rust
-use persistence::redis_store::RedisSessionStore;
+use session_store::redis_store::RedisSessionStore;
 use redis::aio::ConnectionManager;
 
 let client = redis::Client::open("redis://127.0.0.1/")?;
@@ -52,7 +52,7 @@ both PostgreSQL and Redis backends.
 ## Architecture
 
 ```
-persistence
+session-store
   ├── error.rs          — PersistenceError (thiserror)
   ├── postgres.rs        — PgSessionStore (sqlx)
   ├── redis_store.rs     — RedisSessionStore (redis)

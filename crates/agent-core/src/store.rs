@@ -5,7 +5,7 @@ use crate::types::SessionEntry;
 
 /// Persistence boundary for session history (messages + compaction metadata).
 ///
-/// Implementations in the `persistence` crate provide Redis, PostgreSQL,
+/// Implementations in the `session-store` crate provide Redis, PostgreSQL,
 /// or in-memory storage. Defined here as a trait so `agent-core` remains
 /// storage-agnostic.
 #[async_trait]

@@ -378,12 +378,12 @@
 - **技术依赖**：F-01（Usage）、F-16
 - **优先级**：P1
 
-**F-19** `persistence` crate — SessionStore Redis 适配器
+**F-19** `session-store` crate — SessionStore Redis 适配器
 - **验收标准**：session 消息历史可写入 Redis 并完整恢复。
 - **技术依赖**：F-03（SessionEntry）、F-07（Compaction）
 - **优先级**：P0
 
-**F-20** `persistence` crate — SessionStore PostgreSQL 适配器
+**F-20** `session-store` crate — SessionStore PostgreSQL 适配器
 - **验收标准**：同 F-19，后端为 PostgreSQL。
 - **技术依赖**：F-21（schema）
 - **优先级**：P1
@@ -516,7 +516,7 @@ HookDispatcher (trait)            ExtensionHandle
 **交付物**：
 - `api-gateway` crate：gRPC / WebSocket 接入、认证、限流
 - `tenant` crate：调度器、配额管理、Session 注册表
-- `persistence` crate：Redis + PostgreSQL SessionStore 实现
+- `session-store` crate：Redis + PostgreSQL SessionStore 实现
 - Session 持久化 schema
 
 **状态**：🔲 计划中

@@ -90,15 +90,15 @@ Pandaria 从架构层面解决这些问题，为构建**多租户 AI agent 平�
 │  └────────────────────────────────────┘                    │
 │                                                            │
 │  ┌────────────┐  ┌──────────────┐  🔲 计划中              │
-│  │persistence │  │ observability│                          │
-│  │Redis/PG    │  │tracing/metrics│                         │
+│  │session-store│ │ observability│                          │
+│  │Redis/PG     │ │tracing/metrics│                         │
 │  └────────────┘  └──────────────┘                          │
 │                                                            │
 └──────────────────────────────────────────────────────────┘
 
 依赖方向:  tui → api-gateway → tenant → extensions → agent-core → llm-client
                                             ↓              ↓
-                                      persistence    observability
+                                      session-store    observability
 ```
 
 ### Agent Loop 协议
@@ -553,7 +553,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 - [ ] `api-gateway` crate — gRPC / WebSocket 接入层
 - [ ] `tenant` crate — 租户调度器、配额管理
-- [ ] `persistence` crate — Redis / PostgreSQL SessionStore 实现
+- [ ] `session-store` crate — Redis / PostgreSQL SessionStore 实现
 - [ ] `observability` crate — tracing 集成、per-tenant metrics
 - [ ] AWS Bedrock provider（feature gate `bedrock` 已有代码，待集成验证）
 - [ ] Session 持久化 schema 设计

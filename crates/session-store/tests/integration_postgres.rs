@@ -5,7 +5,7 @@ use agent_core::{
     SessionActor, SessionEntry, SessionStore,
 };
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
-use persistence::postgres::PgSessionStore;
+use session_store::postgres::PgSessionStore;
 use sqlx::PgPool;
 
 /// Connect to the local PostgreSQL test database.

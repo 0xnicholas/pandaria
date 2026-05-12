@@ -4,7 +4,7 @@ members = [
     "crates/llm-client",
     "crates/agent-core",
     "crates/extensions",
-    "crates/persistence",
+    "crates/session-store",
     "crates/observability",
     "crates/tui",
 ]

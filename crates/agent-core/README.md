@@ -11,7 +11,7 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 - `ToolExecutor`：工具执行管道（prepare → on_tool_call → execute → on_tool_result → finalize）
 - `HookDispatcher` trait：hook 分发抽象（阻断型 + 链式 + 观测型），由 extensions crate 实现
 - `SessionActor`：session 状态管理、prompt/steer/followUp/abort/shutdown 生命周期、Drop 清理
-- `SessionStore` trait：持久化抽象，由 persistence crate 实现
+- `SessionStore` trait：持久化抽象，由 session-store crate 实现
 
 ## 公开接口
 
