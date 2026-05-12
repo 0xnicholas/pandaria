@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
-pub fn render_markdown(text: &str, theme: &Theme) -> Vec<Line<'static>> {
+pub fn render_markdown(text: &str, theme: &Theme, syntax_theme: &str) -> Vec<Line<'static>> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     let parser = Parser::new_ext(text, options);
@@ -31,7 +31,7 @@ pub fn render_markdown(text: &str, theme: &Theme) -> Vec<Line<'static>> {
             }
             Event::End(TagEnd::CodeBlock) => {
                 in_code_block = false;
-                for span_vec in highlight_code(&code_buffer, code_lang.as_deref()) {
+                for span_vec in highlight_code(&code_buffer, code_lang.as_deref(), syntax_theme) {
                     lines.push(Line::from(span_vec));
                 }
                 code_buffer.clear(); code_lang = None;
@@ -78,11 +78,12 @@ pub fn render_markdown(text: &str, theme: &Theme) -> Vec<Line<'static>> {
     lines
 }
 
-fn highlight_code(code: &str, lang: Option<&str>) -> Vec<Vec<Span<'static>>> {
+fn highlight_code(code: &str, lang: Option<&str>, syntax_theme: &str) -> Vec<Vec<Span<'static>>> {
     let ps = &*SYNTAX_SET;
     let ts = &*THEME_SET;
     let syntax = lang.and_then(|l| ps.find_syntax_by_token(l).or_else(|| ps.find_syntax_by_extension(l))).unwrap_or_else(|| ps.find_syntax_plain_text());
-    let mut h = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
+    let highlight_theme = ts.themes.get(syntax_theme).unwrap_or(&ts.themes["base16-ocean.dark"]);
+    let mut h = HighlightLines::new(syntax, highlight_theme);
     let mut result = Vec::new();
     for line in LinesWithEndings::from(code) {
         let ranges: Vec<(syntect::highlighting::Style, &str)> = h.highlight_line(line, &ps).unwrap_or_default();
@@ -94,7 +95,7 @@ fn highlight_code(code: &str, lang: Option<&str>) -> Vec<Vec<Span<'static>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn test_heading() { assert!(!render_markdown("# Hello", &Theme::default()).is_empty()); }
-    #[test] fn test_code_block() { assert!(render_markdown("```\nfn main() {}\n```", &Theme::default()).iter().any(|l| l.spans.iter().any(|s| s.content.contains("fn main")))); }
-    #[test] fn test_paragraph() { let r = render_markdown("hello world", &Theme::default()); assert!(r[0].spans.iter().any(|s| s.content.contains("hello"))); }
+    #[test] fn test_heading() { assert!(!render_markdown("# Hello", &Theme::default(), "base16-ocean.dark").is_empty()); }
+    #[test] fn test_code_block() { assert!(render_markdown("```\nfn main() {}\n```", &Theme::default(), "base16-ocean.dark").iter().any(|l| l.spans.iter().any(|s| s.content.contains("fn main")))); }
+    #[test] fn test_paragraph() { let r = render_markdown("hello world", &Theme::default(), "base16-ocean.dark"); assert!(r[0].spans.iter().any(|s| s.content.contains("hello"))); }
 }

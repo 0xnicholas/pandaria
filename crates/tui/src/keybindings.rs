@@ -12,6 +12,7 @@ pub enum Keybinding {
     AppToggleThinking,
     AppSelectModel,
     AppListSessions,
+    AppNewSession,
     AppOpenCommandPalette,
     EditorCursorUp,
     EditorCursorDown,
@@ -93,6 +94,7 @@ pub fn default_keybindings() -> HashMap<Keybinding, Vec<KeyId>> {
     m.insert(Keybinding::AppToggleThinking, vec!["ctrl+t".into()]);
     m.insert(Keybinding::AppSelectModel, vec!["ctrl+l".into()]);
     m.insert(Keybinding::AppListSessions, vec!["ctrl+s".into()]);
+    m.insert(Keybinding::AppNewSession, vec!["ctrl+n".into()]);
     m.insert(Keybinding::EditorSubmit, vec!["enter".into()]);
     m.insert(
         Keybinding::EditorNewLine,
@@ -226,6 +228,7 @@ impl KeybindingsManager {
             "app.toggle_thinking" => Some(Keybinding::AppToggleThinking),
             "app.select_model" => Some(Keybinding::AppSelectModel),
             "app.list_sessions" => Some(Keybinding::AppListSessions),
+            "app.new_session" => Some(Keybinding::AppNewSession),
             "app.open_command_palette" => Some(Keybinding::AppOpenCommandPalette),
             "editor.cursor_up" => Some(Keybinding::EditorCursorUp),
             "editor.cursor_down" => Some(Keybinding::EditorCursorDown),

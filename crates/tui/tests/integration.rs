@@ -53,7 +53,7 @@ async fn test_sse_connect_receives_events() {
     let (tx, mut rx) = tokio::sync::mpsc::channel(8);
     let base = server.uri();
     let handle = tokio::spawn(async move {
-        tui::client::sse::connect(&client, &base, "s1", "token", None, tx).await
+        tui::client::sse::connect(&client, &base, "s1", "token", tx).await
     });
 
     let mut events: Vec<tui::client::model::ServerEvent> = Vec::new();
@@ -97,7 +97,7 @@ fn test_keybinding_parse_all_valid_keys() {
     // Verify all user-configurable keybinding keys parse successfully
     let keys = vec![
         "app.quit", "app.interrupt", "app.toggle_tool_calls", "app.toggle_thinking",
-        "app.select_model", "app.list_sessions", "app.open_command_palette",
+        "app.select_model", "app.list_sessions", "app.new_session", "app.open_command_palette",
         "editor.cursor_up", "editor.cursor_down", "editor.cursor_left", "editor.cursor_right",
         "editor.cursor_word_left", "editor.cursor_word_right",
         "editor.cursor_line_start", "editor.cursor_line_end",

@@ -1,7 +1,7 @@
 use crate::autocomplete::{
     AutocompleteContext, AutocompleteProvider, FilePathProvider, SlashCommandProvider,
 };
-use crate::client::model::ServerEvent;
+use crate::client::model::{ServerEvent, SessionInfo};
 use crate::client::rest::RestClient;
 use crate::client::sse;
 use crate::command::Command;
@@ -24,6 +24,13 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::Frame;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
+
+/// Action sent from background tasks back to the main event loop.
+pub enum TaskAction {
+    SessionCreated(SessionInfo),
+    ConnectionTested { url: String, ok: bool },
+    SessionFetched(SessionInfo),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppState {
@@ -48,13 +55,16 @@ pub struct App {
     pub context_window: Option<u64>,
     pub input_tokens: u64,
     pub server_rx: Option<mpsc::Receiver<ServerEvent>>,
+    pub sse_task: Option<tokio::task::JoinHandle<()>>,
+    pub task_tx: mpsc::Sender<TaskAction>,
+    pub task_rx: Option<mpsc::Receiver<TaskAction>>,
     pub scroll_offset: usize,
     pub user_scrolled_up: bool,
     pub running: bool,
 }
 
 impl App {
-    pub fn new(config: Config, session_id: String, session_info: crate::client::model::SessionInfo) -> Self {
+    pub fn new(config: Config, session_id: String, session_info: SessionInfo) -> Self {
         let rest = RestClient::new(&config.server);
         let data = crate::state::State::new(session_id, session_info);
         let context_window = data.active_session().info.context_window;
@@ -62,6 +72,7 @@ impl App {
         if let Some(ref keys_config) = config.keys {
             keybindings.load_user_config(keys_config);
         }
+        let (task_tx, task_rx) = mpsc::channel::<TaskAction>(32);
         Self {
             state: AppState::Connected,
             data,
@@ -81,6 +92,9 @@ impl App {
             context_window,
             input_tokens: 0,
             server_rx: None,
+            sse_task: None,
+            task_tx,
+            task_rx: Some(task_rx),
             scroll_offset: 0,
             user_scrolled_up: false,
             running: true,
@@ -204,6 +218,21 @@ impl App {
             ));
             return;
         }
+        if kb.matches(&key, Keybinding::AppNewSession) && self.state != AppState::Busy {
+            let rest = self.rest.clone();
+            let token = self.config.auth.token.clone().unwrap_or_default();
+            let task_tx = self.task_tx.clone();
+            tokio::spawn(async move {
+                match rest.create_session(None, &token).await {
+                    Ok(info) => {
+                        tracing::info!(session_id = %info.id, "created new session");
+                        let _ = task_tx.send(TaskAction::SessionCreated(info)).await;
+                    }
+                    Err(e) => tracing::error!("create session failed: {e}"),
+                }
+            });
+            return;
+        }
 
         // --- Editor keybindings ---
         if kb.matches(&key, Keybinding::EditorSubmit) {
@@ -282,17 +311,35 @@ impl App {
                 Command::NewSession { title } => {
                     let rest = self.rest.clone();
                     let token = self.config.auth.token.clone().unwrap_or_default();
-                    let title_clone = title.clone();
+                    let task_tx = self.task_tx.clone();
                     tokio::spawn(async move {
-                        match rest.create_session(title_clone.as_deref(), &token).await {
-                            Ok(info) => tracing::info!(session_id = %info.id, "created new session"),
+                        match rest.create_session(title.as_deref(), &token).await {
+                            Ok(info) => {
+                                tracing::info!(session_id = %info.id, "created new session");
+                                let _ = task_tx.send(TaskAction::SessionCreated(info)).await;
+                            }
                             Err(e) => tracing::error!("create session failed: {e}"),
                         }
                     });
                 }
                 Command::SwitchSession { id } => {
                     if self.data.sessions.contains_key(&id) {
-                        self.data.active_session = id;
+                        self.data.active_session = id.clone();
+                        if let Some(s) = self.data.sessions.get(&id) {
+                            self.context_window = s.info.context_window;
+                        }
+                        // Fetch latest session info from server in background
+                        let rest = self.rest.clone();
+                        let token = self.config.auth.token.clone().unwrap_or_default();
+                        let task_tx = self.task_tx.clone();
+                        tokio::spawn(async move {
+                            match rest.get_session(&id, &token).await {
+                                Ok(info) => {
+                                    let _ = task_tx.send(TaskAction::SessionFetched(info)).await;
+                                }
+                                Err(e) => tracing::warn!("switch session fetch failed: {e}"),
+                            }
+                        });
                     }
                 }
                 Command::ListSessions => {
@@ -327,10 +374,25 @@ impl App {
                     }
                 }
                 Command::Connect { url } => {
-                    self.config.server.url = url;
+                    self.config.server.url = url.clone();
+                    // Validate connectivity in background
+                    let rest = RestClient::new(&self.config.server);
+                    let token = self.config.auth.token.clone().unwrap_or_default();
+                    let task_tx = self.task_tx.clone();
+                    tokio::spawn(async move {
+                        let ok = rest.list_sessions(&token).await.is_ok();
+                        let _ = task_tx.send(TaskAction::ConnectionTested { url, ok }).await;
+                    });
                 }
                 Command::Auth { token } => {
-                    self.config.auth.token = Some(token);
+                    self.config.auth.token = Some(token.clone());
+                    // Validate connectivity with new token in background
+                    let rest = RestClient::new(&self.config.server);
+                    let task_tx = self.task_tx.clone();
+                    tokio::spawn(async move {
+                        let ok = rest.list_sessions(&token).await.is_ok();
+                        let _ = task_tx.send(TaskAction::ConnectionTested { url: "(auth)".to_string(), ok }).await;
+                    });
                 }
                 Command::Tokens => { /* Token info displayed in StatusBar gauge */ }
             }
@@ -365,22 +427,33 @@ impl App {
         };
         self.data.active_session_mut().messages.push(msg);
 
-        let rest = RestClient::new(&self.config.server);
+        // Trim old messages if exceeding max_history
+        let max_history = self.config.ui.max_history;
+        let session = self.data.active_session_mut();
+        while session.messages.len() > max_history {
+            session.messages.remove(0);
+        }
+
+        let rest = self.rest.clone();
         let token = self.config.auth.token.clone().unwrap_or_default();
         let sid = self.data.active_session.clone();
         let content = text.clone();
 
         let (tx, rx) = mpsc::channel::<ServerEvent>(32);
-        let reqwest_client = reqwest::Client::new();
+        let reqwest_client = self.reqwest_client.clone();
         let base_url = self.config.server.url.clone();
+
+        // Abort any in-flight SSE task before starting a new one
+        if let Some(handle) = self.sse_task.take() {
+            handle.abort();
+        }
 
         let sid_clone = sid.clone();
         let token_clone = token.clone();
-        tokio::spawn(async move {
-            if let Err(e) = sse::connect(&reqwest_client, &base_url, &sid_clone, &token_clone, None, tx).await {
-                tracing::error!("SSE connect failed: {e}");
-            }
+        let sse_handle = tokio::spawn(async move {
+            sse::connect(&reqwest_client, &base_url, &sid_clone, &token_clone, tx).await;
         });
+        self.sse_task = Some(sse_handle);
 
         tokio::spawn(async move {
             if let Err(e) = rest.send_message(&sid, &content, &token).await {
@@ -522,6 +595,13 @@ impl App {
                 }
                 session.streaming = None;
                 self.state = AppState::Connected;
+
+                // Trim old messages if exceeding max_history
+                let max_history = self.config.ui.max_history;
+                let s = self.data.active_session_mut();
+                while s.messages.len() > max_history {
+                    s.messages.remove(0);
+                }
             }
             ServerEvent::Error { code, message } => {
                 if let Some(last) = session.messages.last_mut() {
@@ -530,6 +610,36 @@ impl App {
                 session.error = Some(crate::client::model::ApiError { code, message });
                 session.streaming = None;
                 self.state = AppState::Connected;
+            }
+        }
+    }
+
+    pub fn handle_task_action(&mut self, action: TaskAction) {
+        match action {
+            TaskAction::SessionCreated(info) => {
+                let id = info.id.clone();
+                self.data.sessions.insert(id.clone(), SessionState::new(info));
+                self.data.active_session = id;
+                if let Some(s) = self.data.sessions.get(&self.data.active_session) {
+                    self.context_window = s.info.context_window;
+                }
+            }
+            TaskAction::ConnectionTested { url, ok } => {
+                if ok {
+                    tracing::info!(%url, "connection validated");
+                } else {
+                    self.data.last_error = Some(format!("Could not connect to {}", url));
+                }
+            }
+            TaskAction::SessionFetched(info) => {
+                let id = info.id.clone();
+                let cw = info.context_window;
+                if let Some(existing) = self.data.sessions.get_mut(&id) {
+                    existing.info = info;
+                }
+                if id == self.data.active_session {
+                    self.context_window = cw;
+                }
             }
         }
     }

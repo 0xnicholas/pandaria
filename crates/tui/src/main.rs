@@ -29,14 +29,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rest = RestClient::new(&config.server);
     let sessions = rest
         .list_sessions(&token)
-        .await
-        .map_err(|e| format!("Failed to list sessions: {}", e))?;
+        .await?;
     let session_info = if let Some(first) = sessions.into_iter().next() {
         first
     } else {
         rest.create_session(None, &token)
-            .await
-            .map_err(|e| format!("Failed to create session: {}", e))?
+            .await?
     };
 
     let mut stdout = io::stdout();
@@ -76,6 +74,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } => {
                 if let Some(event) = server_event { app.handle_server_event(event); }
+            }
+            task_action = async {
+                match app.task_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some(action) = task_action { app.handle_task_action(action); }
             }
             _ = spinner_interval.tick() => {
                 if app.state == tui::app::AppState::Busy { app.spinner.tick(); }
