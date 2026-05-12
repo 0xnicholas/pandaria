@@ -47,6 +47,26 @@ impl RateLimitExtension {
             call_times: DashMap::new(),
         }
     }
+
+    /// Remove tenants whose sliding-window queues are empty (after pruning
+    /// expired timestamps).
+    fn evict_idle_tenants(&self) {
+        let now = Instant::now();
+        self.call_times
+            .retain(|_tenant_id, tenant_lock| match tenant_lock.try_lock() {
+                Ok(mut times) => {
+                    while let Some(front) = times.front() {
+                        if now.saturating_duration_since(*front) >= self.window {
+                            times.pop_front();
+                        } else {
+                            break;
+                        }
+                    }
+                    !times.is_empty()
+                }
+                Err(_) => true,
+            });
+    }
 }
 
 #[async_trait]
@@ -63,15 +83,21 @@ impl Extension for RateLimitExtension {
         if self.call_times.len() >= self.max_tracked_tenants
             && !self.call_times.contains_key(&ctx.tenant_id)
         {
-            return (
-                HookDecision::Block {
-                    reason: format!(
-                        "rate limiter tenant quota exceeded (max: {})",
-                        self.max_tracked_tenants
-                    ),
-                },
-                ToolCallMutation::default(),
-            );
+            // Evict idle tenants whose sliding windows have emptied before
+            // permanently rejecting the new tenant.
+            self.evict_idle_tenants();
+
+            if self.call_times.len() >= self.max_tracked_tenants {
+                return (
+                    HookDecision::Block {
+                        reason: format!(
+                            "rate limiter tenant quota exceeded (max: {})",
+                            self.max_tracked_tenants
+                        ),
+                    },
+                    ToolCallMutation::default(),
+                );
+            }
         }
 
         // 2. Get or create the per-tenant lock.
@@ -88,7 +114,7 @@ impl Extension for RateLimitExtension {
 
         // 4. Prune expired entries from the front (VecDeque gives O(1) pop).
         while let Some(front) = times.front() {
-            if now.duration_since(*front) >= self.window {
+            if now.saturating_duration_since(*front) >= self.window {
                 times.pop_front();
             } else {
                 break;
@@ -174,5 +200,33 @@ mod tests {
         assert!(
             matches!(decision, HookDecision::Block { reason } if reason.contains("tenant quota exceeded"))
         );
+    }
+
+    #[tokio::test]
+    async fn test_idle_tenants_get_evicted() {
+        let ext = RateLimitExtension::with_config(10, Duration::from_millis(100), 1);
+
+        let ctx_a = ToolCallCtx {
+            tenant_id: "tenant-a".to_string(),
+            session_id: "s1".to_string(),
+            tool_name: "test".to_string(),
+            tool_call_id: "c1".to_string(),
+            input: serde_json::json!({}),
+        };
+        // tenant-a takes the single slot
+        assert!(matches!(ext.on_tool_call(&ctx_a).await.0, HookDecision::Continue));
+
+        // Wait for the window to expire so tenant-a's VecDeque becomes empty
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let ctx_b = ToolCallCtx {
+            tenant_id: "tenant-b".to_string(),
+            session_id: "s1".to_string(),
+            tool_name: "test".to_string(),
+            tool_call_id: "c1".to_string(),
+            input: serde_json::json!({}),
+        };
+        // tenant-b should now succeed because tenant-a was evicted
+        assert!(matches!(ext.on_tool_call(&ctx_b).await.0, HookDecision::Continue));
     }
 }
