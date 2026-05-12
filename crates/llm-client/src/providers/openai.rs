@@ -127,7 +127,8 @@ impl OpenAiProvider {
 
         // Reasoning / thinking_format
         // Step 1: XHigh clamp check
-        let effective_reasoning = if options.reasoning == Some(crate::provider::ReasoningLevel::XHigh)
+        let effective_reasoning = if options.reasoning
+            == Some(crate::provider::ReasoningLevel::XHigh)
             && !crate::models::supports_xhigh(model)
         {
             Some(crate::provider::ReasoningLevel::High)
@@ -181,20 +182,21 @@ impl OpenAiProvider {
 
         // on_payload hook — use real model metadata when available
         if let Some(hook) = &options.on_payload {
-            let model_meta = crate::models::get_model("openai", model).unwrap_or_else(|| crate::Model {
-                id: model.to_string(),
-                name: model.to_string(),
-                api: "openai-completions".to_string(),
-                provider: "openai".to_string(),
-                base_url: base_url.clone(),
-                reasoning: true,
-                input_modalities: vec![],
-                cost: Default::default(),
-                context_window: 272_000,
-                max_tokens: 128_000,
-                headers: None,
-                compat: crate::models::ModelCompat::None,
-            });
+            let model_meta =
+                crate::models::get_model("openai", model).unwrap_or_else(|| crate::Model {
+                    id: model.to_string(),
+                    name: model.to_string(),
+                    api: "openai-completions".to_string(),
+                    provider: "openai".to_string(),
+                    base_url: base_url.clone(),
+                    reasoning: true,
+                    input_modalities: vec![],
+                    cost: Default::default(),
+                    context_window: 272_000,
+                    max_tokens: 128_000,
+                    headers: None,
+                    compat: crate::models::ModelCompat::None,
+                });
             hook(&mut body, &model_meta).await;
         }
 
@@ -235,26 +237,28 @@ impl OpenAiProvider {
             .collect();
 
         if let Some(hook) = &options.on_response {
-            let model_meta = crate::models::get_model("openai", model).unwrap_or_else(|| crate::Model {
-                id: model.to_string(),
-                name: model.to_string(),
-                api: "openai-completions".to_string(),
-                provider: "openai".to_string(),
-                base_url: base_url.clone(),
-                reasoning: true,
-                input_modalities: vec![],
-                cost: Default::default(),
-                context_window: 272_000,
-                max_tokens: 128_000,
-                headers: None,
-                compat: crate::models::ModelCompat::None,
-            });
+            let model_meta =
+                crate::models::get_model("openai", model).unwrap_or_else(|| crate::Model {
+                    id: model.to_string(),
+                    name: model.to_string(),
+                    api: "openai-completions".to_string(),
+                    provider: "openai".to_string(),
+                    base_url: base_url.clone(),
+                    reasoning: true,
+                    input_modalities: vec![],
+                    cost: Default::default(),
+                    context_window: 272_000,
+                    max_tokens: 128_000,
+                    headers: None,
+                    compat: crate::models::ModelCompat::None,
+                });
             hook(&crate::ProviderResponse { status, headers }, &model_meta).await;
         }
 
         if !status.to_string().starts_with('2') {
-            let body = response.text().await
-                .map_err(|e| LlmError::ProviderError(format!("failed to read response body: {e}")))?;
+            let body = response.text().await.map_err(|e| {
+                LlmError::ProviderError(format!("failed to read response body: {e}"))
+            })?;
             return Err(LlmError::ProviderError(format!("HTTP {status}: {body}")));
         }
 

@@ -1,5 +1,5 @@
 use llm_client::{
-    detect_openai_compat, merge_openai_compat, CacheControlFormat, OpenAiCompat, ThinkingFormat,
+    CacheControlFormat, OpenAiCompat, ThinkingFormat, detect_openai_compat, merge_openai_compat,
 };
 
 #[test]

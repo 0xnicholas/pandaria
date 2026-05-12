@@ -1,5 +1,5 @@
 use llm_client::providers::google::GoogleProvider;
-use llm_client::{LlmContext, LlmProvider, StreamOptions, StopReason, AssistantMessageEvent};
+use llm_client::{AssistantMessageEvent, LlmContext, LlmProvider, StopReason, StreamOptions};
 use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
@@ -23,10 +23,8 @@ data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}
         .mount(&server)
         .await;
 
-    let provider = GoogleProvider::with_base_url(
-        Some(SecretString::new("sk-test".into())),
-        &server.uri(),
-    );
+    let provider =
+        GoogleProvider::with_base_url(Some(SecretString::new("sk-test".into())), &server.uri());
 
     let ctx = LlmContext {
         system_prompt: None,
@@ -35,7 +33,12 @@ data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}
     };
 
     let mut stream = provider
-        .stream("gemini-2.5-pro", ctx, StreamOptions::default(), CancellationToken::new())
+        .stream(
+            "gemini-2.5-pro",
+            ctx,
+            StreamOptions::default(),
+            CancellationToken::new(),
+        )
         .await
         .expect("stream should start");
 
@@ -43,16 +46,32 @@ data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}
     assert!(matches!(event, AssistantMessageEvent::Start { .. }));
 
     let event = stream.next().await.expect("should have TextStart");
-    assert!(matches!(event, AssistantMessageEvent::TextStart { content_index: 0, .. }));
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextStart {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have TextDelta 'Hello'");
-    assert!(matches!(&event, AssistantMessageEvent::TextDelta { delta, content_index: 0, .. } if delta == "Hello"));
+    assert!(
+        matches!(&event, AssistantMessageEvent::TextDelta { delta, content_index: 0, .. } if delta == "Hello")
+    );
 
     let event = stream.next().await.expect("should have TextDelta ' world'");
-    assert!(matches!(&event, AssistantMessageEvent::TextDelta { delta, content_index: 0, .. } if delta == " world"));
+    assert!(
+        matches!(&event, AssistantMessageEvent::TextDelta { delta, content_index: 0, .. } if delta == " world")
+    );
 
     let event = stream.next().await.expect("should have TextEnd");
-    assert!(matches!(event, AssistantMessageEvent::TextEnd { content_index: 0, .. }));
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextEnd {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have Done");
     match event {
@@ -79,10 +98,8 @@ data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}
         .mount(&server)
         .await;
 
-    let provider = GoogleProvider::with_base_url(
-        Some(SecretString::new("sk-test".into())),
-        &server.uri(),
-    );
+    let provider =
+        GoogleProvider::with_base_url(Some(SecretString::new("sk-test".into())), &server.uri());
 
     let ctx = LlmContext {
         system_prompt: None,
@@ -91,7 +108,12 @@ data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}
     };
 
     let mut stream = provider
-        .stream("gemini-2.5-pro", ctx, StreamOptions::default(), CancellationToken::new())
+        .stream(
+            "gemini-2.5-pro",
+            ctx,
+            StreamOptions::default(),
+            CancellationToken::new(),
+        )
         .await
         .expect("stream should start");
 
@@ -100,7 +122,11 @@ data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP"}]}
 
     let event = stream.next().await.expect("should have ToolCallEnd");
     match event {
-        AssistantMessageEvent::ToolCallEnd { content_index: 0, tool_call, .. } => {
+        AssistantMessageEvent::ToolCallEnd {
+            content_index: 0,
+            tool_call,
+            ..
+        } => {
             assert_eq!(tool_call.name, "read");
             assert_eq!(tool_call.id, "call_0");
             assert_eq!(tool_call.arguments["path"], "/x");

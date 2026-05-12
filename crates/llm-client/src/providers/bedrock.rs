@@ -59,10 +59,8 @@ impl LlmProvider for AwsBedrockProvider {
         let region = self.region.clone();
 
         let handle = tokio::spawn(async move {
-            let result = Self::try_stream(
-                client, &model, context, options, &tx, signal, &region,
-            )
-            .await;
+            let result =
+                Self::try_stream(client, &model, context, options, &tx, signal, &region).await;
             if let Err(e) = result {
                 let err_msg = e.to_string();
                 let _ = tx
@@ -84,10 +82,7 @@ impl LlmProvider for AwsBedrockProvider {
                             },
                             stop_reason: crate::StopReason::Error,
                             response_id: None,
-                            error_message: Some(format!(
-                                "bedrock '{}': {}",
-                                model, err_msg,
-                            )),
+                            error_message: Some(format!("bedrock '{}': {}", model, err_msg,)),
                             timestamp: std::time::SystemTime::now(),
                         },
                     })
@@ -143,7 +138,8 @@ impl AwsBedrockProvider {
 
         // Tools
         if let Some(tools) = &context.tools {
-            body["tools"] = serde_json::json!(common::build_tools_json(tools, options.cache_retention));
+            body["tools"] =
+                serde_json::json!(common::build_tools_json(tools, options.cache_retention));
         }
 
         // Thinking / reasoning
@@ -174,15 +170,18 @@ impl AwsBedrockProvider {
 
         // Invoke on_payload hook
         if let Some(hook) = &options.on_payload {
-            let model_meta = crate::models::get_model("bedrock", model)
-                .unwrap_or_else(|| crate::Model {
+            let model_meta =
+                crate::models::get_model("bedrock", model).unwrap_or_else(|| crate::Model {
                     id: model.to_string(),
                     name: model.to_string(),
                     api: "anthropic-messages".to_string(),
                     provider: "bedrock".to_string(),
                     base_url: format!("https://bedrock-runtime.{}.amazonaws.com", region),
                     reasoning: true,
-                    input_modalities: vec![crate::models::Modality::Text, crate::models::Modality::Image],
+                    input_modalities: vec![
+                        crate::models::Modality::Text,
+                        crate::models::Modality::Image,
+                    ],
                     cost: crate::models::TokenCost {
                         input: 3.0,
                         output: 15.0,
@@ -197,8 +196,8 @@ impl AwsBedrockProvider {
             hook(&mut body, &model_meta).await;
         }
 
-        let body_bytes = serde_json::to_vec(&body)
-            .map_err(|e| LlmError::Serialization(e.to_string()))?;
+        let body_bytes =
+            serde_json::to_vec(&body).map_err(|e| LlmError::Serialization(e.to_string()))?;
 
         // Call AWS Bedrock
         let response = client
@@ -213,15 +212,18 @@ impl AwsBedrockProvider {
         // Invoke on_response hook (Bedrock doesn't expose HTTP headers via SDK,
         // so we pass a synthetic 200 response)
         if let Some(hook) = &options.on_response {
-            let model_meta = crate::models::get_model("bedrock", model)
-                .unwrap_or_else(|| crate::Model {
+            let model_meta =
+                crate::models::get_model("bedrock", model).unwrap_or_else(|| crate::Model {
                     id: model.to_string(),
                     name: model.to_string(),
                     api: "anthropic-messages".to_string(),
                     provider: "bedrock".to_string(),
                     base_url: format!("https://bedrock-runtime.{}.amazonaws.com", region),
                     reasoning: true,
-                    input_modalities: vec![crate::models::Modality::Text, crate::models::Modality::Image],
+                    input_modalities: vec![
+                        crate::models::Modality::Text,
+                        crate::models::Modality::Image,
+                    ],
                     cost: crate::models::TokenCost {
                         input: 3.0,
                         output: 15.0,
@@ -257,15 +259,15 @@ impl AwsBedrockProvider {
 
             match stream.recv().await {
                 Ok(Some(chunk)) => {
-                    if let Ok(part) = chunk.as_chunk() {
-                        if let Some(bytes) = part.bytes() {
-                            let bytes = bytes.as_ref();
-                            let event: serde_json::Value = serde_json::from_slice(bytes)
-                                .map_err(|e| LlmError::StreamError(format!("JSON parse error: {e}")))?;
+                    if let Ok(part) = chunk.as_chunk()
+                        && let Some(bytes) = part.bytes()
+                    {
+                        let bytes = bytes.as_ref();
+                        let event: serde_json::Value = serde_json::from_slice(bytes)
+                            .map_err(|e| LlmError::StreamError(format!("JSON parse error: {e}")))?;
 
-                            if let Ok(Some(_)) = parser.process_event(&event, tx).await {
-                                return Ok(());
-                            }
+                        if let Ok(Some(_)) = parser.process_event(&event, tx).await {
+                            return Ok(());
                         }
                     }
                 }
@@ -300,13 +302,11 @@ fn map_bedrock_sdk_error_from_str(err_str: &str) -> LlmError {
     if err_str.contains("ValidationException") {
         return LlmError::InvalidRequest(err_str);
     }
-    if err_str.contains("AccessDeniedException")
-        || err_str.contains("UnrecognizedClientException")
+    if err_str.contains("AccessDeniedException") || err_str.contains("UnrecognizedClientException")
     {
         return LlmError::AuthError(err_str);
     }
-    if err_str.contains("ServiceUnavailableException")
-        || err_str.contains("ModelTimeoutException")
+    if err_str.contains("ServiceUnavailableException") || err_str.contains("ModelTimeoutException")
     {
         return LlmError::Overloaded(err_str);
     }

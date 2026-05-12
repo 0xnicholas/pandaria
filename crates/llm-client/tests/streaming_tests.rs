@@ -171,27 +171,51 @@ async fn test_event_stream_content_index_tracking() {
     drop(tx);
 
     let event = stream.next().await.unwrap();
-    assert!(
-        matches!(event, AssistantMessageEvent::TextStart { content_index: 0, .. })
-    );
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextStart {
+            content_index: 0,
+            ..
+        }
+    ));
     let event = stream.next().await.unwrap();
-    assert!(
-        matches!(event, AssistantMessageEvent::TextDelta { content_index: 0, .. })
-    );
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            ..
+        }
+    ));
     let event = stream.next().await.unwrap();
-    assert!(
-        matches!(event, AssistantMessageEvent::TextEnd { content_index: 0, .. })
-    );
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextEnd {
+            content_index: 0,
+            ..
+        }
+    ));
     let event = stream.next().await.unwrap();
-    assert!(
-        matches!(event, AssistantMessageEvent::TextStart { content_index: 1, .. })
-    );
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextStart {
+            content_index: 1,
+            ..
+        }
+    ));
     let event = stream.next().await.unwrap();
-    assert!(
-        matches!(event, AssistantMessageEvent::TextDelta { content_index: 1, .. })
-    );
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextDelta {
+            content_index: 1,
+            ..
+        }
+    ));
     let event = stream.next().await.unwrap();
-    assert!(
-        matches!(event, AssistantMessageEvent::TextEnd { content_index: 1, .. })
-    );
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextEnd {
+            content_index: 1,
+            ..
+        }
+    ));
 }

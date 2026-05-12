@@ -33,8 +33,8 @@ fn test_oauth_token_debug_no_refresh_token() {
 
 #[tokio::test]
 async fn test_resolve_oauth_key_success() {
-    use llm_client::resolve_oauth_key;
     use llm_client::oauth::OAuthProvider;
+    use llm_client::resolve_oauth_key;
     use std::sync::Arc;
 
     struct MockOAuthProvider;
@@ -76,8 +76,8 @@ async fn test_resolve_oauth_key_success() {
 
 #[tokio::test]
 async fn test_resolve_oauth_key_expired_refresh_success() {
-    use llm_client::resolve_oauth_key;
     use llm_client::oauth::OAuthProvider;
+    use llm_client::resolve_oauth_key;
     use std::sync::Arc;
 
     struct MockOAuthProvider;
@@ -133,8 +133,8 @@ async fn test_resolve_oauth_key_no_provider() {
 
 #[tokio::test]
 async fn test_resolve_oauth_key_refresh_failure_falls_back() {
-    use llm_client::resolve_oauth_key;
     use llm_client::oauth::OAuthProvider;
+    use llm_client::resolve_oauth_key;
     use std::sync::Arc;
 
     struct FailingOAuthProvider;

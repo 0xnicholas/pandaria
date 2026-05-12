@@ -1,4 +1,4 @@
-use llm_client::{is_context_overflow, StopReason};
+use llm_client::{StopReason, is_context_overflow};
 
 #[test]
 fn test_anthropic_prompt_too_long() {

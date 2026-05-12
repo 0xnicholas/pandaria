@@ -1,4 +1,4 @@
-use llm_client::{with_retry, AssistantMessageEventStream, LlmError};
+use llm_client::{AssistantMessageEventStream, LlmError, with_retry};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 

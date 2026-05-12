@@ -106,11 +106,14 @@ impl MistralProvider {
         // Reasoning: Mistral-specific format
         if let Some(level) = options.reasoning {
             body["promptMode"] = serde_json::json!("reasoning");
-            let effort = match level {
-                crate::provider::ReasoningLevel::Minimal | crate::provider::ReasoningLevel::Low => "low",
-                crate::provider::ReasoningLevel::Medium => "medium",
-                crate::provider::ReasoningLevel::High | crate::provider::ReasoningLevel::XHigh => "high",
-            };
+            let effort =
+                match level {
+                    crate::provider::ReasoningLevel::Minimal
+                    | crate::provider::ReasoningLevel::Low => "low",
+                    crate::provider::ReasoningLevel::Medium => "medium",
+                    crate::provider::ReasoningLevel::High
+                    | crate::provider::ReasoningLevel::XHigh => "high",
+                };
             body["reasoningEffort"] = serde_json::json!(effort);
         }
 
@@ -181,8 +184,9 @@ impl MistralProvider {
         }
 
         if !status.to_string().starts_with('2') {
-            let body = response.text().await
-                .map_err(|e| LlmError::ProviderError(format!("failed to read response body: {e}")))?;
+            let body = response.text().await.map_err(|e| {
+                LlmError::ProviderError(format!("failed to read response body: {e}"))
+            })?;
             return Err(LlmError::ProviderError(format!("HTTP {status}: {body}")));
         }
 

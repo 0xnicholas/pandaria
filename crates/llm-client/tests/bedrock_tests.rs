@@ -1,6 +1,6 @@
-use llm_client::providers::anthropic_common::{BlockType, StreamParser, ThinkingConfig};
-use llm_client::streaming::AssistantMessageEvent;
 use llm_client::provider::ReasoningLevel;
+use llm_client::providers::anthropic_common::{StreamParser, ThinkingConfig};
+use llm_client::streaming::AssistantMessageEvent;
 
 #[tokio::test]
 async fn test_stream_parser_message_start() {
@@ -31,17 +31,34 @@ async fn test_stream_parser_text_block() {
     // Delta
     let _ = parser.process_event(&serde_json::json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Hello"}}), &tx).await;
     // Stop
-    let _ = parser.process_event(&serde_json::json!({"type": "content_block_stop", "index": 0}), &tx).await;
+    let _ = parser
+        .process_event(
+            &serde_json::json!({"type": "content_block_stop", "index": 0}),
+            &tx,
+        )
+        .await;
     // Message stop
-    let result = parser.process_event(&serde_json::json!({"type": "message_stop"}), &tx).await;
+    let result = parser
+        .process_event(&serde_json::json!({"type": "message_stop"}), &tx)
+        .await;
 
     assert_eq!(result.unwrap(), Some(llm_client::StopReason::Stop));
 
     // Verify events were sent
-    assert!(matches!(rx.recv().await, Some(AssistantMessageEvent::TextStart { .. })));
-    assert!(matches!(rx.recv().await, Some(AssistantMessageEvent::TextDelta { delta, .. }) if delta == "Hello"));
-    assert!(matches!(rx.recv().await, Some(AssistantMessageEvent::TextEnd { text, .. }) if text == "Hello"));
-    assert!(matches!(rx.recv().await, Some(AssistantMessageEvent::Done { .. })));
+    assert!(matches!(
+        rx.recv().await,
+        Some(AssistantMessageEvent::TextStart { .. })
+    ));
+    assert!(
+        matches!(rx.recv().await, Some(AssistantMessageEvent::TextDelta { delta, .. }) if delta == "Hello")
+    );
+    assert!(
+        matches!(rx.recv().await, Some(AssistantMessageEvent::TextEnd { text, .. }) if text == "Hello")
+    );
+    assert!(matches!(
+        rx.recv().await,
+        Some(AssistantMessageEvent::Done { .. })
+    ));
 }
 
 #[tokio::test]
@@ -51,19 +68,27 @@ async fn test_stream_parser_tool_call() {
 
     let _ = parser.process_event(&serde_json::json!({"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "tool_1", "name": "read"}}), &tx).await;
     let _ = parser.process_event(&serde_json::json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"path\": \"/x\"}"}}), &tx).await;
-    let _ = parser.process_event(&serde_json::json!({"type": "content_block_stop", "index": 0}), &tx).await;
-    let result = parser.process_event(&serde_json::json!({"type": "message_stop"}), &tx).await;
+    let _ = parser
+        .process_event(
+            &serde_json::json!({"type": "content_block_stop", "index": 0}),
+            &tx,
+        )
+        .await;
+    let result = parser
+        .process_event(&serde_json::json!({"type": "message_stop"}), &tx)
+        .await;
 
     assert!(result.unwrap().is_some());
     assert_eq!(parser.partial.content.len(), 1);
-    assert!(matches!(&parser.partial.content[0], llm_client::Content::ToolCall(tc) if tc.name == "read"));
+    assert!(
+        matches!(&parser.partial.content[0], llm_client::Content::ToolCall(tc) if tc.name == "read")
+    );
 }
 
 #[test]
 fn test_build_thinking_config_disabled() {
-    let (max, config) = llm_client::providers::anthropic_common::build_thinking_config(
-        None, "any", 4096, None,
-    );
+    let (max, config) =
+        llm_client::providers::anthropic_common::build_thinking_config(None, "any", 4096, None);
     assert_eq!(max, 4096);
     assert!(matches!(config, ThinkingConfig::Disabled));
 }
@@ -71,7 +96,10 @@ fn test_build_thinking_config_disabled() {
 #[test]
 fn test_build_thinking_config_enabled() {
     let (max, config) = llm_client::providers::anthropic_common::build_thinking_config(
-        Some(ReasoningLevel::Medium), "claude-sonnet", 4096, None,
+        Some(ReasoningLevel::Medium),
+        "claude-sonnet",
+        4096,
+        None,
     );
     assert!(max > 4096); // budget added
     assert!(matches!(config, ThinkingConfig::Enabled { .. }));
@@ -80,9 +108,15 @@ fn test_build_thinking_config_enabled() {
 #[test]
 fn test_build_thinking_config_adaptive() {
     let (_, config) = llm_client::providers::anthropic_common::build_thinking_config(
-        Some(ReasoningLevel::High), "claude-opus-4-7", 4096, None,
+        Some(ReasoningLevel::High),
+        "claude-opus-4-7",
+        4096,
+        None,
     );
-    assert!(matches!(config, ThinkingConfig::Adaptive { effort: "high" }));
+    assert!(matches!(
+        config,
+        ThinkingConfig::Adaptive { effort: "high" }
+    ));
 }
 
 #[test]

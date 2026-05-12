@@ -1,4 +1,4 @@
-use llm_client::{validate_tool_arguments, validate_tool_call, ToolCall, ToolDef, ValidationError};
+use llm_client::{ToolCall, ToolDef, ValidationError, validate_tool_arguments, validate_tool_call};
 use serde_json::Value;
 
 fn make_tool(name: &str, schema: Value) -> ToolDef {
@@ -90,7 +90,10 @@ fn test_missing_required_field() {
         thought_signature: None,
     };
     let result = validate_tool_arguments(&tool, &tc);
-    assert!(matches!(result, Err(ValidationError::SchemaViolation { .. })));
+    assert!(matches!(
+        result,
+        Err(ValidationError::SchemaViolation { .. })
+    ));
 }
 
 #[test]
@@ -179,5 +182,8 @@ fn test_wrong_type_uncoercible() {
         thought_signature: None,
     };
     let result = validate_tool_arguments(&tool, &tc);
-    assert!(matches!(result, Err(ValidationError::SchemaViolation { .. })));
+    assert!(matches!(
+        result,
+        Err(ValidationError::SchemaViolation { .. })
+    ));
 }

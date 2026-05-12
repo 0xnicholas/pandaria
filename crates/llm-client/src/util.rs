@@ -19,7 +19,6 @@ pub fn extract_tool_calls(content: &[Content]) -> Vec<ToolCall> {
         .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,6 +51,4 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read");
     }
-
-
 }

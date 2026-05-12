@@ -47,7 +47,8 @@ impl AnthropicProvider {
 
         // Tools
         if let Some(tools) = &context.tools {
-            body["tools"] = serde_json::json!(common::build_tools_json(tools, options.cache_retention));
+            body["tools"] =
+                serde_json::json!(common::build_tools_json(tools, options.cache_retention));
         }
 
         // Thinking / reasoning
@@ -161,8 +162,9 @@ impl AnthropicProvider {
         }
 
         if !status.to_string().starts_with('2') {
-            let body = response.text().await
-                .map_err(|e| LlmError::ProviderError(format!("failed to read response body: {e}")))?;
+            let body = response.text().await.map_err(|e| {
+                LlmError::ProviderError(format!("failed to read response body: {e}"))
+            })?;
             return Err(LlmError::ProviderError(format!("HTTP {status}: {body}")));
         }
 
@@ -171,9 +173,11 @@ impl AnthropicProvider {
         let mut sse_stream = response.bytes_stream();
 
         let mut parser = common::StreamParser::new("anthropic", model);
-        let _ = tx.send(AssistantMessageEvent::Start {
-            partial: parser.partial.clone(),
-        }).await;
+        let _ = tx
+            .send(AssistantMessageEvent::Start {
+                partial: parser.partial.clone(),
+            })
+            .await;
 
         let mut buffer = String::new();
         while let Some(chunk) = sse_stream.next().await {
@@ -188,10 +192,9 @@ impl AnthropicProvider {
                         buffer = buffer[line_end + 1..].to_string();
                         if let Some(data) = line.strip_prefix("data: ")
                             && let Ok(event) = serde_json::from_str::<serde_json::Value>(data)
+                            && let Ok(Some(_)) = parser.process_event(&event, tx).await
                         {
-                            if let Ok(Some(_)) = parser.process_event(&event, tx).await {
-                                return Ok(());
-                            }
+                            return Ok(());
                         }
                     }
                 }
@@ -226,16 +229,28 @@ mod tests {
 
     #[test]
     fn test_is_adaptive_true() {
-        assert!(crate::providers::anthropic_common::is_adaptive_model("claude-opus-4-7"));
-        assert!(crate::providers::anthropic_common::is_adaptive_model("claude-opus-4.7"));
-        assert!(crate::providers::anthropic_common::is_adaptive_model("claude-sonnet-4-6"));
-        assert!(crate::providers::anthropic_common::is_adaptive_model("claude-haiku-4-7"));
+        assert!(crate::providers::anthropic_common::is_adaptive_model(
+            "claude-opus-4-7"
+        ));
+        assert!(crate::providers::anthropic_common::is_adaptive_model(
+            "claude-opus-4.7"
+        ));
+        assert!(crate::providers::anthropic_common::is_adaptive_model(
+            "claude-sonnet-4-6"
+        ));
+        assert!(crate::providers::anthropic_common::is_adaptive_model(
+            "claude-haiku-4-7"
+        ));
     }
 
     #[test]
     fn test_is_adaptive_false() {
-        assert!(!crate::providers::anthropic_common::is_adaptive_model("claude-sonnet-4-20250514"));
-        assert!(!crate::providers::anthropic_common::is_adaptive_model("claude-opus-3"));
+        assert!(!crate::providers::anthropic_common::is_adaptive_model(
+            "claude-sonnet-4-20250514"
+        ));
+        assert!(!crate::providers::anthropic_common::is_adaptive_model(
+            "claude-opus-3"
+        ));
     }
 
     #[test]
@@ -245,13 +260,22 @@ mod tests {
             crate::providers::anthropic_common::map_effort(ReasoningLevel::Minimal, "any-model"),
             "low"
         );
-        assert_eq!(crate::providers::anthropic_common::map_effort(ReasoningLevel::High, "any-model"), "high");
         assert_eq!(
-            crate::providers::anthropic_common::map_effort(ReasoningLevel::XHigh, "claude-opus-4.7"),
+            crate::providers::anthropic_common::map_effort(ReasoningLevel::High, "any-model"),
+            "high"
+        );
+        assert_eq!(
+            crate::providers::anthropic_common::map_effort(
+                ReasoningLevel::XHigh,
+                "claude-opus-4.7"
+            ),
             "xhigh"
         );
         assert_eq!(
-            crate::providers::anthropic_common::map_effort(ReasoningLevel::XHigh, "claude-haiku-4-7"),
+            crate::providers::anthropic_common::map_effort(
+                ReasoningLevel::XHigh,
+                "claude-haiku-4-7"
+            ),
             "high"
         );
     }

@@ -36,13 +36,14 @@ mod tests {
         let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let called_clone = called.clone();
 
-        let hook: OnPayloadFn = Arc::new(move |_payload: &mut serde_json::Value, _model: &Model| {
-            let called = called_clone.clone();
-            Box::pin(async move {
-                called.store(true, std::sync::atomic::Ordering::SeqCst);
-                true
-            })
-        });
+        let hook: OnPayloadFn =
+            Arc::new(move |_payload: &mut serde_json::Value, _model: &Model| {
+                let called = called_clone.clone();
+                Box::pin(async move {
+                    called.store(true, std::sync::atomic::Ordering::SeqCst);
+                    true
+                })
+            });
 
         let mut payload = serde_json::json!({"key": "value"});
         let model = Model {

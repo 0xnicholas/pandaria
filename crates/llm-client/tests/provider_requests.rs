@@ -1,17 +1,16 @@
+use llm_client::types::{Content, Message, ToolDef, UserMessage};
 use llm_client::{
-    LlmContext, LlmProvider, StreamOptions,
-    providers::anthropic::AnthropicProvider,
+    LlmContext, LlmProvider, StreamOptions, providers::anthropic::AnthropicProvider,
     providers::openai::OpenAiProvider,
 };
-use llm_client::types::{Content, Message, ToolDef, UserMessage};
 use secrecy::SecretString;
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio_util::sync::CancellationToken;
-use wiremock::{Mock, MockServer, ResponseTemplate};
-use wiremock::matchers::{method, path};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Verify Anthropic request body structure.
 #[tokio::test]
@@ -40,10 +39,8 @@ async fn test_anthropic_request_body_structure() {
         .await;
 
     let api_key = SecretString::new("test-key".into());
-    let provider = AnthropicProvider::with_base_url(
-        Some(api_key),
-        &format!("{}/v1/messages", server.uri()),
-    );
+    let provider =
+        AnthropicProvider::with_base_url(Some(api_key), &format!("{}/v1/messages", server.uri()));
 
     let ctx = LlmContext {
         system_prompt: Some("You are a helpful assistant.".into()),
@@ -121,7 +118,12 @@ async fn test_openai_request_body_structure() {
     };
 
     let mut stream = provider
-        .stream("gpt-5.2", ctx, StreamOptions::default(), CancellationToken::new())
+        .stream(
+            "gpt-5.2",
+            ctx,
+            StreamOptions::default(),
+            CancellationToken::new(),
+        )
         .await
         .unwrap();
     while stream.next().await.is_some() {}

@@ -494,44 +494,80 @@ mod tests {
         );
 
         // User: image should be replaced with text placeholder
-        let user = result.iter().find_map(|m| match m {
-            Message::User(m) => Some(m),
-            _ => None,
-        }).unwrap();
-        let text_count = user.content.iter().filter(|c| matches!(c, Content::Text { .. })).count();
-        assert_eq!(text_count, 2, "image should be downgraded to text alongside original text");
+        let user = result
+            .iter()
+            .find_map(|m| match m {
+                Message::User(m) => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        let text_count = user
+            .content
+            .iter()
+            .filter(|c| matches!(c, Content::Text { .. }))
+            .count();
+        assert_eq!(
+            text_count, 2,
+            "image should be downgraded to text alongside original text"
+        );
 
         // Assistant: thinking block should be removed, tool call ID truncated
-        let assists: Vec<_> = result.iter().filter_map(|m| match m {
-            Message::Assistant(m) => Some(m),
-            _ => None,
-        }).collect();
+        let assists: Vec<_> = result
+            .iter()
+            .filter_map(|m| match m {
+                Message::Assistant(m) => Some(m),
+                _ => None,
+            })
+            .collect();
         // Should have at least 2: one synthetic (orphan padding) + one original
-        assert!(assists.len() >= 2, "expected at least 2 assistants, got {}", assists.len());
+        assert!(
+            assists.len() >= 2,
+            "expected at least 2 assistants, got {}",
+            assists.len()
+        );
 
         // Find the non-synthetic assistant (has tool call content, provider != "system")
         let original_assist = assists.iter().find(|m| m.provider != "system").unwrap();
-        let has_thinking = original_assist.content.iter().any(|c| matches!(c, Content::Thinking { .. }));
+        let has_thinking = original_assist
+            .content
+            .iter()
+            .any(|c| matches!(c, Content::Thinking { .. }));
         assert!(!has_thinking, "thinking should be removed");
-        let tc_id = original_assist.content.iter().find_map(|c| match c {
-            Content::ToolCall(tc) => Some(tc.id.clone()),
-            _ => None,
-        }).unwrap();
+        let tc_id = original_assist
+            .content
+            .iter()
+            .find_map(|c| match c {
+                Content::ToolCall(tc) => Some(tc.id.clone()),
+                _ => None,
+            })
+            .unwrap();
         assert!(tc_id.len() <= 64, "tool call ID should be truncated");
         assert_ne!(tc_id, long_id, "truncated ID should differ from original");
 
         // ToolResult with matching ID: should match truncated tool call ID
-        let matched_tr = result.iter().find_map(|m| match m {
-            Message::ToolResult(m) if m.tool_name == "test" => Some(m),
-            _ => None,
-        }).unwrap();
-        assert_eq!(matched_tr.tool_call_id, tc_id, "matched tool result ID should equal truncated ID");
+        let matched_tr = result
+            .iter()
+            .find_map(|m| match m {
+                Message::ToolResult(m) if m.tool_name == "test" => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            matched_tr.tool_call_id, tc_id,
+            "matched tool result ID should equal truncated ID"
+        );
 
         // Orphan ToolResult: should still exist, with padding assistant preceding it
-        let orphan_tr = result.iter().find_map(|m| match m {
-            Message::ToolResult(m) if m.tool_name == "orphan" => Some(m),
-            _ => None,
-        }).unwrap();
-        assert_eq!(orphan_tr.tool_call_id, orphan_id, "orphan tool result ID should be preserved");
+        let orphan_tr = result
+            .iter()
+            .find_map(|m| match m {
+                Message::ToolResult(m) if m.tool_name == "orphan" => Some(m),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            orphan_tr.tool_call_id, orphan_id,
+            "orphan tool result ID should be preserved"
+        );
     }
 }

@@ -39,10 +39,10 @@ pub use providers::bedrock::AwsBedrockProvider;
 
 pub use overflow::is_context_overflow;
 pub use provider::*;
-pub use transform::*;
 pub use repair::{StreamingJsonParser, parse_json_with_repair, repair_json, sanitize_unicode};
 pub use retry::with_retry;
 pub use streaming::*;
+pub use transform::*;
 pub use types::*;
 pub use util::extract_tool_calls;
 pub use validation::{ValidationError, validate_tool_arguments, validate_tool_call};

@@ -186,7 +186,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("maximum prompt length is 131072 tokens"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -195,7 +197,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("reduce the length of the messages"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -204,7 +208,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("maximum context length is 200000 tokens"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -213,7 +219,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("exceeds the limit of 128000"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -222,7 +230,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("exceeds the available context size"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -231,7 +241,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("greater than the context length"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -240,7 +252,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("context window exceeds limit"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -249,7 +263,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("exceeded model token limit"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -258,7 +274,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("too large for model with 32768"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -267,7 +285,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("model_context_window_exceeded"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -276,7 +296,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("prompt too long: 250000 > context length"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -285,7 +307,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("400 status code (no body)"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -294,7 +318,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("413 status code (no body)"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 
@@ -303,7 +329,9 @@ mod tests {
         assert!(is_context_overflow(
             Some("token limit exceeded"),
             &StopReason::Error,
-            None, 0, 0,
+            None,
+            0,
+            0,
         ));
     }
 }

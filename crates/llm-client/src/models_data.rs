@@ -458,19 +458,12 @@ fn build_models() -> HashMap<String, Model> {
     // Fill compat fields using auto-detection logic
     for (_key, model) in m.iter_mut() {
         model.compat = match model.api.as_str() {
-            "openai-completions" => {
-                crate::models::ModelCompat::OpenAI(crate::compat::detect_openai_compat(
-                    &model.provider,
-                    &model.base_url,
-                    &model.id,
-                ))
-            }
-            "anthropic-messages" => {
-                crate::models::ModelCompat::Anthropic(crate::compat::detect_anthropic_compat(
-                    &model.provider,
-                    &model.base_url,
-                ))
-            }
+            "openai-completions" => crate::models::ModelCompat::OpenAI(
+                crate::compat::detect_openai_compat(&model.provider, &model.base_url, &model.id),
+            ),
+            "anthropic-messages" => crate::models::ModelCompat::Anthropic(
+                crate::compat::detect_anthropic_compat(&model.provider, &model.base_url),
+            ),
             _ => crate::models::ModelCompat::None,
         };
     }
@@ -607,7 +600,8 @@ mod tests {
             let provider_models = PROVIDER_MODELS
                 .get(&model.provider)
                 .expect("Provider missing from PROVIDER_MODELS — model registry is inconsistent");
-            let model_id = key.strip_prefix(&format!("{}/", model.provider))
+            let model_id = key
+                .strip_prefix(&format!("{}/", model.provider))
                 .unwrap_or(key);
             assert!(
                 provider_models.contains(&model_id.to_string()),
@@ -629,7 +623,11 @@ mod tests {
                 "Model '{}' has empty base_url",
                 key
             );
-            assert!(model.context_window > 0, "Model '{}' has zero context_window", key);
+            assert!(
+                model.context_window > 0,
+                "Model '{}' has zero context_window",
+                key
+            );
             assert!(model.max_tokens > 0, "Model '{}' has zero max_tokens", key);
             assert!(
                 model.cost.input >= 0.0,

@@ -69,10 +69,8 @@ impl StreamParser {
                         self.partial.response_id = Some(id.to_string());
                     }
                     if let Some(u) = msg.get("usage") {
-                        self.partial.usage.input_tokens =
-                            u["input_tokens"].as_u64().unwrap_or(0);
-                        self.partial.usage.output_tokens =
-                            u["output_tokens"].as_u64().unwrap_or(0);
+                        self.partial.usage.input_tokens = u["input_tokens"].as_u64().unwrap_or(0);
+                        self.partial.usage.output_tokens = u["output_tokens"].as_u64().unwrap_or(0);
                         self.partial.usage.total_tokens = self.partial.usage.compute_total();
                     }
                 }
@@ -213,7 +211,8 @@ impl StreamParser {
                     Some(BlockType::Thinking) | Some(BlockType::RedactedThinking) => {
                         let thinking = std::mem::take(&mut self.thinking_accum);
                         let sig = std::mem::take(&mut self.thinking_signature);
-                        let redacted = matches!(&self.current_block, Some(BlockType::RedactedThinking));
+                        let redacted =
+                            matches!(&self.current_block, Some(BlockType::RedactedThinking));
                         self.partial.content.push(crate::Content::Thinking {
                             thinking: thinking.clone(),
                             thinking_signature: sig,
@@ -245,8 +244,9 @@ impl StreamParser {
                     };
                 }
                 if let Some(u) = event["usage"].as_object() {
-                    self.partial.usage.output_tokens =
-                        u["output_tokens"].as_u64().unwrap_or(self.partial.usage.output_tokens);
+                    self.partial.usage.output_tokens = u["output_tokens"]
+                        .as_u64()
+                        .unwrap_or(self.partial.usage.output_tokens);
                     self.partial.usage.total_tokens = self.partial.usage.compute_total();
                 }
             }
@@ -309,9 +309,7 @@ pub fn build_cache_control(retention: CacheRetention) -> Option<serde_json::Valu
     match retention {
         CacheRetention::None => None,
         CacheRetention::Short => Some(serde_json::json!({"type": "ephemeral"})),
-        CacheRetention::Long => {
-            Some(serde_json::json!({"type": "ephemeral", "ttl": "1h"}))
-        }
+        CacheRetention::Long => Some(serde_json::json!({"type": "ephemeral", "ttl": "1h"})),
     }
 }
 
@@ -353,9 +351,15 @@ pub fn build_tools_json(
 }
 
 /// Apply cache_control to the last user message's last content block.
-pub fn apply_cache_to_last_user_message(messages_json: &mut [serde_json::Value], retention: CacheRetention) {
+pub fn apply_cache_to_last_user_message(
+    messages_json: &mut [serde_json::Value],
+    retention: CacheRetention,
+) {
     if let Some(cc) = build_cache_control(retention)
-        && let Some(last_user_msg) = messages_json.iter_mut().rev().find(|m| m["role"].as_str() == Some("user"))
+        && let Some(last_user_msg) = messages_json
+            .iter_mut()
+            .rev()
+            .find(|m| m["role"].as_str() == Some("user"))
         && let Some(content) = last_user_msg["content"].as_array_mut()
         && let Some(last_block) = content.last_mut()
     {
@@ -375,10 +379,7 @@ pub fn is_adaptive_model(model_id: &str) -> bool {
 }
 
 /// Map reasoning level to effort string for adaptive models.
-pub fn map_effort(
-    level: crate::provider::ReasoningLevel,
-    model_id: &str,
-) -> &'static str {
+pub fn map_effort(level: crate::provider::ReasoningLevel, model_id: &str) -> &'static str {
     let is_opus47 = model_id.contains("opus-4-7") || model_id.contains("opus-4.7");
     match level {
         crate::provider::ReasoningLevel::Minimal => "low",
@@ -427,5 +428,10 @@ pub fn build_thinking_config(
         level,
         thinking_budgets,
     );
-    (new_max, ThinkingConfig::Enabled { budget_tokens: budget })
+    (
+        new_max,
+        ThinkingConfig::Enabled {
+            budget_tokens: budget,
+        },
+    )
 }

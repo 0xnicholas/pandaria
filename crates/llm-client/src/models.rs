@@ -170,10 +170,10 @@ impl ModelRegistry {
     pub fn providers(&self) -> Vec<String> {
         let mut p: Vec<String> = models_data::PROVIDER_MODELS.keys().cloned().collect();
         for k in self.custom.keys() {
-            if let Some(prov) = k.split('/').next() {
-                if !p.iter().any(|x| x == prov) {
-                    p.push(prov.to_string());
-                }
+            if let Some(prov) = k.split('/').next()
+                && !p.iter().any(|x| x == prov)
+            {
+                p.push(prov.to_string());
             }
         }
         p

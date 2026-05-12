@@ -117,7 +117,10 @@ impl GoogleProvider {
         }
 
         // Send request
-        let url = format!("{}/models/{}:streamGenerateContent?alt=sse", base_url, model);
+        let url = format!(
+            "{}/models/{}:streamGenerateContent?alt=sse",
+            base_url, model
+        );
 
         let mut req = client
             .post(&url)
@@ -163,8 +166,9 @@ impl GoogleProvider {
         }
 
         if !status.to_string().starts_with('2') {
-            let body = response.text().await
-                .map_err(|e| LlmError::ProviderError(format!("failed to read response body: {e}")))?;
+            let body = response.text().await.map_err(|e| {
+                LlmError::ProviderError(format!("failed to read response body: {e}"))
+            })?;
             return Err(LlmError::ProviderError(format!("HTTP {status}: {body}")));
         }
 
