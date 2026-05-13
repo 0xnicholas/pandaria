@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
-use llm_client::ToolCall;
+use ai_provider::ToolCall;
 use tracing::{info, warn};
 
-use crate::context::{ToolCallCtx, ToolResultCtx};
+use crate::hook::context::{ToolCallCtx, ToolResultCtx};
 use crate::error::AgentError;
-use crate::hook_dispatcher::HookDispatcher;
-use crate::mutations::HookDecision;
+use crate::hook::dispatcher::HookDispatcher;
+use crate::hook::mutations::HookDecision;
 use crate::types::{AgentToolProgressUpdate, AgentToolRef};
-use crate::hook_timeout::with_timeout;
-use crate::util::catch_panic;
-use llm_client::ToolResultMessage as ToolResultMsg;
+use crate::hook::timeout::with_timeout;
+use crate::utils::helpers::catch_panic;
+use ai_provider::ToolResultMessage as ToolResultMsg;
 
 /// Executes a tool call through the full pipeline:
 /// prepare → on_tool_call (blocking) → execute → on_tool_result (chain) → finalize.
@@ -153,9 +153,9 @@ impl ToolExecutor {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use crate::mutations::ToolResultMutation;
+    use crate::hook::mutations::ToolResultMutation;
     use crate::AgentToolResult;
-    use llm_client::Content;
+    use ai_provider::Content;
 
     struct MockTool;
     #[async_trait]

@@ -4,7 +4,7 @@
 
 **Architecture:** 修改 `build_models()` 函数，在插入每个 model 时根据 `api` 字段自动调用对应的 detect 函数。`compat.rs` 中的 `detect_openai_compat(provider, base_url, model_id)` 和 `detect_anthropic_compat(provider, base_url)` 已完整实现，只需在 model 构造阶段接入。
 
-**Tech Stack:** Rust, llm-client crate
+**Tech Stack:** Rust, ai-provider crate
 
 ---
 
@@ -28,7 +28,7 @@
 ### Task 1: 修改 models_data.rs 中的 compat 字段填充
 
 **Files:**
-- Modify: `crates/llm-client/src/models_data.rs`
+- Modify: `crates/ai-provider/src/models_data.rs`
 
 - [ ] **Step 1: 修改 `build_models()` 函数末尾，在返回前为每个 model 填充 compat**
 
@@ -62,19 +62,19 @@
 
 - [ ] **Step 2: 编译检查**
 
-  Run: `cargo check -p llm-client`
+  Run: `cargo check -p ai-provider`
   Expected: 零错误。
 
-- [ ] **Step 3: 运行 llm-client 测试**
+- [ ] **Step 3: 运行 ai-provider 测试**
 
-  Run: `cargo test -p llm-client -- --nocapture`
+  Run: `cargo test -p ai-provider -- --nocapture`
   Expected: 全部通过，特别关注 compat 相关测试。
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/llm-client/src/models_data.rs
-git commit -m "fix(llm-client): wire up compat auto-detection in model registry
+git add crates/ai-provider/src/models_data.rs
+git commit -m "fix(ai-provider): wire up compat auto-detection in model registry
 
 Replace hard-coded ModelCompat::None in models_data.rs with
 auto-detected compat values from compat::detect_openai_compat()

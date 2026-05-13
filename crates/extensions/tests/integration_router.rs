@@ -43,7 +43,7 @@ impl Extension for MutateResultExt {
 
     async fn on_tool_result(&self, _ctx: &ToolResultCtx) -> ToolResultMutation {
         ToolResultMutation {
-            content: Some(vec![llm_client::Content::Text {
+            content: Some(vec![ai_provider::Content::Text {
                 text: self.new_content.clone(),
                 text_signature: None,
             }]),
@@ -62,8 +62,8 @@ impl Extension for MutateContextExt {
 
     async fn on_context(&self, _ctx: &ContextCtx) -> ContextMutation {
         ContextMutation {
-            messages: Some(vec![agent_core::AgentMessage::User(llm_client::UserMessage {
-                content: vec![llm_client::Content::Text {
+            messages: Some(vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
+                content: vec![ai_provider::Content::Text {
                     text: "mutated_context".to_string(),
                     text_signature: None,
                 }],
@@ -209,7 +209,7 @@ async fn test_router_chain_merge_tool_result() {
         tool_name: "t".to_string(),
         tool_call_id: "c1".to_string(),
         input: serde_json::json!({}),
-        content: vec![llm_client::Content::Text { text: "original".to_string(), text_signature: None }],
+        content: vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }],
         details: None,
         is_error: false,
     };
@@ -219,7 +219,7 @@ async fn test_router_chain_merge_tool_result() {
     // Second handler's content wins
     assert!(mutation.content.is_some());
     match &mutation.content.as_ref().unwrap()[0] {
-        llm_client::Content::Text { text, .. } => assert_eq!(text, "second"),
+        ai_provider::Content::Text { text, .. } => assert_eq!(text, "second"),
         _ => panic!("expected text content"),
     }
     assert!(mutation.details.is_some());
@@ -244,8 +244,8 @@ async fn test_router_chain_merge_context() {
     let ctx = ContextCtx {
         tenant_id: "t1".to_string(),
         session_id: "s1".to_string(),
-        messages: vec![agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text { text: "original".to_string(), text_signature: None }],
+        messages: vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         })],
     };
@@ -271,8 +271,8 @@ async fn test_router_context_no_change_returns_default() {
     let ctx = ContextCtx {
         tenant_id: "t1".to_string(),
         session_id: "s1".to_string(),
-        messages: vec![agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text { text: "original".to_string(), text_signature: None }],
+        messages: vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         })],
     };
@@ -420,7 +420,7 @@ async fn test_router_panic_isolation_tool_result() {
     // Panic ext returns default, then mutate ext applies
     assert!(mutation.content.is_some());
     match &mutation.content.as_ref().unwrap()[0] {
-        llm_client::Content::Text { text, .. } => assert_eq!(text, "recovered"),
+        ai_provider::Content::Text { text, .. } => assert_eq!(text, "recovered"),
         _ => panic!("expected text content"),
     }
 }

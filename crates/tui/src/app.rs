@@ -5,18 +5,18 @@ use crate::client::model::{ServerEvent, SessionInfo};
 use crate::client::rest::RestClient;
 use crate::client::sse;
 use crate::command::Command;
+use crate::component::{Component, OverlayResult};
 use crate::config::Config;
 use crate::keybindings::{Keybinding, KeybindingsManager};
-use crate::overlays::{OverlayAction, OverlayStack};
 use crate::paste::PasteStore;
 use crate::state::*;
 use crate::ui::theme::Theme;
-use crate::widgets::chat_view::ChatView;
+use crate::widgets::chat_view::render_chat;
 use crate::widgets::editor::Editor;
 use crate::widgets::header::HeaderBar;
 use crate::widgets::session_tabs::SessionTabsWidget;
 use crate::widgets::spinner::SpinnerWidget;
-use crate::widgets::status_bar::StatusBar;
+use crate::widgets::status_bar::render_status_bar;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -49,7 +49,9 @@ pub struct App {
     pub keybindings: KeybindingsManager,
     pub autocomplete_providers: Vec<Box<dyn AutocompleteProvider>>,
     pub spinner: SpinnerWidget,
-    pub overlays: OverlayStack,
+    pub overlays: Vec<Box<dyn Component>>,
+    pub header: HeaderBar,
+    pub session_tabs: SessionTabsWidget,
     pub reqwest_client: reqwest::Client,
     pub paste_store: PasteStore,
     pub context_window: Option<u64>,
@@ -73,20 +75,23 @@ impl App {
             keybindings.load_user_config(keys_config);
         }
         let (task_tx, task_rx) = mpsc::channel::<TaskAction>(32);
+        let theme = Theme::default();
         Self {
             state: AppState::Connected,
             data,
             config,
-            theme: Theme::default(),
+            theme: theme.clone(),
             rest,
-            editor: Editor::new(),
+            editor: Editor::new(theme.clone()),
             keybindings,
             autocomplete_providers: vec![
                 Box::new(SlashCommandProvider::new()),
                 Box::new(FilePathProvider::new()),
             ],
             spinner: SpinnerWidget::new(),
-            overlays: OverlayStack::new(),
+            overlays: Vec::new(),
+            header: HeaderBar::new(theme.clone()),
+            session_tabs: SessionTabsWidget::new(theme),
             reqwest_client: reqwest::Client::new(),
             paste_store: PasteStore::new(),
             context_window,
@@ -114,34 +119,39 @@ impl App {
 
     pub fn handle_key_event(&mut self, key: KeyEvent) {
         // Overlays take priority
-        if !self.overlays.is_empty() {
-            if let Some(overlay) = self.overlays.top_mut() {
-                // Non-capturing overlays dismiss on any printable input
-                if !overlay.is_capturing() {
-                    match key.code {
-                        KeyCode::Char(_) | KeyCode::Enter => {
-                            self.overlays.pop();
-                            return;
+        if let Some(overlay) = self.overlays.last_mut() {
+            // Non-capturing overlays dismiss on printable input
+            if !overlay.is_capturing() {
+                match key.code {
+                    KeyCode::Char(_) | KeyCode::Enter => {
+                        let mut dismissed = false;
+                        overlay.handle_input(key);
+                        if let crate::component::OverlayResult::Dismissed = overlay.take_result() {
+                            dismissed = true;
                         }
-                        _ => {}
-                    }
-                }
-                let action = overlay.handle_input(key);
-                match action {
-                    OverlayAction::Dismiss => {
-                        self.overlays.pop();
-                    }
-                    OverlayAction::Confirm(value) => {
-                        self.overlays.pop();
-                        self.handle_overlay_confirm(value);
-                    }
-                    OverlayAction::Consumed => {}
-                    OverlayAction::Ignored => {
-                        self.overlays.pop();
-                        self.handle_key_event(key);
+                        if dismissed || matches!(overlay.take_result(), crate::component::OverlayResult::Dismissed) {
+                            self.overlays.pop();
+                        } else {
+                            self.overlays.pop();
+                        }
                         return;
                     }
+                    _ => {}
                 }
+            }
+
+            overlay.handle_input(key);
+
+            // Check if overlay completed
+            match overlay.take_result() {
+                OverlayResult::Confirmed(value) => {
+                    self.overlays.pop();
+                    self.handle_overlay_confirm(value);
+                }
+                OverlayResult::Dismissed => {
+                    self.overlays.pop();
+                }
+                OverlayResult::Pending => {}
             }
             return;
         }
@@ -277,7 +287,6 @@ impl App {
         if kb.matches(&key, Keybinding::EditorYankPop) { self.editor.kill_ring_yank_pop(); return; }
         if kb.matches(&key, Keybinding::EditorUndo) { self.editor.undo(); return; }
         if kb.matches(&key, Keybinding::AutocompleteTrigger) {
-            // Already handled by the autocomplete_providers loop above
             return;
         }
         if kb.matches(&key, Keybinding::AppOpenCommandPalette) {
@@ -289,7 +298,7 @@ impl App {
             return;
         }
 
-        // Char input (only when no modifier matches caught it)
+        // Char input
         if let KeyCode::Char(ch) = key.code {
             if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
                 self.editor.insert_char(ch);
@@ -297,6 +306,7 @@ impl App {
         }
     }
 
+    /// Check top overlay for confirmed/dismissed flags and process accordingly.
     fn handle_overlay_confirm(&mut self, value: String) {
         if let Some(cmd) = Command::parse(&value) {
             match cmd {
@@ -328,7 +338,6 @@ impl App {
                         if let Some(s) = self.data.sessions.get(&id) {
                             self.context_window = s.info.context_window;
                         }
-                        // Fetch latest session info from server in background
                         let rest = self.rest.clone();
                         let token = self.config.auth.token.clone().unwrap_or_default();
                         let task_tx = self.task_tx.clone();
@@ -375,7 +384,6 @@ impl App {
                 }
                 Command::Connect { url } => {
                     self.config.server.url = url.clone();
-                    // Validate connectivity in background
                     let rest = RestClient::new(&self.config.server);
                     let token = self.config.auth.token.clone().unwrap_or_default();
                     let task_tx = self.task_tx.clone();
@@ -386,7 +394,6 @@ impl App {
                 }
                 Command::Auth { token } => {
                     self.config.auth.token = Some(token.clone());
-                    // Validate connectivity with new token in background
                     let rest = RestClient::new(&self.config.server);
                     let task_tx = self.task_tx.clone();
                     tokio::spawn(async move {
@@ -394,7 +401,7 @@ impl App {
                         let _ = task_tx.send(TaskAction::ConnectionTested { url: "(auth)".to_string(), ok }).await;
                     });
                 }
-                Command::Tokens => { /* Token info displayed in StatusBar gauge */ }
+                Command::Tokens => {}
             }
         }
     }
@@ -443,7 +450,6 @@ impl App {
         let reqwest_client = self.reqwest_client.clone();
         let base_url = self.config.server.url.clone();
 
-        // Abort any in-flight SSE task before starting a new one
         if let Some(handle) = self.sse_task.take() {
             handle.abort();
         }
@@ -596,7 +602,6 @@ impl App {
                 session.streaming = None;
                 self.state = AppState::Connected;
 
-                // Trim old messages if exceeding max_history
                 let max_history = self.config.ui.max_history;
                 let s = self.data.active_session_mut();
                 while s.messages.len() > max_history {
@@ -644,9 +649,13 @@ impl App {
         }
     }
 
-    pub fn render_ui(&self, f: &mut Frame) {
+    pub fn render_ui(&mut self, f: &mut Frame) {
         let theme = &self.theme;
         let session = self.data.active_session();
+
+        // Update stateful components from session data
+        // (These are done inline in render rather than stored, to avoid borrow issues)
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -658,21 +667,27 @@ impl App {
             ])
             .split(f.area());
 
-        HeaderBar::render(f, chunks[0], theme, &session.info.id, &session.info.model);
+        // HeaderBar
+        self.header.update(session.info.id.clone(), session.info.model.clone());
+        self.header.render(chunks[0], f.buffer_mut());
 
+        // SessionTabs
         let tabs_data: Vec<(String, String)> = self
             .data
             .sessions
             .keys()
             .map(|id| (id.clone(), id.chars().take(8).collect()))
             .collect();
-        SessionTabsWidget::render(f, chunks[1], theme, &tabs_data, &self.data.active_session);
+        self.session_tabs.update(tabs_data, self.data.active_session.clone());
+        self.session_tabs.render(chunks[1], f.buffer_mut());
 
-        ChatView::render(f, chunks[2], theme, session);
+        // ChatView
+        render_chat(f, chunks[2], theme, session);
 
-        StatusBar::render(
-            f,
+        // StatusBar
+        render_status_bar(
             chunks[3],
+            f.buffer_mut(),
             theme,
             &self.data.connection_status,
             self.state == AppState::Busy,
@@ -682,12 +697,13 @@ impl App {
             &session.info.model,
         );
 
-        self.editor.render(
-            f,
-            chunks[4],
-            theme,
-            self.state == AppState::Busy,
-            true,
-        );
+        // Editor
+        self.editor.render(chunks[4], f.buffer_mut());
+
+        // Render overlays on top
+        let full_area = f.area();
+        for overlay in &self.overlays {
+            overlay.render(full_area, f.buffer_mut());
+        }
     }
 }

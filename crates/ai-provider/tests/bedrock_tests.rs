@@ -1,6 +1,6 @@
-use llm_client::provider::ReasoningLevel;
-use llm_client::providers::anthropic_common::{StreamParser, ThinkingConfig};
-use llm_client::streaming::AssistantMessageEvent;
+use ai_provider::provider::ReasoningLevel;
+use ai_provider::providers::anthropic_common::{StreamParser, ThinkingConfig};
+use ai_provider::streaming::AssistantMessageEvent;
 
 #[tokio::test]
 async fn test_stream_parser_message_start() {
@@ -42,7 +42,7 @@ async fn test_stream_parser_text_block() {
         .process_event(&serde_json::json!({"type": "message_stop"}), &tx)
         .await;
 
-    assert_eq!(result.unwrap(), Some(llm_client::StopReason::Stop));
+    assert_eq!(result.unwrap(), Some(ai_provider::StopReason::Stop));
 
     // Verify events were sent
     assert!(matches!(
@@ -81,21 +81,21 @@ async fn test_stream_parser_tool_call() {
     assert!(result.unwrap().is_some());
     assert_eq!(parser.partial.content.len(), 1);
     assert!(
-        matches!(&parser.partial.content[0], llm_client::Content::ToolCall(tc) if tc.name == "read")
+        matches!(&parser.partial.content[0], ai_provider::Content::ToolCall(tc) if tc.name == "read")
     );
 }
 
 #[test]
 fn test_build_thinking_config_disabled() {
     let (max, config) =
-        llm_client::providers::anthropic_common::build_thinking_config(None, "any", 4096, None);
+        ai_provider::providers::anthropic_common::build_thinking_config(None, "any", 4096, None);
     assert_eq!(max, 4096);
     assert!(matches!(config, ThinkingConfig::Disabled));
 }
 
 #[test]
 fn test_build_thinking_config_enabled() {
-    let (max, config) = llm_client::providers::anthropic_common::build_thinking_config(
+    let (max, config) = ai_provider::providers::anthropic_common::build_thinking_config(
         Some(ReasoningLevel::Medium),
         "claude-sonnet",
         4096,
@@ -107,7 +107,7 @@ fn test_build_thinking_config_enabled() {
 
 #[test]
 fn test_build_thinking_config_adaptive() {
-    let (_, config) = llm_client::providers::anthropic_common::build_thinking_config(
+    let (_, config) = ai_provider::providers::anthropic_common::build_thinking_config(
         Some(ReasoningLevel::High),
         "claude-opus-4-7",
         4096,
@@ -121,7 +121,7 @@ fn test_build_thinking_config_adaptive() {
 
 #[test]
 fn test_bedrock_models_list() {
-    let models = llm_client::models_for_provider("bedrock");
+    let models = ai_provider::models_for_provider("bedrock");
     assert!(!models.is_empty());
     assert!(models.iter().any(|m| m.id.contains("claude")));
 }

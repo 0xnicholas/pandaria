@@ -6,7 +6,7 @@
 1. **Tool call arguments 序列化**（openai.rs, mistral.rs）：将 `unwrap_or_default()` 改为 `map_err` + `?`，返回 `LlmError::Serialization`
 2. **HTTP response body 读取**（anthropic.rs, google.rs, mistral.rs, openai.rs）：将 `unwrap_or_default()` 改为 `map_err`，保留原始 HTTP 错误上下文
 
-**Tech Stack:** Rust, llm-client crate
+**Tech Stack:** Rust, ai-provider crate
 
 ---
 
@@ -23,8 +23,8 @@
 ### Task 1: 修复 tool call arguments 序列化（OpenAI + Mistral）
 
 **Files:**
-- Modify: `crates/llm-client/src/providers/openai.rs:53`
-- Modify: `crates/llm-client/src/providers/mistral.rs:53`
+- Modify: `crates/ai-provider/src/providers/openai.rs:53`
+- Modify: `crates/ai-provider/src/providers/mistral.rs:53`
 
 - [ ] **Step 1: OpenAI provider**
 
@@ -45,10 +45,10 @@
 ### Task 2: 修复 HTTP response body 读取（4 个 provider）
 
 **Files:**
-- Modify: `crates/llm-client/src/providers/anthropic.rs:237`
-- Modify: `crates/llm-client/src/providers/google.rs:166`
-- Modify: `crates/llm-client/src/providers/mistral.rs:173`
-- Modify: `crates/llm-client/src/providers/openai.rs:245`
+- Modify: `crates/ai-provider/src/providers/anthropic.rs:237`
+- Modify: `crates/ai-provider/src/providers/google.rs:166`
+- Modify: `crates/ai-provider/src/providers/mistral.rs:173`
+- Modify: `crates/ai-provider/src/providers/openai.rs:245`
 
 - [ ] **Step 3: 统一修复 response.text() 错误处理**
 
@@ -67,19 +67,19 @@
 
 - [ ] **Step 4: 编译检查**
 
-  Run: `cargo check -p llm-client`
+  Run: `cargo check -p ai-provider`
   Expected: 零错误。
 
-- [ ] **Step 5: 运行 llm-client 测试**
+- [ ] **Step 5: 运行 ai-provider 测试**
 
-  Run: `cargo test -p llm-client -- --nocapture`
+  Run: `cargo test -p ai-provider -- --nocapture`
   Expected: 全部通过。
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/llm-client/src/providers/
-git commit -m "fix(llm-client): replace unwrap_or_default with explicit error handling in providers
+git add crates/ai-provider/src/providers/
+git commit -m "fix(ai-provider): replace unwrap_or_default with explicit error handling in providers
 
 - Tool call arguments serialization (openai, mistral): errors now
   propagate as LlmError::Serialization instead of silently sending

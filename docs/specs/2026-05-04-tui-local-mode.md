@@ -2,20 +2,20 @@
 
 **Date:** 2026-05-04
 **Status:** Draft
-**Reference:** `docs/specs/2026-05-02-tui-design.md`, `docs/specs/2026-05-02-agent-core.md`, `docs/specs/2026-05-02-llm-client.md`
+**Reference:** `docs/specs/2026-05-02-tui-design.md`, `docs/specs/2026-05-02-agent-core.md`, `docs/specs/2026-05-02-ai-provider.md`
 
 ---
 
 ## 1. Purpose
 
-Integrate `agent-core` and `llm-client` directly into the TUI crate so that the TUI works as a **self-contained standalone CLI tool** without requiring a running pandaria server.
+Integrate `agent-core` and `ai-provider` directly into the TUI crate so that the TUI works as a **self-contained standalone CLI tool** without requiring a running pandaria server.
 
 The TUI currently communicates with a server via SSE + HTTP REST, but the server binary does not exist yet. This spec defines a **local mode** that embeds the agent runtime in-process, while preserving the existing HTTP/SSE client path for future server mode via a `Backend` trait abstraction.
 
 **Goals:**
 - Make all TUI slash commands (`/new`, `/switch`, `/model`, `/clear`, etc.) functional
 - Stream LLM responses to the TUI in real-time (text, thinking, tool calls)
-- Zero changes to `agent-core` and `llm-client` crates — integration happens entirely in the TUI crate
+- Zero changes to `agent-core` and `ai-provider` crates — integration happens entirely in the TUI crate
 - Preserve the existing `ServerEvent`-based UI rendering path — no duplicate rendering code
 
 **Non-goals:**
@@ -556,7 +556,7 @@ The `--provider` / `PANDARIA_PROVIDER` value maps to an `LlmProvider` implementa
 
 Provider is selected once at startup. The `/model` command can switch models within the same provider.
 
-**Import note:** Only `MistralProvider` is publicly re-exported from `llm-client` (`llm_client::MistralProvider`). Other providers require full module paths:
+**Import note:** Only `MistralProvider` is publicly re-exported from `ai-provider` (`llm_client::MistralProvider`). Other providers require full module paths:
 ```rust
 use llm_client::providers::anthropic::AnthropicProvider;
 use llm_client::providers::openai::OpenAiProvider;
@@ -609,7 +609,7 @@ scrollback = 1000
 
 | File | Change |
 |---|---|
-| `crates/tui/Cargo.toml` | Add `agent-core`, `llm-client`, `secrecy` deps |
+| `crates/tui/Cargo.toml` | Add `agent-core`, `ai-provider`, `secrecy` deps |
 | `crates/tui/src/lib.rs` | Add `pub mod backend;` |
 | `crates/tui/src/app.rs` | Replace `rest: RestClient` + `reqwest_client` with `backend: Box<dyn Backend>`. Update `App::new()`, `submit_input()`, `handle_overlay_confirm()` |
 | `crates/tui/src/main.rs` | Provider construction, mode selection, `LocalBackend` init |
@@ -766,13 +766,13 @@ Add to `crates/tui/Cargo.toml`:
 
 # Internal workspace crates
 agent-core = { path = "../agent-core" }
-llm-client = { path = "../llm-client" }
+ai-provider = { path = "../ai-provider" }
 
 # Secret handling for API keys
 secrecy = "0.8"
 ```
 
-No new external dependencies beyond `secrecy` (already used by `llm-client`).
+No new external dependencies beyond `secrecy` (already used by `ai-provider`).
 
 ---
 
@@ -841,7 +841,7 @@ Integration tests use the `EchoProvider` and mock tool providers from `agent-cor
 - **Session persistence** — No `SessionStore` configured. Sessions are lost on TUI exit.
 - **Extension hooks beyond noop** — Builtins (audit, rate-limit, tool-guard) are not wired.
 - **Multi-session concurrent prompts** — The TUI processes one message at a time. Sending a message to session A while session B is streaming is not supported.
-- **Model auto-discovery** — Model list is hardcoded or provided via `--model`. The `ModelRegistry` from `llm-client` can be integrated later.
+- **Model auto-discovery** — Model list is hardcoded or provided via `--model`. The `ModelRegistry` from `ai-provider` can be integrated later.
 - **Server mode** — Building the `api-gateway` crate and `src/main.rs` server binary is a separate effort.
 - **Provider hot-swap** — Changing provider requires restarting the TUI.
 - **Per-session model selection** — All sessions under a `LocalBackend` use the same model. Per-session models require storing model preference per `SessionData`.

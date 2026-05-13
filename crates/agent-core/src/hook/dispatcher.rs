@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
-use crate::context::{
+use crate::hook::context::{
     AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx,
     ProviderRequestCtx, ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx,
     ToolExecutionStartCtx, ToolResultCtx, TurnEndCtx,
 };
-use crate::mutations::{
+use crate::hook::mutations::{
     BeforeAgentStartMutation, CompactDecision, ContextMutation, HookDecision,
     ProviderRequestMutation, ProviderResponseMutation, ToolCallMutation, ToolResultMutation,
 };

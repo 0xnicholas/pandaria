@@ -1,5 +1,5 @@
-use llm_client::transform::{TransformOptions, transform_messages};
-use llm_client::{
+use ai_provider::transform::{TransformOptions, transform_messages};
+use ai_provider::{
     Api, AssistantMessage, Content, Message, StopReason, ToolCall, ToolResultMessage, Usage,
     UserMessage,
 };

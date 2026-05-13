@@ -1,21 +1,21 @@
 use std::sync::{Arc, Mutex};
 
-use llm_client::{Content, StopReason};
+use ai_provider::{Content, StopReason};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument, warn};
 
-use crate::compaction::{
+use crate::harness::compaction::{
     should_compact, CompactionActor, CompactionResult,
     estimate_context_tokens,
 };
-use crate::context::{CompactCtx, CompactReason, SessionCtx};
+use crate::hook::context::{CompactCtx, CompactReason, SessionCtx};
 use crate::error::AgentError;
-use crate::error_recovery::{RecoveryAction, RecoveryStateMachine};
+use crate::harness::error_recovery::{RecoveryAction, RecoveryStateMachine};
 use crate::events::{AgentEvent, AgentEventListener};
-use crate::hook_dispatcher::HookDispatcher;
-use crate::loop_::{AgentLoop, AgentLoopConfig};
-use crate::session_entry::{SessionContextBuilder, SessionEntry};
-use crate::store::SessionStore;
+use crate::hook::dispatcher::HookDispatcher;
+use crate::harness::agent_loop::{AgentLoop, AgentLoopConfig};
+use crate::persistence::entry::{SessionContextBuilder, SessionEntry};
+use crate::persistence::store::SessionStore;
 use crate::types::{AgentMessage, AgentToolRef};
 
 struct QueuedEvent {
@@ -31,9 +31,9 @@ pub struct SessionActor {
     session_id: String,
     model: String,
     system_prompt: String,
-    stream_options: llm_client::StreamOptions,
+    stream_options: ai_provider::StreamOptions,
     max_retries: u32,
-    provider: Arc<dyn llm_client::LlmProvider>,
+    provider: Arc<dyn ai_provider::LlmProvider>,
     hook_dispatcher: Arc<dyn HookDispatcher>,
     compaction_actor: Arc<CompactionActor>,
     tools: Vec<AgentToolRef>,
@@ -73,7 +73,7 @@ impl SessionActor {
         session_id: String,
         system_prompt: String,
         model: String,
-        provider: Arc<dyn llm_client::LlmProvider>,
+        provider: Arc<dyn ai_provider::LlmProvider>,
         hook_dispatcher: Arc<dyn HookDispatcher>,
         compaction_actor: Arc<CompactionActor>,
         tools: Vec<AgentToolRef>,
@@ -98,7 +98,7 @@ impl SessionActor {
         };
         let dispatcher = hook_dispatcher.clone();
         tokio::spawn(async move {
-            let _ = crate::hook_timeout::with_timeout(
+            let _ = crate::hook::timeout::with_timeout(
                 dispatcher.on_session_start(&session_ctx),
                 100,
                 (),
@@ -119,7 +119,7 @@ impl SessionActor {
             session_id,
             model,
             system_prompt,
-            stream_options: llm_client::StreamOptions::default(),
+            stream_options: ai_provider::StreamOptions::default(),
             max_retries: 3,
             provider,
             hook_dispatcher,
@@ -202,7 +202,7 @@ impl SessionActor {
         &mut self,
         text: String,
     ) -> Result<Vec<AgentMessage>, AgentError> {
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text {
                 text,
                 text_signature: None,
@@ -218,7 +218,7 @@ impl SessionActor {
         let text_content: Vec<String> = messages.iter().filter_map(|m| {
             if let AgentMessage::Assistant(a) = m {
                 Some(a.content.iter().filter_map(|c| match c {
-                    llm_client::Content::Text { text, .. } => Some(text.clone()),
+                    ai_provider::Content::Text { text, .. } => Some(text.clone()),
                     _ => None,
                 }).collect::<Vec<_>>().join(" "))
             } else { None }
@@ -239,7 +239,7 @@ impl SessionActor {
     pub fn set_system_prompt(&mut self, prompt: String) { self.system_prompt = prompt; }
     pub fn set_model(&mut self, model: String) { self.model = model; }
     pub fn set_tools(&mut self, tools: Vec<AgentToolRef>) { self.tools = tools; }
-    pub fn set_stream_options(&mut self, options: llm_client::StreamOptions) { self.stream_options = options; }
+    pub fn set_stream_options(&mut self, options: ai_provider::StreamOptions) { self.stream_options = options; }
     pub fn set_max_retries(&mut self, max_retries: u32) {
         self.max_retries = max_retries;
         self.stream_options.max_retries = max_retries;
@@ -421,7 +421,7 @@ impl SessionActor {
     }
 
     fn model_context_window(&self) -> usize {
-        if let Some(model_meta) = llm_client::get_model(
+        if let Some(model_meta) = ai_provider::get_model(
             &self.provider.provider_name(),
             &self.model,
         ) {
@@ -455,7 +455,7 @@ impl SessionActor {
             reason: reason.clone(),
         };
 
-        let decision = crate::hook_timeout::with_timeout(
+        let decision = crate::hook::timeout::with_timeout(
             self.hook_dispatcher.on_before_compact(&compact_ctx),
             500,
             crate::mutations::CompactDecision::Continue,
@@ -520,21 +520,21 @@ impl SessionActor {
         Ok(())
     }
 
-    fn is_context_overflow(assistant: &llm_client::AssistantMessage) -> bool {
-        assistant.stop_reason == llm_client::StopReason::Error
+    fn is_context_overflow(assistant: &ai_provider::AssistantMessage) -> bool {
+        assistant.stop_reason == ai_provider::StopReason::Error
             && assistant.error_message.as_ref().is_some_and(|e| {
                 let lower = e.to_lowercase();
                 lower.contains("context length") || lower.contains("token limit")
             })
     }
 
-    async fn check_compaction(&mut self, last_assistant: &llm_client::AssistantMessage) -> Result<(), AgentError> {
+    async fn check_compaction(&mut self, last_assistant: &ai_provider::AssistantMessage) -> Result<(), AgentError> {
         let config = &self.compaction_actor.config;
         if !config.enabled {
             return Ok(());
         }
 
-        if last_assistant.stop_reason == llm_client::StopReason::Aborted {
+        if last_assistant.stop_reason == ai_provider::StopReason::Aborted {
             return Ok(());
         }
 
@@ -743,8 +743,8 @@ impl Drop for SessionActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compaction::CompactionConfig;
-    use crate::context::{AgentEndCtx, TurnEndCtx};
+    use crate::harness::compaction::CompactionConfig;
+    use crate::hook::context::{AgentEndCtx, TurnEndCtx};
     use crate::file_ops::DefaultFileOperationExtractor;
     use crate::test_utils::{AllowAllDispatcher, TestProvider};
     use async_trait::async_trait;
@@ -752,7 +752,7 @@ mod tests {
     use std::sync::Mutex;
     use tokio::time::{sleep, Duration};
 
-    fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> CompactionActor {
+    fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> CompactionActor {
         CompactionActor::new(
             CompactionConfig::default(),
             provider,
@@ -874,7 +874,7 @@ mod tests {
         );
 
         // Queue a steer message
-        session.steer(AgentMessage::User(llm_client::UserMessage {
+        session.steer(AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "steer note".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         }));
@@ -917,7 +917,7 @@ mod tests {
         );
 
         // Queue a follow_up message
-        session.follow_up(AgentMessage::User(llm_client::UserMessage {
+        session.follow_up(AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "follow up".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         }));
@@ -1129,11 +1129,11 @@ mod tests {
         );
 
         // Queue both steer and follow-up
-        session.steer(AgentMessage::User(llm_client::UserMessage {
+        session.steer(AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "steer note".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         }));
-        session.follow_up(AgentMessage::User(llm_client::UserMessage {
+        session.follow_up(AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "follow up".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         }));

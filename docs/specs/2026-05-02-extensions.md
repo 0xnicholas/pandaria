@@ -13,7 +13,7 @@
 ## 依赖方向
 
 ```
-extensions → agent-core → llm-client
+extensions → agent-core → ai-provider
 ```
 
 ---
@@ -55,7 +55,7 @@ crates/extensions/
 ```toml
 [dependencies]
 agent-core = { path = "../agent-core" }
-llm-client = { path = "../llm-client" }
+ai-provider = { path = "../ai-provider" }
 tokio = { workspace = true, features = ["sync", "time", "rt", "macros"] }
 async-trait = { workspace = true }
 tracing = { workspace = true }

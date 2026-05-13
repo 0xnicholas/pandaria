@@ -12,7 +12,7 @@ pub enum AgentError {
     HookDispatchError(String),
 
     #[error("llm error: {0}")]
-    LlmError(#[from] llm_client::LlmError),
+    LlmError(#[from] ai_provider::LlmError),
 
     #[error("llm response error: {0}")]
     LlmResponseError(String),

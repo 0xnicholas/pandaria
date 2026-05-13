@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
 
 use agent_core::{AgentLoop, AgentLoopConfig, AgentEvent, SessionActor, HookDispatcher};
-use agent_core::loop_::resolve_orphan_tool_calls;
+use agent_core::harness::agent_loop::resolve_orphan_tool_calls;
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
 use async_trait::async_trait;
-use llm_client::{Content, LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall};
+use ai_provider::{Content, LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall};
 use tokio_util::sync::CancellationToken;
 
 fn make_loop_config(provider: Arc<dyn LlmProvider>, dispatcher: Arc<dyn HookDispatcher>, tools: Vec<agent_core::AgentToolRef>) -> AgentLoopConfig {
@@ -26,7 +26,7 @@ async fn test_follow_up_triggers_second_turn() {
     let provider = TestProvider::counted(|n| agent_core::test_utils::TestResponse::Text(format!("response{}", n)));
     let dispatcher = Arc::new(AllowAllDispatcher);
     let follow_up_queue = Arc::new(Mutex::new(vec![
-        llm_client::Message::User(llm_client::UserMessage {
+        ai_provider::Message::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "follow_up_msg".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         }),
@@ -42,7 +42,7 @@ async fn test_follow_up_triggers_second_turn() {
     };
     let loop_ = AgentLoop::new(config);
 
-    let user_msg = llm_client::Message::User(llm_client::UserMessage {
+    let user_msg = ai_provider::Message::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     });
@@ -50,9 +50,9 @@ async fn test_follow_up_triggers_second_turn() {
     let results = loop_.run(vec![user_msg], CancellationToken::new()).await.unwrap();
 
     assert_eq!(results.len(), 3);
-    assert!(matches!(&results[0], llm_client::Message::Assistant(_)));
-    assert!(matches!(&results[1], llm_client::Message::User(_)));
-    assert!(matches!(&results[2], llm_client::Message::Assistant(_)));
+    assert!(matches!(&results[0], ai_provider::Message::Assistant(_)));
+    assert!(matches!(&results[1], ai_provider::Message::User(_)));
+    assert!(matches!(&results[2], ai_provider::Message::Assistant(_)));
     assert!(follow_up_queue.lock().unwrap().is_empty());
 }
 
@@ -73,21 +73,21 @@ async fn test_steer_injection() {
             context: LlmContext,
             _options: StreamOptions,
             _signal: CancellationToken,
-        ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
+        ) -> Result<ai_provider::AssistantMessageEventStream, ai_provider::LlmError> {
             let has_steer = context.messages.iter().any(|m| {
-                if let llm_client::Message::User(u) = m {
+                if let ai_provider::Message::User(u) = m {
                     u.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text == &self.expected_text))
                 } else { false }
             });
             assert!(has_steer, "steer message should appear in LLM context");
 
-            let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
-            let partial = llm_client::AssistantMessage {
+            let (stream, tx) = ai_provider::AssistantMessageEventStream::new(4);
+            let partial = ai_provider::AssistantMessage {
                 content: vec![Content::Text { text: "ok".to_string(), text_signature: None }],
                 provider: "verify".to_string(),
                 model: "test".to_string(),
-                api: llm_client::Api { provider: "verify".to_string(), model: "test".to_string() },
-                usage: llm_client::Usage {
+                api: ai_provider::Api { provider: "verify".to_string(), model: "test".to_string() },
+                usage: ai_provider::Usage {
                     input_tokens: 0, output_tokens: 0,
                     cache_creation_input_tokens: None, cache_read_input_tokens: None,
                     total_tokens: 0,
@@ -98,8 +98,8 @@ async fn test_steer_injection() {
                 timestamp: std::time::SystemTime::now(),
             };
             tokio::spawn(async move {
-                let _ = tx.send(llm_client::AssistantMessageEvent::Start { partial: partial.clone() }).await;
-                let _ = tx.send(llm_client::AssistantMessageEvent::Done { reason: StopReason::Stop, message: partial }).await;
+                let _ = tx.send(ai_provider::AssistantMessageEvent::Start { partial: partial.clone() }).await;
+                let _ = tx.send(ai_provider::AssistantMessageEvent::Done { reason: StopReason::Stop, message: partial }).await;
             });
             Ok(stream)
         }
@@ -108,7 +108,7 @@ async fn test_steer_injection() {
     let provider = Arc::new(VerifyingProvider { expected_text: "steer_msg".to_string() });
     let dispatcher = Arc::new(AllowAllDispatcher);
     let steer_queue = Arc::new(Mutex::new(vec![
-        llm_client::Message::User(llm_client::UserMessage {
+        ai_provider::Message::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "steer_msg".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         }),
@@ -124,15 +124,15 @@ async fn test_steer_injection() {
     };
     let loop_ = AgentLoop::new(config);
 
-    let user_msg = llm_client::Message::User(llm_client::UserMessage {
+    let user_msg = ai_provider::Message::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     });
 
     let results = loop_.run(vec![user_msg], CancellationToken::new()).await.unwrap();
     assert_eq!(results.len(), 2);
-    assert!(matches!(&results[0], llm_client::Message::User(_)));
-    assert!(matches!(&results[1], llm_client::Message::Assistant(_)));
+    assert!(matches!(&results[0], ai_provider::Message::User(_)));
+    assert!(matches!(&results[1], ai_provider::Message::Assistant(_)));
     assert!(steer_queue.lock().unwrap().is_empty());
 }
 
@@ -158,7 +158,7 @@ async fn test_event_sequence() {
     };
     let loop_ = AgentLoop::new(config);
 
-    let user_msg = llm_client::Message::User(llm_client::UserMessage {
+    let user_msg = ai_provider::Message::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     });
@@ -201,7 +201,7 @@ async fn test_event_sequence() {
 #[test]
 fn test_resolve_orphan_injects_synthetic_error() {
     let mut messages = vec![
-        llm_client::Message::Assistant(llm_client::AssistantMessage {
+        ai_provider::Message::Assistant(ai_provider::AssistantMessage {
             content: vec![Content::ToolCall(ToolCall {
                 id: "call_1".to_string(),
                 name: "tool_a".to_string(),
@@ -210,8 +210,8 @@ fn test_resolve_orphan_injects_synthetic_error() {
             })],
             provider: "test".to_string(),
             model: "test".to_string(),
-            api: llm_client::Api { provider: "test".to_string(), model: "test".to_string() },
-            usage: llm_client::Usage {
+            api: ai_provider::Api { provider: "test".to_string(), model: "test".to_string() },
+            usage: ai_provider::Usage {
                 input_tokens: 0, output_tokens: 0,
                 cache_creation_input_tokens: None, cache_read_input_tokens: None,
                 total_tokens: 0,
@@ -221,7 +221,7 @@ fn test_resolve_orphan_injects_synthetic_error() {
             error_message: None,
             timestamp: std::time::SystemTime::now(),
         }),
-        llm_client::Message::ToolResult(llm_client::ToolResultMessage {
+        ai_provider::Message::ToolResult(ai_provider::ToolResultMessage {
             tool_call_id: "call_2".to_string(),
             tool_name: "tool_b".to_string(),
             content: vec![],
@@ -235,7 +235,7 @@ fn test_resolve_orphan_injects_synthetic_error() {
 
     assert_eq!(messages.len(), 3);
     match &messages[1] {
-        llm_client::Message::ToolResult(tr) => {
+        ai_provider::Message::ToolResult(tr) => {
             assert_eq!(tr.tool_call_id, "call_1");
             assert!(tr.is_error);
             assert!(tr.details.as_ref().unwrap()["_orphan"].as_bool().unwrap());
@@ -257,8 +257,8 @@ async fn test_complete_returns_text_only() {
         "test".to_string(),
         provider.clone(),
         dispatcher,
-        Arc::new(agent_core::CompactionActor::new(
-            agent_core::CompactionConfig::default(),
+        Arc::new(agent_core::harness::compaction::CompactionActor::new(
+            agent_core::harness::compaction::CompactionConfig::default(),
             provider,
             "test".to_string(),
             Arc::new(agent_core::DefaultFileOperationExtractor::default()),

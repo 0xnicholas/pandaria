@@ -1,5 +1,5 @@
-use llm_client::providers::anthropic::AnthropicProvider;
-use llm_client::{AssistantMessageEvent, LlmContext, LlmProvider, StopReason, StreamOptions};
+use ai_provider::providers::anthropic::AnthropicProvider;
+use ai_provider::{AssistantMessageEvent, LlmContext, LlmProvider, StopReason, StreamOptions};
 use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};

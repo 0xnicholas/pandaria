@@ -1,5 +1,5 @@
-use llm_client::types::{Content, Message, ToolDef, UserMessage};
-use llm_client::{
+use ai_provider::types::{Content, Message, ToolDef, UserMessage};
+use ai_provider::{
     LlmContext, LlmProvider, StreamOptions, providers::anthropic::AnthropicProvider,
     providers::openai::OpenAiProvider,
 };

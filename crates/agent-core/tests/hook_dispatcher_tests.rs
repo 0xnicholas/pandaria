@@ -1,5 +1,5 @@
 use agent_core::context::ToolCallCtx;
-use agent_core::hook_dispatcher::HookDispatcher;
+use agent_core::hook::dispatcher::HookDispatcher;
 use agent_core::mutations::{HookDecision, ToolCallMutation};
 use async_trait::async_trait;
 

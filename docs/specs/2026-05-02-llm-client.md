@@ -1,4 +1,4 @@
-# llm-client 详细模块规格
+# ai-provider 详细模块规格
 
 **Date:** 2026-05-02
 **Status:** Draft
@@ -24,7 +24,7 @@
 ## 依赖方向
 
 ```
-agent-core → llm-client
+agent-core → ai-provider
 ```
 
 禁止反向依赖。
@@ -34,7 +34,7 @@ agent-core → llm-client
 ## 1. 文件结构
 
 ```
-crates/llm-client/
+crates/ai-provider/
   Cargo.toml
   README.md
   src/
@@ -1018,7 +1018,7 @@ Stop reason 映射:
 ```
 
 **未来扩展：** Azure, Vertex, Gemini CLI, Codex Responses 等 provider 可在后续版本加入，
-复用 llm-client 的统一事件协议，只需实现 `LlmProvider` trait 和消息请求/响应转换。
+复用 ai-provider 的统一事件协议，只需实现 `LlmProvider` trait 和消息请求/响应转换。
 
 ---
 
@@ -1097,9 +1097,9 @@ pub fn build_tool_defs(tools: &[ToolDef]) -> Vec<ToolDef>;
 
 ## 12. 与 agent-core 的接口契约
 
-agent-core spec 中引用的 llm-client 类型必须准确匹配：
+agent-core spec 中引用的 ai-provider 类型必须准确匹配：
 
-| agent-core 引用 | llm-client 类型 |
+| agent-core 引用 | ai-provider 类型 |
 |---|---|
 | `use llm_client::ToolResultMessage` | `types.rs` → `ToolResultMessage` |
 | `Content::Text { text }` | `types.rs` → `Content::Text` |
@@ -1124,7 +1124,7 @@ agent-core spec 中引用的 llm-client 类型必须准确匹配：
 
 - **事件字段名差异**: agent-core spec §2.3 的伪代码使用了简化的事件字段名（如 `TextDelta(text)` → `text`, `Done { content, api, usage, stop_reason }`）。实现时以本 spec §4.1 的 `AssistantMessageEvent` 定义为准——每个事件携带 `content_index` 和 `partial` 字段。伪代码是为了可读性有意省略这些字段。
 - **重试边界**: `with_retry()`（§8）包装 `provider.stream()` 调用本身——处理连接级重试（RateLimited/Overloaded/Timeout）。agent-core spec §2.3 的 `call_llm_with_retry()` 覆盖更广：从 `provider.stream()` 到流消费完成。两者职责不同，最终实现时 agent-core 可能直接使用 `with_retry()` 而后独立消费 stream，或在 stream 消费层实现自己的重试逻辑。实现阶段统一。
-- **`extract_tool_calls`**: llm-client 提供此工具函数（§10），agent-core 可选择直接使用或自行提取（如 §2.2 伪代码中的 `extract_tool_calls(&assistant_msg.content)`）。实现阶段统一使用 llm-client 的导出函数。
+- **`extract_tool_calls`**: ai-provider 提供此工具函数（§10），agent-core 可选择直接使用或自行提取（如 §2.2 伪代码中的 `extract_tool_calls(&assistant_msg.content)`）。实现阶段统一使用 ai-provider 的导出函数。
 
 ---
 
@@ -1910,7 +1910,7 @@ let options = StreamOptions {
 regex = "1"
 phf = { version = "0.11", features = ["macros"] }
 
-# crates/llm-client/Cargo.toml
+# crates/ai-provider/Cargo.toml
 [dependencies]
 # ... existing ...
 regex = { workspace = true }
@@ -1934,7 +1934,7 @@ LLM 输出的 tool call arguments 可能包含：
 - Unicode 孤立 surrogate（Rust `String` 已过滤字节层，但 LLM 输出在解码后可能含）
 - 非标准 whitespace 字符
 
-pi-mono 依赖 `partial-json` npm 包处理此类问题。llm-client 手写等价的修复逻辑，不引入额外 crate。
+pi-mono 依赖 `partial-json` npm 包处理此类问题。ai-provider 手写等价的修复逻辑，不引入额外 crate。
 
 ### 23.2 API
 
@@ -2034,7 +2034,7 @@ Provider 实现中，在以下位置调用：
 - Thinking block 签名（Anthropic）无法跨模型传递
 - Tool call 缺少前置 assistant message 导致 API 拒绝
 
-pi-mono 的 `transformMessages()` 在每次 LLM 调用前执行标准化转换。llm-client 同样需要此层。
+pi-mono 的 `transformMessages()` 在每次 LLM 调用前执行标准化转换。ai-provider 同样需要此层。
 
 ### 25.2 API
 
@@ -2153,7 +2153,7 @@ for each (prev, curr) in messages.windows(2):
 
 ### 26.1 动机
 
-pi-mono 支持 5 种 OAuth 认证方式（Anthropic OAuth, GitHub Copilot, Google Code Assist, Antigravity, OpenAI Codex）。llm-client 当前仅支持静态 API key。服务端场景需要支持 OAuth 以接入 Copilot、Anthropic Pro 等应用级认证。
+pi-mono 支持 5 种 OAuth 认证方式（Anthropic OAuth, GitHub Copilot, Google Code Assist, Antigravity, OpenAI Codex）。ai-provider 当前仅支持静态 API key。服务端场景需要支持 OAuth 以接入 Copilot、Anthropic Pro 等应用级认证。
 
 v0.1 阶段仅定义 OAuth trait 抽象接口，Provider 适配器在后续版本实现。
 

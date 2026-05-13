@@ -5,13 +5,13 @@ pub struct ProviderStreamOptions {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
-    pub reasoning: Option<llm_client::ReasoningLevel>,
+    pub reasoning: Option<ai_provider::ReasoningLevel>,
     pub max_retries: Option<u32>,
     pub timeout: Option<Duration>,
 }
 
 impl ProviderStreamOptions {
-    pub fn from_options(options: &llm_client::StreamOptions) -> Self {
+    pub fn from_options(options: &ai_provider::StreamOptions) -> Self {
         Self {
             max_tokens: options.max_tokens,
             temperature: options.temperature,

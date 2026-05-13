@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement a complete, production-ready AWS Bedrock provider (`AwsBedrockProvider`) for the `llm-client` crate, supporting Claude models via the `invoke_model_with_response_stream` API with full streaming, tool calling, reasoning, and error handling.
+**Goal:** Implement a complete, production-ready AWS Bedrock provider (`AwsBedrockProvider`) for the `ai-provider` crate, supporting Claude models via the `invoke_model_with_response_stream` API with full streaming, tool calling, reasoning, and error handling.
 
 **Architecture:** Bedrock's Claude models use the Anthropic Messages API format. We extract the request-body building and stream-event parsing logic from `anthropic.rs` into a shared `anthropic_common.rs` module, then implement `bedrock.rs` using the AWS SDK (`aws-sdk-bedrockruntime`) with the shared parsing logic. This avoids code duplication while properly handling Bedrock-specific concerns (SigV4 auth, `anthropic_version` field, AWS error mapping).
 
@@ -14,19 +14,19 @@
 
 | File | Action | Responsibility |
 |------|--------|----------------|
-| `crates/llm-client/src/providers/anthropic_common.rs` | **Create** | Shared Messages API logic: request body building, stream event parsing (`BlockType`, `StreamParser`), cache/thinking helpers |
-| `crates/llm-client/src/providers/anthropic.rs` | **Modify** | Refactor to use `anthropic_common` for body building and event parsing; keep SSE-specific HTTP loop |
-| `crates/llm-client/src/providers/bedrock.rs` | **Modify** | Full implementation using AWS SDK + shared parsing; error mapping; hooks support |
-| `crates/llm-client/src/providers/mod.rs` | **Modify** | Add `pub mod anthropic_common;` |
-| `crates/llm-client/tests/bedrock_tests.rs` | **Create** | Unit tests for request body building, event parsing, error mapping |
-| `crates/llm-client/tests/anthropic_tests.rs` | **Modify** | Ensure tests still pass after refactoring |
+| `crates/ai-provider/src/providers/anthropic_common.rs` | **Create** | Shared Messages API logic: request body building, stream event parsing (`BlockType`, `StreamParser`), cache/thinking helpers |
+| `crates/ai-provider/src/providers/anthropic.rs` | **Modify** | Refactor to use `anthropic_common` for body building and event parsing; keep SSE-specific HTTP loop |
+| `crates/ai-provider/src/providers/bedrock.rs` | **Modify** | Full implementation using AWS SDK + shared parsing; error mapping; hooks support |
+| `crates/ai-provider/src/providers/mod.rs` | **Modify** | Add `pub mod anthropic_common;` |
+| `crates/ai-provider/tests/bedrock_tests.rs` | **Create** | Unit tests for request body building, event parsing, error mapping |
+| `crates/ai-provider/tests/anthropic_tests.rs` | **Modify** | Ensure tests still pass after refactoring |
 
 ---
 
 ## Task 1: Extract Anthropic Common Logic
 
 **Files:**
-- Create: `crates/llm-client/src/providers/anthropic_common.rs`
+- Create: `crates/ai-provider/src/providers/anthropic_common.rs`
 
 **Goal:** Extract pure/shared logic from `anthropic.rs` so both Anthropic and Bedrock providers can use it.
 
@@ -474,14 +474,14 @@ pub fn build_thinking_config(
 
 ### Step 1.3: Verify extraction compiles
 
-Run: `cargo check -p llm-client`
+Run: `cargo check -p ai-provider`
 Expected: PASS (module not yet linked, so should compile existing code)
 
 ### Step 1.4: Commit
 
 ```bash
-git add crates/llm-client/src/providers/anthropic_common.rs
-git commit -m "refactor(llm-client): extract Anthropic Messages API shared logic"
+git add crates/ai-provider/src/providers/anthropic_common.rs
+git commit -m "refactor(ai-provider): extract Anthropic Messages API shared logic"
 ```
 
 ---
@@ -489,14 +489,14 @@ git commit -m "refactor(llm-client): extract Anthropic Messages API shared logic
 ## Task 2: Refactor anthropic.rs to Use Shared Module
 
 **Files:**
-- Modify: `crates/llm-client/src/providers/anthropic.rs`
-- Modify: `crates/llm-client/src/providers/mod.rs`
+- Modify: `crates/ai-provider/src/providers/anthropic.rs`
+- Modify: `crates/ai-provider/src/providers/mod.rs`
 
 **Goal:** Replace inline logic with calls to `anthropic_common`, keeping only SSE-specific code.
 
 ### Step 2.1: Register new module
 
-Modify `crates/llm-client/src/providers/mod.rs`:
+Modify `crates/ai-provider/src/providers/mod.rs`:
 
 ```rust
 #[macro_use]
@@ -640,17 +640,17 @@ crate::providers::anthropic_common::map_effort(ReasoningLevel::Minimal, "any-mod
 
 ### Step 2.6: Run tests
 
-Run: `cargo test -p llm-client -- anthropic`
+Run: `cargo test -p ai-provider -- anthropic`
 Expected: All existing anthropic tests pass
 
-Also run: `cargo check -p llm-client --features bedrock`
+Also run: `cargo check -p ai-provider --features bedrock`
 Expected: Compiles successfully (bedrock.rs is still a stub at this point)
 
 ### Step 2.7: Commit
 
 ```bash
-git add crates/llm-client/src/providers/anthropic.rs crates/llm-client/src/providers/mod.rs
-git commit -m "refactor(llm-client): anthropic provider uses shared common module"
+git add crates/ai-provider/src/providers/anthropic.rs crates/ai-provider/src/providers/mod.rs
+git commit -m "refactor(ai-provider): anthropic provider uses shared common module"
 ```
 
 ---
@@ -658,7 +658,7 @@ git commit -m "refactor(llm-client): anthropic provider uses shared common modul
 ## Task 3: Implement Bedrock Provider Core
 
 **Files:**
-- Modify: `crates/llm-client/src/providers/bedrock.rs`
+- Modify: `crates/ai-provider/src/providers/bedrock.rs`
 
 **Goal:** Implement full `AwsBedrockProvider` using AWS SDK and shared parsing logic.
 
@@ -1000,14 +1000,14 @@ where
 
 ### Step 3.4: Verify bedrock feature compiles
 
-Run: `cargo check -p llm-client --features bedrock`
+Run: `cargo check -p ai-provider --features bedrock`
 Expected: PASS
 
 ### Step 3.5: Commit
 
 ```bash
-git add crates/llm-client/src/providers/bedrock.rs
-git commit -m "feat(llm-client): implement AwsBedrockProvider with streaming"
+git add crates/ai-provider/src/providers/bedrock.rs
+git commit -m "feat(ai-provider): implement AwsBedrockProvider with streaming"
 ```
 
 ---
@@ -1015,8 +1015,8 @@ git commit -m "feat(llm-client): implement AwsBedrockProvider with streaming"
 ## Task 4: Add Tests
 
 **Files:**
-- Create: `crates/llm-client/tests/bedrock_tests.rs`
-- Modify: `crates/llm-client/tests/anthropic_tests.rs` (if needed)
+- Create: `crates/ai-provider/tests/bedrock_tests.rs`
+- Modify: `crates/ai-provider/tests/anthropic_tests.rs` (if needed)
 
 **Goal:** Ensure correctness of shared logic and Bedrock-specific request building.
 
@@ -1153,14 +1153,14 @@ fn test_bedrock_error_mapping_throttling() {
 
 ### Step 4.3: Run all tests
 
-Run: `cargo test -p llm-client --features bedrock`
+Run: `cargo test -p ai-provider --features bedrock`
 Expected: All tests pass (including existing anthropic tests)
 
 ### Step 4.4: Commit
 
 ```bash
-git add crates/llm-client/tests/bedrock_tests.rs
-git commit -m "test(llm-client): add Bedrock provider and shared parser tests"
+git add crates/ai-provider/tests/bedrock_tests.rs
+git commit -m "test(ai-provider): add Bedrock provider and shared parser tests"
 ```
 
 ---
@@ -1169,12 +1169,12 @@ git commit -m "test(llm-client): add Bedrock provider and shared parser tests"
 
 ### Step 5.1: Run full test suite
 
-Run: `cargo test -p llm-client --all-features`
+Run: `cargo test -p ai-provider --all-features`
 Expected: All tests pass
 
 ### Step 5.2: Run clippy
 
-Run: `cargo clippy -p llm-client --all-features -- -D warnings`
+Run: `cargo clippy -p ai-provider --all-features -- -D warnings`
 Expected: No warnings
 
 ### Step 5.3: Check formatting
@@ -1186,7 +1186,7 @@ Expected: No formatting issues
 
 ```bash
 git add -A
-git commit -m "feat(llm-client): complete Bedrock provider implementation
+git commit -m "feat(ai-provider): complete Bedrock provider implementation
 
 - Extract Anthropic Messages API shared logic into anthropic_common.rs
 - Refactor anthropic.rs to use shared module

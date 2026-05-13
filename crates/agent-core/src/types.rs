@@ -4,10 +4,10 @@ use std::sync::Arc;
 use crate::error::AgentError;
 
 /// Type alias for the LLM message type used throughout the agent system.
-pub type AgentMessage = llm_client::Message;
+pub type AgentMessage = ai_provider::Message;
 
 // Re-export session entry types from session_entry module
-pub use crate::session_entry::{CompactionDetails, SessionContextBuilder, SessionEntry};
+pub use crate::persistence::entry::{CompactionDetails, SessionContextBuilder, SessionEntry};
 
 /// Controls how multiple tool calls within a single assistant response are executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -28,7 +28,7 @@ pub struct AgentToolProgressUpdate {
 /// Result of executing a single tool call.
 #[derive(Debug, Clone)]
 pub struct AgentToolResult {
-    pub content: Vec<llm_client::Content>,
+    pub content: Vec<ai_provider::Content>,
     pub details: Option<serde_json::Value>,
     pub is_error: bool,
     /// When true, signals that the agent should stop after this tool result

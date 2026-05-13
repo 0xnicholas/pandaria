@@ -6,15 +6,15 @@ use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::context::CompactCtx;
 use agent_core::file_ops::DefaultFileOperationExtractor;
 use agent_core::mutations::CompactDecision;
-use agent_core::session::SessionActor;
-use agent_core::session_entry::SessionEntry;
+use agent_core::SessionActor;
+use agent_core::SessionEntry;
 use agent_core::test_utils::{TestProvider, TestResponse};
 use extensions::host::event_bus::EventBus;
 use extensions::host::extension::Extension;
 use extensions::host::extension_actor::{ExtensionActor, ObsEvent};
 use extensions::host::hook_router::HookRouter;
 
-fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> Arc<CompactionActor> {
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
     Arc::new(CompactionActor::new(
         CompactionConfig::default(),
         provider,
@@ -101,7 +101,7 @@ async fn test_overflow_triggers_compaction_with_extension_hook() {
     let has_compacted_text = results.iter().any(|m| {
         if let agent_core::types::AgentMessage::Assistant(a) = m {
             a.content.iter().any(|c| {
-                if let llm_client::Content::Text { text, .. } = c {
+                if let ai_provider::Content::Text { text, .. } = c {
                     text == "compacted"
                 } else {
                     false

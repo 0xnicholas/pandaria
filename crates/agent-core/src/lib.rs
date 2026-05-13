@@ -9,41 +9,54 @@
 //! - [`SessionStore`] is the persistence boundary (ADR-005)
 //! - [`ToolExecutor`] implements the tool execution pipeline
 
-pub mod compaction;
-pub mod context;
+// Core runtime (harness)
+pub mod harness;
+
+// Hook protocol and extension boundary
+pub mod hook;
+
+// Persistence boundary
+pub mod persistence;
+
+// Utilities
+pub mod utils;
+
+// Top-level modules
 pub mod error;
-pub mod error_recovery;
 pub mod events;
 pub mod file_ops;
-pub mod hook_dispatcher;
-pub mod mutations;
-pub mod provider_opts;
-pub mod session;
-pub mod session_entry;
-pub mod store;
-pub mod tool;
+pub mod test_utils;
 pub mod types;
 
-pub(crate) mod hook_timeout;
-pub(crate) mod util;
+// ═══ Compatibility re-exports ═══
+// These keep existing `use agent_core::SessionActor` paths working.
 
-#[path = "loop.rs"]
-pub mod loop_;
+pub use harness::{
+    compaction,
+    compaction::{CompactionActor, CompactionConfig, CompactionPreparation, CompactionResult},
+    error_recovery,
+    session::SessionActor,
+    tool::ToolExecutor,
+};
 
-pub mod test_utils;
+pub use harness::agent_loop::{AgentLoop, AgentLoopConfig, TurnResult};
 
-pub use compaction::*;
-pub use context::*;
+pub use hook::{
+    context,
+    dispatcher::HookDispatcher,
+    mutations,
+    timeout::with_timeout,
+};
+
+pub use persistence::{
+    entry::{CompactionDetails, SessionContextBuilder, SessionEntry},
+    store::SessionStore,
+};
+
+pub use utils::provider_opts::ProviderStreamOptions;
+
 pub use error::{AgentError, CompactionError};
 pub use error_recovery::{RecoveryAction, RecoveryStateMachine};
 pub use events::{AgentEvent, AgentEventListener};
 pub use file_ops::{DefaultFileOperationExtractor, FileOperationExtractor, FileOperations};
-pub use hook_dispatcher::HookDispatcher;
-pub use loop_::{AgentLoop, AgentLoopConfig, TurnResult};
-pub use mutations::*;
-pub use provider_opts::ProviderStreamOptions;
-pub use session::SessionActor;
-pub use session_entry::{CompactionDetails, SessionContextBuilder, SessionEntry};
-pub use store::SessionStore;
-pub use tool::ToolExecutor;
 pub use types::*;

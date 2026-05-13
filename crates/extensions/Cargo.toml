@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 agent-core = { path = "../agent-core" }
-llm-client = { path = "../llm-client" }
+ai-provider = { path = "../ai-provider" }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }

@@ -1,11 +1,11 @@
-use agent_core::compaction::{CompactionActor, CompactionConfig, should_compact};
+use agent_core::harness::compaction::{CompactionActor, CompactionConfig, should_compact};
 use agent_core::error::CompactionError;
 use agent_core::file_ops::DefaultFileOperationExtractor;
-use agent_core::hook_dispatcher::HookDispatcher;
-use agent_core::session_entry::{CompactionDetails, SessionEntry};
+use agent_core::hook::dispatcher::HookDispatcher;
+use agent_core::persistence::entry::{CompactionDetails, SessionEntry};
 use agent_core::types::AgentMessage;
 use agent_core::SessionActor;
-use llm_client::{
+use ai_provider::{
     Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, LlmContext,
     LlmError, LlmProvider, StopReason, StreamOptions, ToolCall, Usage, UserMessage,
 };
@@ -38,13 +38,13 @@ fn test_should_compact_disabled() {
 // CompactionActor preparation tests (sync)
 // ============================================================================
 
-fn make_test_provider() -> Arc<dyn llm_client::LlmProvider> {
+fn make_test_provider() -> Arc<dyn ai_provider::LlmProvider> {
     Arc::new(TestProvider)
 }
 
 struct TestProvider;
 #[async_trait::async_trait]
-impl llm_client::LlmProvider for TestProvider {
+impl ai_provider::LlmProvider for TestProvider {
     fn provider_name(&self) -> &str {
         "test"
     }
@@ -54,10 +54,10 @@ impl llm_client::LlmProvider for TestProvider {
     async fn stream(
         &self,
         _model: &str,
-        _context: llm_client::LlmContext,
-        _options: llm_client::StreamOptions,
+        _context: ai_provider::LlmContext,
+        _options: ai_provider::StreamOptions,
         _signal: tokio_util::sync::CancellationToken,
-    ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
+    ) -> Result<ai_provider::AssistantMessageEventStream, ai_provider::LlmError> {
         unreachable!()
     }
 }
@@ -531,7 +531,7 @@ async fn test_compact_session_entry_direct_construction() {
         modified_files: vec!["src/output.rs".into()],
     };
 
-    let result = agent_core::compaction::CompactionResult {
+    let result = agent_core::harness::compaction::CompactionResult {
         summary: "Test summary".to_string(),
         first_kept_entry_id: first_kept,
         tokens_before: 1200,

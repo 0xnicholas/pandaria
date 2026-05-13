@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use agent_core::types::AgentToolRef;
-use llm_client::ToolDef;
+use ai_provider::ToolDef;
 
 use super::event_bus::EventBus;
 use super::extension::Extension;

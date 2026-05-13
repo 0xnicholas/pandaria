@@ -6,7 +6,7 @@
 
 **Architecture:** 每个测试文件专注于一个独立的端到端场景。使用 `agent_core::test_utils::TestProvider` 和自定义 Mock Extension 来模拟各种交互，通过 `ExtensionManager` 或手动组装 HookRouter + ExtensionActor 来构建测试环境，最终验证 SessionActor / AgentLoop 驱动下的完整行为。
 
-**Tech Stack:** Rust, tokio, async-trait, agent-core, llm-client, extensions
+**Tech Stack:** Rust, tokio, async-trait, agent-core, ai-provider, extensions
 
 ---
 

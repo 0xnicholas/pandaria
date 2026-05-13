@@ -4,7 +4,7 @@ use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::context::{ProviderRequestCtx, ProviderResponseCtx};
 use agent_core::file_ops::DefaultFileOperationExtractor;
 use agent_core::mutations::{ProviderRequestMutation, ProviderResponseMutation};
-use agent_core::session::SessionActor;
+use agent_core::SessionActor;
 use agent_core::test_utils::TestProvider;
 use agent_core::types::AgentMessage;
 use async_trait::async_trait;
@@ -12,13 +12,13 @@ use extensions::host::event_bus::EventBus;
 use extensions::host::extension::Extension;
 use extensions::host::extension_actor::{ExtensionActor, ObsEvent};
 use extensions::host::hook_router::HookRouter;
-use llm_client::{
+use ai_provider::{
     Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, LlmContext,
     LlmProvider, StopReason, StreamOptions, Usage,
 };
 use tokio_util::sync::CancellationToken;
 
-fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> Arc<CompactionActor> {
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
     Arc::new(CompactionActor::new(
         CompactionConfig::default(),
         provider,
@@ -74,7 +74,7 @@ impl LlmProvider for VerifyProvider {
         context: LlmContext,
         _options: StreamOptions,
         _signal: CancellationToken,
-    ) -> Result<AssistantMessageEventStream, llm_client::LlmError> {
+    ) -> Result<AssistantMessageEventStream, ai_provider::LlmError> {
         if let Some(ref expected) = self.expected_system_prompt {
             assert_eq!(context.system_prompt, Some(expected.clone()));
         }

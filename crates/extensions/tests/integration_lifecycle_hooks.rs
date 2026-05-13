@@ -11,7 +11,7 @@ use agent_core::context::{
 use agent_core::mutations::{
     BeforeAgentStartMutation, ProviderRequestMutation, ProviderResponseMutation,
 };
-use agent_core::session::SessionActor;
+use agent_core::SessionActor;
 use agent_core::HookDispatcher;
 use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::file_ops::DefaultFileOperationExtractor;
@@ -21,7 +21,7 @@ use extensions::host::extension::Extension;
 use extensions::host::extension_actor::{ExtensionActor, ObsEvent};
 use extensions::host::hook_router::HookRouter;
 
-fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> Arc<CompactionActor> {
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
     Arc::new(CompactionActor::new(
         CompactionConfig::default(),
         provider,

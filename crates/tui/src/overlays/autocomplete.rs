@@ -1,32 +1,28 @@
 use crate::autocomplete::Suggestion;
-use crate::overlays::{Overlay, OverlayAction};
+use crate::component::{Component, InputResult, OverlayResult};
 use crate::ui::theme::Theme;
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::{
-    layout::Rect,
-    style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem},
-    Frame,
-};
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::{Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Widget};
 
 pub struct AutocompleteOverlay {
     suggestions: Vec<Suggestion>,
     selected: usize,
+    confirmed: Option<String>,
+    dismissed: bool,
 }
 
 impl AutocompleteOverlay {
     pub fn new(suggestions: Vec<Suggestion>) -> Self {
-        Self { suggestions, selected: 0 }
-    }
-
-    pub fn selected_value(&self) -> Option<&str> {
-        self.suggestions.get(self.selected).map(|s| s.value.as_str())
+        Self { suggestions, selected: 0, confirmed: None, dismissed: false }
     }
 }
 
-impl Overlay for AutocompleteOverlay {
-    fn render(&self, f: &mut Frame, area: Rect) {
+impl Component for AutocompleteOverlay {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
         let theme = Theme::default();
         let max_height = 8u16;
         let width = 50u16;
@@ -54,34 +50,23 @@ impl Overlay for AutocompleteOverlay {
             ]))
         }).collect();
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title("Suggestions")
-            .style(Style::default().fg(theme.text));
-        let list = List::new(items).block(block);
-        f.render_widget(Clear, overlay_area);
-        f.render_widget(list, overlay_area);
+        let block = Block::default().borders(Borders::ALL).title("Suggestions").style(Style::default().fg(theme.text));
+        Clear.render(overlay_area, buf);
+        List::new(items).block(block).render(overlay_area, buf);
     }
 
-    fn handle_input(&mut self, key: KeyEvent) -> OverlayAction {
+    fn handle_input(&mut self, key: KeyEvent) -> InputResult {
         match key.code {
-            KeyCode::Up => {
-                if self.selected > 0 { self.selected -= 1; }
-                OverlayAction::Consumed
-            }
-            KeyCode::Down => {
-                if self.selected + 1 < self.suggestions.len() {
-                    self.selected += 1;
-                }
-                OverlayAction::Consumed
-            }
-            KeyCode::Enter => {
-                OverlayAction::Confirm(self.selected_value().unwrap_or("").to_string())
-            }
-            KeyCode::Esc => OverlayAction::Dismiss,
-            _ => OverlayAction::Consumed,
+            KeyCode::Up => { if self.selected > 0 { self.selected -= 1; } InputResult::Consumed }
+            KeyCode::Down => { if self.selected + 1 < self.suggestions.len() { self.selected += 1; } InputResult::Consumed }
+            KeyCode::Enter => { self.confirmed = self.suggestions.get(self.selected).map(|s| s.value.clone()); InputResult::Consumed }
+            KeyCode::Esc => { self.dismissed = true; InputResult::Consumed }
+            _ => InputResult::Consumed,
         }
     }
 
-    fn is_capturing(&self) -> bool { true }
+    fn take_result(&mut self) -> OverlayResult {
+        if self.dismissed { return OverlayResult::Dismissed; }
+        self.confirmed.take().map_or(OverlayResult::Pending, OverlayResult::Confirmed)
+    }
 }

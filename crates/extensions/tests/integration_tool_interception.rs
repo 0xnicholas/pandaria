@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use llm_client::{Content, ToolDef};
+use ai_provider::{Content, ToolDef};
 
 use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::context::ToolCallCtx;
 use agent_core::error::AgentError;
 use agent_core::file_ops::DefaultFileOperationExtractor;
 use agent_core::mutations::{HookDecision, ToolCallMutation};
-use agent_core::session::SessionActor;
+use agent_core::SessionActor;
 use agent_core::test_utils::{TestProvider, TestResponse, TestToolCall};
 use agent_core::types::{AgentMessage, AgentToolResult};
 use extensions::host::extension::Extension;
 use extensions::host::manager::ExtensionManager;
 
-fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> Arc<CompactionActor> {
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
     Arc::new(CompactionActor::new(
         CompactionConfig::default(),
         provider,

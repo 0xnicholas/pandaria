@@ -5,7 +5,7 @@ use agent_core::context::CompactCtx;
 use agent_core::mutations::{CompactDecision, HookDecision, ToolCallMutation};
 use agent_core::HookDispatcher;
 use agent_core::compaction::{CompactionPreparation, CompactionResult};
-use agent_core::session_entry::SessionEntry;
+use agent_core::SessionEntry;
 use agent_core::context::CompactReason;
 use extensions::host::event_bus::EventBus;
 use extensions::host::extension::Extension;

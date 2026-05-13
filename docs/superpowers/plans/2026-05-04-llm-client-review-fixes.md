@@ -1,8 +1,8 @@
-# llm-client Code Review Fixes Implementation Plan
+# ai-provider Code Review Fixes Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Address 12 issues identified in the llm-client code review: eliminate provider boilerplate duplication, fix bugs (TOCTOU, dead code, no-op test), improve API design (OAuth error types, streaming parser, transform signature), and add missing tests/docs.
+**Goal:** Address 12 issues identified in the ai-provider code review: eliminate provider boilerplate duplication, fix bugs (TOCTOU, dead code, no-op test), improve API design (OAuth error types, streaming parser, transform signature), and add missing tests/docs.
 
 > Note: Issue #4 (`expect` in provider constructors) is already ADR-compliant — the ADR says to use `?` or explicit `expect("reason")`. The existing code uses `expect("reqwest client should build")` with a reason, so no fix needed.
 
@@ -17,28 +17,28 @@
 ### Files to Modify
 | File | Changes |
 |---|---|
-| `crates/llm-client/src/cache.rs` | Rename env var `PI_CACHE_RETENTION` → `PANDARIA_CACHE_RETENTION` |
-| `crates/llm-client/src/provider.rs` | Remove dead `XHigh` arm in `adjust_max_tokens_for_thinking` |
-| `crates/llm-client/src/providers/bedrock.rs` | Remove meaningless `test_provider_name_static` test |
-| `crates/llm-client/src/util.rs` | Remove `build_tool_defs` function |
-| `crates/llm-client/src/lib.rs` | Remove `build_tool_defs` re-export; update `OAuthProvider` re-exports |
-| `crates/llm-client/src/validation.rs` | Fix TOCTOU race in `validate_tool_arguments` cache logic |
-| `crates/llm-client/src/transform.rs` | Change `transform_messages` signature to `Vec<Message>`; update tests |
-| `crates/llm-client/tests/transform_tests.rs` | Update to pass `Vec<Message>` |
-| `crates/llm-client/src/repair.rs` | Add `peek_value()` to `StreamingJsonParser` for incremental parse |
-| `crates/llm-client/src/oauth.rs` | Change `OAuthProvider` trait errors from `io::Error` to `LlmError`; simplify `resolve_oauth_key` signature |
-| `crates/llm-client/src/providers/anthropic.rs` | Replace boilerplate with macro; add docs; update `resolve_api_key`; fix `models()` |
-| `crates/llm-client/src/providers/openai.rs` | Replace boilerplate with macro; add docs; update `resolve_api_key`; fix `models()` |
-| `crates/llm-client/src/providers/google.rs` | Replace boilerplate with macro; add docs; update `resolve_api_key`; fix `models()` |
-| `crates/llm-client/src/providers/mistral.rs` | Replace boilerplate with macro; add docs; update `resolve_api_key`; fix `models()` |
-| `crates/llm-client/src/providers/mod.rs` | Add `shared` module |
-| `crates/llm-client/src/models.rs` | Add `models_for_provider_names()` returning `Vec<String>` (model IDs) |
+| `crates/ai-provider/src/cache.rs` | Rename env var `PI_CACHE_RETENTION` → `PANDARIA_CACHE_RETENTION` |
+| `crates/ai-provider/src/provider.rs` | Remove dead `XHigh` arm in `adjust_max_tokens_for_thinking` |
+| `crates/ai-provider/src/providers/bedrock.rs` | Remove meaningless `test_provider_name_static` test |
+| `crates/ai-provider/src/util.rs` | Remove `build_tool_defs` function |
+| `crates/ai-provider/src/lib.rs` | Remove `build_tool_defs` re-export; update `OAuthProvider` re-exports |
+| `crates/ai-provider/src/validation.rs` | Fix TOCTOU race in `validate_tool_arguments` cache logic |
+| `crates/ai-provider/src/transform.rs` | Change `transform_messages` signature to `Vec<Message>`; update tests |
+| `crates/ai-provider/tests/transform_tests.rs` | Update to pass `Vec<Message>` |
+| `crates/ai-provider/src/repair.rs` | Add `peek_value()` to `StreamingJsonParser` for incremental parse |
+| `crates/ai-provider/src/oauth.rs` | Change `OAuthProvider` trait errors from `io::Error` to `LlmError`; simplify `resolve_oauth_key` signature |
+| `crates/ai-provider/src/providers/anthropic.rs` | Replace boilerplate with macro; add docs; update `resolve_api_key`; fix `models()` |
+| `crates/ai-provider/src/providers/openai.rs` | Replace boilerplate with macro; add docs; update `resolve_api_key`; fix `models()` |
+| `crates/ai-provider/src/providers/google.rs` | Replace boilerplate with macro; add docs; update `resolve_api_key`; fix `models()` |
+| `crates/ai-provider/src/providers/mistral.rs` | Replace boilerplate with macro; add docs; update `resolve_api_key`; fix `models()` |
+| `crates/ai-provider/src/providers/mod.rs` | Add `shared` module |
+| `crates/ai-provider/src/models.rs` | Add `models_for_provider_names()` returning `Vec<String>` (model IDs) |
 
 ### New Files to Create
 | File | Responsibility |
 |---|---|
-| `crates/llm-client/src/providers/shared.rs` | Macro + helpers for shared provider boilerplate |
-| `crates/llm-client/tests/provider_requests.rs` | Request body validation tests for each provider |
+| `crates/ai-provider/src/providers/shared.rs` | Macro + helpers for shared provider boilerplate |
+| `crates/ai-provider/tests/provider_requests.rs` | Request body validation tests for each provider |
 
 ---
 
@@ -53,7 +53,7 @@
 
 ### Task 1: Rename env var `PI_CACHE_RETENTION` → `PANDARIA_CACHE_RETENTION`
 
-**Files:** Modify: `crates/llm-client/src/cache.rs:15,53`
+**Files:** Modify: `crates/ai-provider/src/cache.rs:15,53`
 
 - [ ] **Step 1: Rename the env var string**
 
@@ -68,13 +68,13 @@ Also update the test comment on line 53.
 
 - [ ] **Step 2: Run tests to verify**
 
-Run: `cargo test -p llm-client cache`
+Run: `cargo test -p ai-provider cache`
 Expected: 3 tests PASS
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/llm-client/src/cache.rs
+git add crates/ai-provider/src/cache.rs
 git commit -m "fix: rename cache retention env var to PANDARIA_CACHE_RETENTION"
 ```
 
@@ -82,7 +82,7 @@ git commit -m "fix: rename cache retention env var to PANDARIA_CACHE_RETENTION"
 
 ### Task 2: Fix dead code in `adjust_max_tokens_for_thinking`
 
-**Files:** Modify: `crates/llm-client/src/provider.rs:43-55`
+**Files:** Modify: `crates/ai-provider/src/provider.rs:43-55`
 
 The `XHigh` arm at line 54 is unreachable because lines 43-47 map `XHigh` to `High` before the match. Remove the mapping and handle `XHigh` directly.
 
@@ -108,13 +108,13 @@ Note: XHigh uses the same budget as High (no separate XHigh budget field), but t
 
 The test `test_adjust_tokens_xhigh_clamped` at line 311 expects `max_tokens == 20480` and `thinking_budget == 16384`. This should still pass since XHigh uses `high` budget (16384 default). Verify.
 
-Run: `cargo test -p llm-client adjust_tokens`
+Run: `cargo test -p ai-provider adjust_tokens`
 Expected: 4 tests PASS
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/llm-client/src/provider.rs
+git add crates/ai-provider/src/provider.rs
 git commit -m "fix: remove dead XHigh arm in adjust_max_tokens_for_thinking"
 ```
 
@@ -122,7 +122,7 @@ git commit -m "fix: remove dead XHigh arm in adjust_max_tokens_for_thinking"
 
 ### Task 3: Fix Bedrock no-op test
 
-**Files:** Modify: `crates/llm-client/src/providers/bedrock.rs:69-78`
+**Files:** Modify: `crates/ai-provider/src/providers/bedrock.rs:69-78`
 
 - [ ] **Step 1: Remove the meaningless test**
 
@@ -130,13 +130,13 @@ Delete the entire `#[cfg(test)] mod tests` block (lines 69-78). The `test_provid
 
 - [ ] **Step 2: Verify the file still compiles**
 
-Run: `cargo check -p llm-client --features bedrock`
+Run: `cargo check -p ai-provider --features bedrock`
 Expected: success
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/llm-client/src/providers/bedrock.rs
+git add crates/ai-provider/src/providers/bedrock.rs
 git commit -m "fix: remove meaningless bedrock provider test"
 ```
 
@@ -145,8 +145,8 @@ git commit -m "fix: remove meaningless bedrock provider test"
 ### Task 4: Remove `build_tool_defs` thin wrapper
 
 **Files:**
-- Modify: `crates/llm-client/src/util.rs:14-18, 54-70`
-- Modify: `crates/llm-client/src/lib.rs:43`
+- Modify: `crates/ai-provider/src/util.rs:14-18, 54-70`
+- Modify: `crates/ai-provider/src/lib.rs:43`
 
 `build_tool_defs` is just `tools.to_vec()` with a semantic name. No external callers exist.
 
@@ -167,13 +167,13 @@ pub use util::extract_tool_calls;
 
 - [ ] **Step 3: Verify tests pass**
 
-Run: `cargo test -p llm-client util`
+Run: `cargo test -p ai-provider util`
 Expected: 2 tests PASS (extract_tool_calls tests)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/llm-client/src/util.rs crates/llm-client/src/lib.rs
+git add crates/ai-provider/src/util.rs crates/ai-provider/src/lib.rs
 git commit -m "refactor: remove build_tool_defs thin wrapper"
 ```
 
@@ -181,7 +181,7 @@ git commit -m "refactor: remove build_tool_defs thin wrapper"
 
 ### Task 5: Add missing docs to provider structs and public methods
 
-**Files:** Modify: `crates/llm-client/src/providers/{anthropic,openai,google,mistral}.rs`
+**Files:** Modify: `crates/ai-provider/src/providers/{anthropic,openai,google,mistral}.rs`
 
 Add `///` doc comments to each provider struct, constructor, and public method.
 
@@ -215,13 +215,13 @@ Use the same pattern, adjusting the description text per provider.
 
 - [ ] **Step 3: Verify clippy is still clean**
 
-Run: `cargo clippy -p llm-client -- -D warnings`
+Run: `cargo clippy -p ai-provider -- -D warnings`
 Expected: success
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/llm-client/src/providers/
+git add crates/ai-provider/src/providers/
 git commit -m "docs: add doc comments to provider structs and constructors"
 ```
 
@@ -229,7 +229,7 @@ git commit -m "docs: add doc comments to provider structs and constructors"
 
 ### Task 6: Fix TOCTOU race in `validate_tool_arguments`
 
-**Files:** Modify: `crates/llm-client/src/validation.rs:124-188`
+**Files:** Modify: `crates/ai-provider/src/validation.rs:124-188`
 
 The current code checks the cache under a lock (lines 133-159), drops the lock, then acquires it again to write (lines 173-176). Two concurrent calls could both miss and compile separately.
 
@@ -309,7 +309,7 @@ pub fn validate_tool_arguments(
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p llm-client validation`
+Run: `cargo test -p ai-provider validation`
 Expected: 8 tests PASS (6 unit + 8 integration in validation_tests.rs = 14 total)
 
 - [ ] **Step 3: Verify no dead imports**
@@ -319,7 +319,7 @@ Check that removing the duplicate `collect_errors` and `schema_violation` method
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/llm-client/src/validation.rs
+git add crates/ai-provider/src/validation.rs
 git commit -m "fix: TOCTOU race in validate_tool_arguments schema cache"
 ```
 
@@ -328,8 +328,8 @@ git commit -m "fix: TOCTOU race in validate_tool_arguments schema cache"
 ### Task 7: Fix `transform_messages` signature
 
 **Files:**
-- Modify: `crates/llm-client/src/transform.rs:21, 38, 239, 275, 298, 345, 386`
-- Modify: `crates/llm-client/tests/transform_tests.rs:62, 85, 110, 145, 168, 196, 218, 237`
+- Modify: `crates/ai-provider/src/transform.rs:21, 38, 239, 275, 298, 345, 386`
+- Modify: `crates/ai-provider/tests/transform_tests.rs:62, 85, 110, 145, 168, 196, 218, 237`
 
 The function takes `&[Message]` but immediately clones to `messages.to_vec()`. Change to `Vec<Message>` to be explicit about ownership. No external callers exist.
 
@@ -354,13 +354,13 @@ In `tests/transform_tests.rs`, change all 8 call sites from `transform_messages(
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p llm-client transform`
+Run: `cargo test -p ai-provider transform`
 Expected: all transform tests PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/llm-client/src/transform.rs crates/llm-client/tests/transform_tests.rs
+git add crates/ai-provider/src/transform.rs crates/ai-provider/tests/transform_tests.rs
 git commit -m "refactor: take Vec<Message> by value in transform_messages"
 ```
 
@@ -368,7 +368,7 @@ git commit -m "refactor: take Vec<Message> by value in transform_messages"
 
 ### Task 8: Add incremental parse to `StreamingJsonParser`
 
-**Files:** Modify: `crates/llm-client/src/repair.rs:13-41`
+**Files:** Modify: `crates/ai-provider/src/repair.rs:13-41`
 
 Add a `peek_value()` method that returns the current best-effort parse result without consuming the parser, enabling consumers to progressively validate tool call arguments during streaming.
 
@@ -418,13 +418,13 @@ fn test_streaming_parser_peek_progressive() {
 
 - [ ] **Step 3: Run tests**
 
-Run: `cargo test -p llm-client repair`
+Run: `cargo test -p ai-provider repair`
 Expected: all repair tests PASS (now ~13 tests)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/llm-client/src/repair.rs
+git add crates/ai-provider/src/repair.rs
 git commit -m "feat: add peek_value to StreamingJsonParser for incremental parse"
 ```
 
@@ -433,12 +433,12 @@ git commit -m "feat: add peek_value to StreamingJsonParser for incremental parse
 ### Task 9: Extract shared provider boilerplate via macro
 
 **Files:**
-- Create: `crates/llm-client/src/providers/shared.rs`
-- Modify: `crates/llm-client/src/providers/mod.rs`
-- Modify: `crates/llm-client/src/providers/anthropic.rs`
-- Modify: `crates/llm-client/src/providers/openai.rs`
-- Modify: `crates/llm-client/src/providers/google.rs`
-- Modify: `crates/llm-client/src/providers/mistral.rs`
+- Create: `crates/ai-provider/src/providers/shared.rs`
+- Modify: `crates/ai-provider/src/providers/mod.rs`
+- Modify: `crates/ai-provider/src/providers/anthropic.rs`
+- Modify: `crates/ai-provider/src/providers/openai.rs`
+- Modify: `crates/ai-provider/src/providers/google.rs`
+- Modify: `crates/ai-provider/src/providers/mistral.rs`
 
 This is the largest task. It creates a macro that generates the struct, constructors, `resolve_api_key` (with unified OAuth + static key chain), `LlmProvider` trait impl, and `stream()` method. Each provider file then invokes the macro and defines only `try_stream`.
 
@@ -690,23 +690,23 @@ crate::providers::shared::define_provider!(
 
 - [ ] **Step 7: Compile and fix errors**
 
-Run: `cargo check -p llm-client 2>&1`
+Run: `cargo check -p ai-provider 2>&1`
 Expected: check for compilation errors, fix any that arise (likely `self.client` → `self.client()` accessor renames, import cleanup)
 
 - [ ] **Step 8: Run full test suite**
 
-Run: `cargo test -p llm-client`
+Run: `cargo test -p ai-provider`
 Expected: all ~184 tests PASS
 
 - [ ] **Step 9: Run clippy**
 
-Run: `cargo clippy -p llm-client -- -D warnings`
+Run: `cargo clippy -p ai-provider -- -D warnings`
 Expected: success
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add crates/llm-client/src/providers/shared.rs crates/llm-client/src/providers/mod.rs crates/llm-client/src/providers/anthropic.rs crates/llm-client/src/providers/openai.rs crates/llm-client/src/providers/google.rs crates/llm-client/src/providers/mistral.rs
+git add crates/ai-provider/src/providers/shared.rs crates/ai-provider/src/providers/mod.rs crates/ai-provider/src/providers/anthropic.rs crates/ai-provider/src/providers/openai.rs crates/ai-provider/src/providers/google.rs crates/ai-provider/src/providers/mistral.rs
 git commit -m "refactor: extract shared provider boilerplate into macro"
 ```
 
@@ -715,11 +715,11 @@ git commit -m "refactor: extract shared provider boilerplate into macro"
 ### Task 10: Fix `models()` to delegate to `models_data.rs`
 
 **Files:**
-- Modify: `crates/llm-client/src/models.rs`
-- Modify: `crates/llm-client/src/providers/anthropic.rs`
-- Modify: `crates/llm-client/src/providers/openai.rs`
-- Modify: `crates/llm-client/src/providers/google.rs`
-- Modify: `crates/llm-client/src/providers/mistral.rs`
+- Modify: `crates/ai-provider/src/models.rs`
+- Modify: `crates/ai-provider/src/providers/anthropic.rs`
+- Modify: `crates/ai-provider/src/providers/openai.rs`
+- Modify: `crates/ai-provider/src/providers/google.rs`
+- Modify: `crates/ai-provider/src/providers/mistral.rs`
 
 The macro in Task 9 already generates `models()` that reads from `ModelRegistry`. But each provider currently has a separate unit test checking hardcoded model lists. Those tests will now return different counts (from `models_data.rs`). Also, model lists in `models_data.rs` may need updating.
 
@@ -762,13 +762,13 @@ Do this for all four provider test modules.
 
 - [ ] **Step 3: Run tests**
 
-Run: `cargo test -p llm-client`
+Run: `cargo test -p ai-provider`
 Expected: all tests PASS
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/llm-client/src/providers/
+git add crates/ai-provider/src/providers/
 git commit -m "fix: delegate provider models() to centralized models_data.rs"
 ```
 
@@ -777,9 +777,9 @@ git commit -m "fix: delegate provider models() to centralized models_data.rs"
 ### Task 11: Fix OAuthProvider error types and `resolve_oauth_key` signature
 
 **Files:**
-- Modify: `crates/llm-client/src/oauth.rs`
-- Modify: `crates/llm-client/src/providers/shared.rs`
-- Modify: `crates/llm-client/tests/oauth_tests.rs`
+- Modify: `crates/ai-provider/src/oauth.rs`
+- Modify: `crates/ai-provider/src/providers/shared.rs`
+- Modify: `crates/ai-provider/tests/oauth_tests.rs`
 
 The `OAuthProvider` trait methods return `std::io::Error` which is inappropriate for OAuth flows. Change to `LlmError`. Also simplify `resolve_oauth_key` signature from `&Option<Arc<dyn OAuthProvider>>` to `Option<&Arc<dyn OAuthProvider>>`.
 
@@ -850,18 +850,18 @@ if let Some(key) =
 
 In `tests/oauth_tests.rs`, update any test mock implementations of `OAuthProvider` to return `Result<OAuthToken, LlmError>` instead of `Result<OAuthToken, std::io::Error>`. Change `std::io::Error` imports to `LlmError`.
 
-Run: `cargo test -p llm-client oauth`
+Run: `cargo test -p ai-provider oauth`
 Expected: all oauth tests PASS
 
 - [ ] **Step 5: Run full test suite**
 
-Run: `cargo test -p llm-client`
+Run: `cargo test -p ai-provider`
 Expected: all ~184 tests PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/llm-client/src/oauth.rs crates/llm-client/src/providers/shared.rs crates/llm-client/tests/oauth_tests.rs
+git add crates/ai-provider/src/oauth.rs crates/ai-provider/src/providers/shared.rs crates/ai-provider/tests/oauth_tests.rs
 git commit -m "refactor: use LlmError in OAuthProvider, simplify resolve_oauth_key signature"
 ```
 
@@ -869,13 +869,13 @@ git commit -m "refactor: use LlmError in OAuthProvider, simplify resolve_oauth_k
 
 ### Task 12: Add request body validation tests
 
-**Files:** Create: `crates/llm-client/tests/provider_requests.rs`
+**Files:** Create: `crates/ai-provider/tests/provider_requests.rs`
 
 Add integration tests using wiremock to verify the HTTP request bodies sent to each provider are correctly structured.
 
 - [ ] **Step 1: Create test file**
 
-Create `crates/llm-client/tests/provider_requests.rs`:
+Create `crates/ai-provider/tests/provider_requests.rs`:
 
 ```rust
 use llm_client::{
@@ -1010,13 +1010,13 @@ Only Anthropic and OpenAI are tested with wiremock since Google and Mistral test
 
 - [ ] **Step 2: Run the new tests**
 
-Run: `cargo test -p llm-client --test provider_requests`
+Run: `cargo test -p ai-provider --test provider_requests`
 Expected: 2 tests PASS (or more if Google/Mistral added)
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/llm-client/tests/provider_requests.rs
+git add crates/ai-provider/tests/provider_requests.rs
 git commit -m "test: add request body validation tests for providers"
 ```
 
@@ -1027,8 +1027,8 @@ git commit -m "test: add request body validation tests for providers"
 After all tasks complete, run the full verification:
 
 ```bash
-cargo test -p llm-client
-cargo clippy -p llm-client --all-features -- -D warnings
+cargo test -p ai-provider
+cargo clippy -p ai-provider --all-features -- -D warnings
 cargo check -p agent-core  # Ensure downstream compiles
 cargo check -p extensions   # Ensure downstream compiles
 ```

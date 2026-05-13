@@ -1,19 +1,19 @@
 use std::sync::{Arc, Mutex};
 
-use llm_client::{
+use ai_provider::{
     Content, LlmContext, LlmProvider, StopReason, StreamOptions,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
-use crate::context::{BeforeAgentStartCtx, ProviderRequestCtx, ProviderResponseCtx, ContextCtx, TurnEndCtx, AgentEndCtx};
-use crate::mutations::{BeforeAgentStartMutation, ProviderRequestMutation, ProviderResponseMutation};
+use crate::hook::context::{BeforeAgentStartCtx, ProviderRequestCtx, ProviderResponseCtx, ContextCtx, TurnEndCtx, AgentEndCtx};
+use crate::hook::mutations::{BeforeAgentStartMutation, ProviderRequestMutation, ProviderResponseMutation};
 use crate::events::AgentEvent;
-use crate::provider_opts::ProviderStreamOptions;
-use crate::hook_timeout::with_timeout;
+use crate::utils::provider_opts::ProviderStreamOptions;
+use crate::hook::timeout::with_timeout;
 use crate::error::AgentError;
-use crate::hook_dispatcher::HookDispatcher;
-use crate::tool::ToolExecutor;
+use crate::hook::dispatcher::HookDispatcher;
+use crate::harness::tool::ToolExecutor;
 use crate::types::{AgentMessage, AgentToolRef, ToolExecutionMode};
 
 pub struct AgentLoopConfig {
@@ -37,9 +37,9 @@ pub enum TurnResult {
     Error(AgentError),
 }
 
-fn build_tool_defs(tools: &[AgentToolRef]) -> Option<Vec<llm_client::ToolDef>> {
+fn build_tool_defs(tools: &[AgentToolRef]) -> Option<Vec<ai_provider::ToolDef>> {
     if tools.is_empty() { None }
-    else { Some(tools.iter().map(|t| llm_client::ToolDef { name: t.name().to_string(), description: t.description().to_string(), parameters: t.parameters() }).collect()) }
+    else { Some(tools.iter().map(|t| ai_provider::ToolDef { name: t.name().to_string(), description: t.description().to_string(), parameters: t.parameters() }).collect()) }
 }
 
 fn build_tool_value_defs(tools: &[AgentToolRef]) -> Vec<serde_json::Value> {
@@ -60,7 +60,7 @@ fn apply_provider_request_mutation(ctx: &mut LlmContext, opts: &mut StreamOption
     }
 }
 
-fn apply_provider_response_mutation(msg: &mut llm_client::AssistantMessage, mutation: ProviderResponseMutation) {
+fn apply_provider_response_mutation(msg: &mut ai_provider::AssistantMessage, mutation: ProviderResponseMutation) {
     if let Some(content) = mutation.content { msg.content = content; }
     if let Some(stop_reason) = mutation.stop_reason { msg.stop_reason = stop_reason; }
 }
@@ -73,7 +73,7 @@ pub fn resolve_orphan_tool_calls(messages: &mut Vec<AgentMessage>) {
         match msg {
             AgentMessage::Assistant(a) => {
                 for content in &a.content {
-                    if let llm_client::Content::ToolCall(tc) = content { tool_call_ids.push((i, tc.id.clone())); }
+                    if let ai_provider::Content::ToolCall(tc) = content { tool_call_ids.push((i, tc.id.clone())); }
                 }
             }
             AgentMessage::ToolResult(tr) => { resolved_ids.insert(tr.tool_call_id.clone()); }
@@ -85,7 +85,7 @@ pub fn resolve_orphan_tool_calls(messages: &mut Vec<AgentMessage>) {
         .map(|(idx, id)| {
             let tool_name = match &messages[idx] {
                 AgentMessage::Assistant(a) => a.content.iter().find_map(|c| match c {
-                    llm_client::Content::ToolCall(tc) if tc.id == id => Some(tc.name.clone()),
+                    ai_provider::Content::ToolCall(tc) if tc.id == id => Some(tc.name.clone()),
                     _ => None,
                 }),
                 _ => None,
@@ -94,7 +94,7 @@ pub fn resolve_orphan_tool_calls(messages: &mut Vec<AgentMessage>) {
         }).collect();
     orphans.sort_by(|a, b| b.0.cmp(&a.0));
     for (idx, id, tool_name) in orphans {
-        messages.insert(idx + 1, AgentMessage::ToolResult(llm_client::ToolResultMessage {
+        messages.insert(idx + 1, AgentMessage::ToolResult(ai_provider::ToolResultMessage {
             tool_call_id: id, tool_name, content: vec![],
             details: Some(serde_json::json!({"_orphan": true, "message": "tool call was not executed (context truncated or restored)"})),
             is_error: true, timestamp: std::time::SystemTime::now(),
@@ -131,7 +131,7 @@ impl AgentLoop {
             system_prompt: self.config.system_prompt.clone(), messages: initial_messages.clone(),
             tools: build_tool_value_defs(&self.config.tools), model: self.config.model.clone(),
         };
-        let agent_start_mutation = crate::hook_timeout::with_timeout(
+        let agent_start_mutation = crate::hook::timeout::with_timeout(
             self.config.hook_dispatcher.on_before_agent_start(&agent_start_ctx),
             500,
             BeforeAgentStartMutation::default(),
@@ -244,15 +244,15 @@ impl AgentLoop {
 
         // Cross-provider message normalization (spec §2.2 step 2.6)
         let provider_name = self.config.provider.provider_name();
-        let supports_images = llm_client::get_model(provider_name, &self.config.model)
-            .map(|m| m.input_modalities.iter().any(|modality| matches!(modality, llm_client::Modality::Image)))
+        let supports_images = ai_provider::get_model(provider_name, &self.config.model)
+            .map(|m| m.input_modalities.iter().any(|modality| matches!(modality, ai_provider::Modality::Image)))
             .unwrap_or(false);
-        let transform_opts = llm_client::TransformOptions {
+        let transform_opts = ai_provider::TransformOptions {
             target_api: Some(provider_name.to_string()),
             supports_images,
             preserve_thinking: false, // v0.1: strip thinking for safety
         };
-        ctx.messages = llm_client::transform_messages(&ctx.messages, &transform_opts);
+        ctx.messages = ai_provider::transform_messages(&ctx.messages, &transform_opts);
 
         let (retry_count, mut assistant_msg) = match self.call_llm_with_retry(ctx, stream_opts, *message_index, signal).await {
             Ok(result) => result,
@@ -277,8 +277,8 @@ impl AgentLoop {
         new_messages.push(AgentMessage::Assistant(assistant_msg.clone()));
         messages.push(AgentMessage::Assistant(assistant_msg.clone()));
 
-        let tool_calls: Vec<&llm_client::ToolCall> = assistant_msg.content.iter().filter_map(|c| match c {
-            llm_client::Content::ToolCall(tc) => Some(tc), _ => None,
+        let tool_calls: Vec<&ai_provider::ToolCall> = assistant_msg.content.iter().filter_map(|c| match c {
+            ai_provider::Content::ToolCall(tc) => Some(tc), _ => None,
         }).collect();
 
         if tool_calls.is_empty() {
@@ -343,7 +343,7 @@ impl AgentLoop {
         else { TurnResult::Stop }
     }
 
-    async fn call_llm_with_retry(&self, ctx: LlmContext, stream_opts: StreamOptions, message_index: u64, signal: &CancellationToken) -> Result<(u32, llm_client::AssistantMessage), AgentError> {
+    async fn call_llm_with_retry(&self, ctx: LlmContext, stream_opts: StreamOptions, message_index: u64, signal: &CancellationToken) -> Result<(u32, ai_provider::AssistantMessage), AgentError> {
         let mut retry_count: u32 = 0;
         let max_retries = stream_opts.max_retries;
 
@@ -374,8 +374,8 @@ impl AgentLoop {
 
             let provider_name = self.config.provider.provider_name().to_string();
             let mut assistant_content: Vec<Content> = Vec::new();
-            let mut api = llm_client::Api { provider: provider_name.clone(), model: self.config.model.clone() };
-            let mut usage = llm_client::Usage {
+            let mut api = ai_provider::Api { provider: provider_name.clone(), model: self.config.model.clone() };
+            let mut usage = ai_provider::Usage {
                 input_tokens: 0, output_tokens: 0,
                 cache_creation_input_tokens: None, cache_read_input_tokens: None,
                 total_tokens: 0,
@@ -389,31 +389,31 @@ impl AgentLoop {
                     return Err(AgentError::Cancelled);
                 }
                 match event {
-                    llm_client::AssistantMessageEvent::Start { .. } => {}
-                    llm_client::AssistantMessageEvent::TextStart { .. } => {}
-                    llm_client::AssistantMessageEvent::TextDelta { content_index, delta, .. } => {
+                    ai_provider::AssistantMessageEvent::Start { .. } => {}
+                    ai_provider::AssistantMessageEvent::TextStart { .. } => {}
+                    ai_provider::AssistantMessageEvent::TextDelta { content_index, delta, .. } => {
                         text_accum.entry(content_index).or_default().push_str(&delta);
                         (self.config.event_sink)(AgentEvent::MessageUpdate { message_index, content_delta: delta });
                     }
-                    llm_client::AssistantMessageEvent::TextEnd { content_index, text, .. } => {
+                    ai_provider::AssistantMessageEvent::TextEnd { content_index, text, .. } => {
                         let accumulated = text_accum.remove(&content_index).unwrap_or(text);
                         assistant_content.push(Content::Text { text: accumulated, text_signature: None });
                     }
-                    llm_client::AssistantMessageEvent::ThinkingStart { .. } => {}
-                    llm_client::AssistantMessageEvent::ThinkingDelta { .. } => {}
-                    llm_client::AssistantMessageEvent::ThinkingEnd { .. } => {}
-                    llm_client::AssistantMessageEvent::ToolCallStart { .. } => {}
-                    llm_client::AssistantMessageEvent::ToolCallDelta { .. } => {}
-                    llm_client::AssistantMessageEvent::ToolCallEnd { tool_call, .. } => {
+                    ai_provider::AssistantMessageEvent::ThinkingStart { .. } => {}
+                    ai_provider::AssistantMessageEvent::ThinkingDelta { .. } => {}
+                    ai_provider::AssistantMessageEvent::ThinkingEnd { .. } => {}
+                    ai_provider::AssistantMessageEvent::ToolCallStart { .. } => {}
+                    ai_provider::AssistantMessageEvent::ToolCallDelta { .. } => {}
+                    ai_provider::AssistantMessageEvent::ToolCallEnd { tool_call, .. } => {
                         assistant_content.push(Content::ToolCall(tool_call));
                     }
-                    llm_client::AssistantMessageEvent::Done { reason, message } => {
+                    ai_provider::AssistantMessageEvent::Done { reason, message } => {
                         assistant_content = message.content;
                         api = message.api;
                         usage = message.usage;
                         stop_reason = reason;
                     }
-                    llm_client::AssistantMessageEvent::Error { error } => {
+                    ai_provider::AssistantMessageEvent::Error { error } => {
                         error_message = error.error_message;
                         stop_reason = error.stop_reason;
                         break;
@@ -421,7 +421,7 @@ impl AgentLoop {
                 }
             }
 
-            let assistant_msg = llm_client::AssistantMessage {
+            let assistant_msg = ai_provider::AssistantMessage {
                 content: assistant_content,
                 provider: provider_name,
                 model: self.config.model.clone(),
@@ -455,7 +455,7 @@ impl AgentLoop {
         }
     }
 
-    async fn execute_single_tool(&self, tc: &llm_client::ToolCall) -> llm_client::ToolResultMessage {
+    async fn execute_single_tool(&self, tc: &ai_provider::ToolCall) -> ai_provider::ToolResultMessage {
         (self.config.event_sink)(AgentEvent::ToolExecutionStart {
             tool_call_id: tc.id.clone(),
             tool_name: tc.name.clone(),
@@ -481,7 +481,7 @@ impl AgentLoop {
                 })).await;
                 match result {
                     Ok(msg) => msg,
-                    Err(e) => llm_client::ToolResultMessage {
+                    Err(e) => ai_provider::ToolResultMessage {
                         tool_call_id: tc.id.clone(),
                         tool_name: tc.name.clone(),
                         content: vec![],
@@ -492,7 +492,7 @@ impl AgentLoop {
                 }
             }
             None => {
-                llm_client::ToolResultMessage {
+                ai_provider::ToolResultMessage {
                     tool_call_id: tc.id.clone(),
                     tool_name: tc.name.clone(),
                     content: vec![],
@@ -511,7 +511,7 @@ impl AgentLoop {
         result
     }
 
-    async fn execute_tools(&self, tool_calls: Vec<&llm_client::ToolCall>, signal: &CancellationToken) -> Vec<llm_client::ToolResultMessage> {
+    async fn execute_tools(&self, tool_calls: Vec<&ai_provider::ToolCall>, signal: &CancellationToken) -> Vec<ai_provider::ToolResultMessage> {
         if tool_calls.is_empty() {
             return vec![];
         }
@@ -541,7 +541,7 @@ impl AgentLoop {
                     tokio::select! {
                         result = self.execute_single_tool(tc) => result,
                         _ = signal.cancelled() => {
-                            llm_client::ToolResultMessage {
+                            ai_provider::ToolResultMessage {
                                 tool_call_id: tc_id,
                                 tool_name: tc_name,
                                 content: vec![],
@@ -562,7 +562,7 @@ impl AgentLoop {
 mod tests {
     use super::*;
     use crate::test_utils::{AllowAllDispatcher, TestProvider, TestResponse, TestToolCall};
-    use llm_client::ToolCall;
+    use ai_provider::ToolCall;
 
     fn make_loop_config(provider: Arc<dyn LlmProvider>, dispatcher: Arc<dyn HookDispatcher>, tools: Vec<AgentToolRef>) -> AgentLoopConfig {
         AgentLoopConfig {
@@ -584,7 +584,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text {
                 text: "hi".to_string(),
                 text_signature: None,
@@ -658,7 +658,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![tool_a.clone() as AgentToolRef, tool_b.clone() as AgentToolRef]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "do things".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -685,7 +685,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -714,7 +714,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -740,7 +740,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -773,7 +773,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "do things".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -845,7 +845,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![tool_a.clone() as AgentToolRef, tool_b.clone() as AgentToolRef]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "do sequential things".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -870,7 +870,7 @@ mod tests {
         async fn on_context(&self, _ctx: &ContextCtx) -> crate::mutations::ContextMutation {
             crate::mutations::ContextMutation {
                 messages: Some(vec![
-                    AgentMessage::User(llm_client::UserMessage {
+                    AgentMessage::User(ai_provider::UserMessage {
                         content: vec![Content::Text {
                             text: "mutated".to_string(),
                             text_signature: None,
@@ -893,7 +893,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "original".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -943,7 +943,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![tool as AgentToolRef]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "terminate".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -967,7 +967,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -987,7 +987,7 @@ mod tests {
         let result = handle.await.unwrap();
         assert!(result.is_err());
         match result {
-            Err(AgentError::Cancelled) | Err(AgentError::LlmError(llm_client::LlmError::Cancelled)) => {}
+            Err(AgentError::Cancelled) | Err(AgentError::LlmError(ai_provider::LlmError::Cancelled)) => {}
             other => panic!("expected Cancelled, got {:?}", other),
         }
     }
@@ -1000,7 +1000,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -1036,7 +1036,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -1069,7 +1069,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -1117,7 +1117,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![tool as AgentToolRef]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "do things".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -1195,7 +1195,7 @@ mod tests {
         ]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "do things".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -1215,7 +1215,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_orphan_tool_calls() {
         let mut messages = vec![
-            AgentMessage::Assistant(llm_client::AssistantMessage {
+            AgentMessage::Assistant(ai_provider::AssistantMessage {
                 content: vec![Content::ToolCall(ToolCall {
                     id: "call_1".to_string(),
                     name: "tool_a".to_string(),
@@ -1224,8 +1224,8 @@ mod tests {
                 })],
                 provider: "test".to_string(),
                 model: "test".to_string(),
-                api: llm_client::Api { provider: "test".to_string(), model: "test".to_string() },
-                usage: llm_client::Usage {
+                api: ai_provider::Api { provider: "test".to_string(), model: "test".to_string() },
+                usage: ai_provider::Usage {
                     input_tokens: 0,
                     output_tokens: 0,
                     cache_creation_input_tokens: None,
@@ -1237,7 +1237,7 @@ mod tests {
                 error_message: None,
                 timestamp: std::time::SystemTime::now(),
             }),
-            AgentMessage::ToolResult(llm_client::ToolResultMessage {
+            AgentMessage::ToolResult(ai_provider::ToolResultMessage {
                 tool_call_id: "call_2".to_string(),
                 tool_name: "tool_b".to_string(),
                 content: vec![],
@@ -1266,7 +1266,7 @@ mod tests {
         let provider = TestProvider::text("Hello!");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let steer_queue = Arc::new(Mutex::new(vec![
-            AgentMessage::User(llm_client::UserMessage {
+            AgentMessage::User(ai_provider::UserMessage {
                 content: vec![Content::Text { text: "steer_msg".to_string(), text_signature: None }],
                 timestamp: std::time::SystemTime::now(),
             }),
@@ -1282,7 +1282,7 @@ mod tests {
         };
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -1301,7 +1301,7 @@ mod tests {
         let provider = TestProvider::counted(|n| TestResponse::Text(format!("response{}", n)));
         let dispatcher = Arc::new(AllowAllDispatcher);
         let follow_up_queue = Arc::new(Mutex::new(vec![
-            AgentMessage::User(llm_client::UserMessage {
+            AgentMessage::User(ai_provider::UserMessage {
                 content: vec![Content::Text { text: "follow_up_msg".to_string(), text_signature: None }],
                 timestamp: std::time::SystemTime::now(),
             }),
@@ -1317,7 +1317,7 @@ mod tests {
         };
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });
@@ -1342,7 +1342,7 @@ mod tests {
         let config = make_loop_config(provider, dispatcher, vec![]);
         let loop_ = AgentLoop::new(config);
 
-        let user_msg = AgentMessage::User(llm_client::UserMessage {
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         });

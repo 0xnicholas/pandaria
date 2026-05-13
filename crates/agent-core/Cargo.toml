@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-llm-client = { path = "../llm-client" }
+ai-provider = { path = "../ai-provider" }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
@@ -16,6 +16,6 @@ tokio-util = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
-llm-client = { path = "../llm-client", features = ["test-utils"] }
+ai-provider = { path = "../ai-provider", features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true }

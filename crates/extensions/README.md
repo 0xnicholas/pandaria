@@ -53,7 +53,7 @@ src/
 ## 依赖
 
 - `agent-core` — HookDispatcher trait、上下文类型、mutation 类型
-- `llm-client` — ToolDef 类型
+- `ai-provider` — ToolDef 类型
 - `tokio` — 异步运行时、mpsc、broadcast、timeout
 - `async-trait` — async trait 支持
 - `tracing` — 事件日志

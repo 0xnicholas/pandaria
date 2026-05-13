@@ -1,13 +1,14 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use agent_core::harness::compaction::{CompactionActor, CompactionConfig};
 use agent_core::{
-    CompactionActor, CompactionConfig, SessionActor,
+    SessionActor,
 };
 use agent_core::file_ops::DefaultFileOperationExtractor;
-use agent_core::session_entry::SessionEntry;
+use agent_core::persistence::entry::SessionEntry;
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider, TestResponse};
 use agent_core::types::AgentMessage;
-use llm_client::{
+use ai_provider::{
     Content, UserMessage,
 };
 
@@ -15,7 +16,7 @@ use llm_client::{
 // Helper: build CompactionActor with given provider
 // ============================================================================
 
-fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> CompactionActor {
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> CompactionActor {
     CompactionActor::new(
         CompactionConfig::new(true, 1000, 100),
         provider,

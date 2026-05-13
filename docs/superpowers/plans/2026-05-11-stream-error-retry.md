@@ -4,7 +4,7 @@
 
 **Architecture:** 细化 `StreamError` 变体，引入 `StreamErrorKind` 枚举区分 `Network` / `Protocol` / `Parse` 三类。`is_retryable()` 仅对 `Network` 类返回 true。所有生成点按语义标注正确 kind。
 
-**Tech Stack:** Rust, llm-client crate
+**Tech Stack:** Rust, ai-provider crate
 
 ---
 
@@ -55,7 +55,7 @@ Self::StreamError { kind, .. } => matches!(kind, StreamErrorKind::Network),
 ### Task 1: 修改 error.rs 枚举定义
 
 **Files:**
-- Modify: `crates/llm-client/src/error.rs`
+- Modify: `crates/ai-provider/src/error.rs`
 
 - [ ] **Step 1: 添加 StreamErrorKind 枚举，重构 StreamError 变体**
 
@@ -95,12 +95,12 @@ Self::StreamError { kind, .. } => matches!(kind, StreamErrorKind::Network),
 ### Task 2: 更新所有 StreamError 生成点
 
 **Files:**
-- Modify: `crates/llm-client/src/providers/anthropic.rs:209`
-- Modify: `crates/llm-client/src/providers/openai.rs:447`
-- Modify: `crates/llm-client/src/providers/mistral.rs:354`
-- Modify: `crates/llm-client/src/providers/google.rs:313`
-- Modify: `crates/llm-client/src/providers/bedrock.rs:267`
-- Modify: `crates/llm-client/src/streaming.rs:177,186`
+- Modify: `crates/ai-provider/src/providers/anthropic.rs:209`
+- Modify: `crates/ai-provider/src/providers/openai.rs:447`
+- Modify: `crates/ai-provider/src/providers/mistral.rs:354`
+- Modify: `crates/ai-provider/src/providers/google.rs:313`
+- Modify: `crates/ai-provider/src/providers/bedrock.rs:267`
+- Modify: `crates/ai-provider/src/streaming.rs:177,186`
 
 - [ ] **Step 4: Provider SSE 传输错误 → Network**
 
@@ -142,7 +142,7 @@ Self::StreamError { kind, .. } => matches!(kind, StreamErrorKind::Network),
 ### Task 3: 更新下游引用
 
 **Files:**
-- Modify: `crates/llm-client/src/streaming.rs` tests (line 378, 393)
+- Modify: `crates/ai-provider/src/streaming.rs` tests (line 378, 393)
 
 - [ ] **Step 7: 更新 test 中的 match 模式**
 
@@ -163,7 +163,7 @@ Self::StreamError { kind, .. } => matches!(kind, StreamErrorKind::Network),
 ### Task 4: 添加重试测试
 
 **Files:**
-- Modify: `crates/llm-client/src/retry.rs` tests
+- Modify: `crates/ai-provider/src/retry.rs` tests
 
 - [ ] **Step 8: 添加 StreamError::Network 重试测试**
 
@@ -226,26 +226,26 @@ Self::StreamError { kind, .. } => matches!(kind, StreamErrorKind::Network),
 
 - [ ] **Step 9: 编译检查**
 
-  Run: `cargo check -p llm-client`
+  Run: `cargo check -p ai-provider`
   Expected: 零错误。
 
 - [ ] **Step 10: 运行全部测试**
 
-  Run: `cargo test -p llm-client -- --nocapture`
+  Run: `cargo test -p ai-provider -- --nocapture`
   Expected: 全部通过。
 
 - [ ] **Step 11: Commit**
 
 ```bash
-git add crates/llm-client/src/error.rs \
-  crates/llm-client/src/providers/anthropic.rs \
-  crates/llm-client/src/providers/openai.rs \
-  crates/llm-client/src/providers/mistral.rs \
-  crates/llm-client/src/providers/google.rs \
-  crates/llm-client/src/providers/bedrock.rs \
-  crates/llm-client/src/streaming.rs \
-  crates/llm-client/src/retry.rs
-git commit -m "fix(llm-client): distinguish retryable vs non-retryable StreamErrors
+git add crates/ai-provider/src/error.rs \
+  crates/ai-provider/src/providers/anthropic.rs \
+  crates/ai-provider/src/providers/openai.rs \
+  crates/ai-provider/src/providers/mistral.rs \
+  crates/ai-provider/src/providers/google.rs \
+  crates/ai-provider/src/providers/bedrock.rs \
+  crates/ai-provider/src/streaming.rs \
+  crates/ai-provider/src/retry.rs
+git commit -m "fix(ai-provider): distinguish retryable vs non-retryable StreamErrors
 
 Replace monolithic StreamError(String) with StreamError { kind, message }
 where kind is StreamErrorKind::Network | Protocol | Parse.

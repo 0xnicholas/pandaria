@@ -1,10 +1,10 @@
-use llm_client::{AssistantMessage, StopReason};
+use ai_provider::{AssistantMessage, StopReason};
 
 #[derive(Debug, Clone)]
 pub enum RecoveryAction {
     Continue,
     RetryAfterBackoff { delay_ms: u64 },
-    RetryAfterCompaction { reason: crate::context::CompactReason },
+    RetryAfterCompaction { reason: crate::hook::context::CompactReason },
     Abort { reason: String },
 }
 
@@ -32,7 +32,7 @@ impl RecoveryStateMachine {
             }
             self.overflow_attempted = true;
             return RecoveryAction::RetryAfterCompaction {
-                reason: crate::context::CompactReason::Overflow,
+                reason: crate::hook::context::CompactReason::Overflow,
             };
         }
 
@@ -61,7 +61,7 @@ impl RecoveryStateMachine {
             }
             self.overflow_attempted = true;
             return RecoveryAction::RetryAfterCompaction {
-                reason: crate::context::CompactReason::Overflow,
+                reason: crate::hook::context::CompactReason::Overflow,
             };
         }
         // Non-overflow error: treat as retryable with backoff
@@ -112,7 +112,7 @@ fn is_session_retryable(msg: &AssistantMessage) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use llm_client::{Api, Usage};
+    use ai_provider::{Api, Usage};
     use std::time::SystemTime;
 
     fn make_msg(stop_reason: StopReason, error: Option<&str>) -> AssistantMessage {

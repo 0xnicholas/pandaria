@@ -11,7 +11,7 @@ use agent_core::mutations::{
 };
 use agent_core::error::AgentError;
 use agent_core::types::AgentToolResult;
-use llm_client::ToolDef;
+use ai_provider::ToolDef;
 
 /// Extension trait — the abstract boundary for all extension implementations.
 ///

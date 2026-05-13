@@ -4,7 +4,7 @@
 
 **Architecture:** 新增 `http_error.rs` 模块，提供 `sanitize_http_error_body(status, body)` 函数，尝试按 provider 标准 schema 提取安全的 `error.message`，失败时回退到通用 HTTP status 描述。4 个 provider 统一接入。完整 raw body 通过 `tracing::error!` 记录到 tenant_id span 中。
 
-**Tech Stack:** Rust, llm-client crate, tracing, serde_json
+**Tech Stack:** Rust, ai-provider crate, tracing, serde_json
 
 ---
 
@@ -31,8 +31,8 @@ if !status.to_string().starts_with('2') {
 ### Task 1: 创建 http_error 清洗模块
 
 **Files:**
-- Create: `crates/llm-client/src/http_error.rs`
-- Modify: `crates/llm-client/src/lib.rs` (添加模块声明)
+- Create: `crates/ai-provider/src/http_error.rs`
+- Modify: `crates/ai-provider/src/lib.rs` (添加模块声明)
 
 - [ ] **Step 1: 创建 `sanitize_http_error_body` 函数**
 
@@ -133,10 +133,10 @@ pub mod http_error;
 ### Task 2: 统一修改 4 个 provider 的 HTTP 错误处理
 
 **Files:**
-- Modify: `crates/llm-client/src/providers/anthropic.rs:163-166`
-- Modify: `crates/llm-client/src/providers/google.rs:165-168`
-- Modify: `crates/llm-client/src/providers/mistral.rs:183-186`
-- Modify: `crates/llm-client/src/providers/openai.rs:255-258`
+- Modify: `crates/ai-provider/src/providers/anthropic.rs:163-166`
+- Modify: `crates/ai-provider/src/providers/google.rs:165-168`
+- Modify: `crates/ai-provider/src/providers/mistral.rs:183-186`
+- Modify: `crates/ai-provider/src/providers/openai.rs:255-258`
 
 - [ ] **Step 3: Anthropic provider**
 
@@ -166,7 +166,7 @@ pub mod http_error;
 ### Task 3: 更新安全测试
 
 **Files:**
-- Modify: `crates/llm-client/tests/security_tests.rs`
+- Modify: `crates/ai-provider/tests/security_tests.rs`
 
 - [ ] **Step 7: 调整 `test_provider_error_no_raw_body`**
 
@@ -212,21 +212,21 @@ fn test_provider_error_sanitizes_html() {
 
 - [ ] **Step 8: 编译检查**
 
-  Run: `cargo check -p llm-client`
+  Run: `cargo check -p ai-provider`
   Expected: 零错误。
 
 - [ ] **Step 9: 运行安全相关测试**
 
-  Run: `cargo test -p llm-client security -- --nocapture`
+  Run: `cargo test -p ai-provider security -- --nocapture`
   Expected: 全部通过。
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add crates/llm-client/src/http_error.rs crates/llm-client/src/lib.rs \
-  crates/llm-client/src/providers/ \
-  crates/llm-client/tests/security_tests.rs
-git commit -m "fix(llm-client): sanitize HTTP error bodies to prevent info leakage
+git add crates/ai-provider/src/http_error.rs crates/ai-provider/src/lib.rs \
+  crates/ai-provider/src/providers/ \
+  crates/ai-provider/tests/security_tests.rs
+git commit -m "fix(ai-provider): sanitize HTTP error bodies to prevent info leakage
 
 - Add http_error module with sanitize_http_error_body() that extracts
   safe error.message from known provider JSON schemas and falls back

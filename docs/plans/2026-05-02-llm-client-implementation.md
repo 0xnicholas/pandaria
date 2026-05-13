@@ -1,25 +1,25 @@
-# llm-client v0.1 开发计划
+# ai-provider v0.1 开发计划
 
 > **状态:** 已完成 ✅ — v0.1 所有任务已落地（2026-05-03）
-> **后续:** 见 `2026-05-03-llm-client-v0.2.md`
+> **后续:** 见 `2026-05-03-ai-provider-v0.2.md`
 >
 > **注:** 计划中列出的 `tests/` 目录下 6 个集成测试文件（retry_tests.rs, repair_tests.rs, models_tests.rs, overflow_tests.rs, validation_tests.rs, compat_tests.rs）以及 Phase 9 的 Mistral/Bedrock Provider 未在 v0.1 实现，已移至 v0.2 计划跟踪。
 
 **Date:** 2026-05-02
 **Status:** Completed
-**Reference:** `docs/specs/2026-05-02-llm-client.md`, `AGENTS.md`
-**Current Code:** `crates/llm-client/src/` (17 files, 5260 lines, 87 tests passing)
+**Reference:** `docs/specs/2026-05-02-ai-provider.md`, `AGENTS.md`
+**Current Code:** `crates/ai-provider/src/` (17 files, 5260 lines, 87 tests passing)
 
 ---
 
 ## 概述
 
-将 llm-client crate 从当前 MVP（5 文件，3 字段 StreamOptions，5 变体事件流）升级到完整 spec 定义（25+ 文件，13 字段 StreamOptions，12 变体事件流，8 个新模块，5 个 provider）。
+将 ai-provider crate 从当前 MVP（5 文件，3 字段 StreamOptions，5 变体事件流）升级到完整 spec 定义（25+ 文件，13 字段 StreamOptions，12 变体事件流，8 个新模块，5 个 provider）。
 
 ### 当前基线
 
 ```
-crates/llm-client/src/
+crates/ai-provider/src/
   lib.rs         # re-exports: LlmError, provider::*, streaming::*, types::*
   types.rs       # Content, ToolCall, UserMessage, AssistantMessage, ToolResultMessage,
                  # Message, Api, Usage, StopReason, LlmContext, ToolDef
@@ -30,10 +30,10 @@ crates/llm-client/src/
 
 ### 开发原则
 
-- **Spec 驱动**：以 `docs/specs/2026-05-02-llm-client.md` 为目标
+- **Spec 驱动**：以 `docs/specs/2026-05-02-ai-provider.md` 为目标
 - **测试先行**：每个模块先写测试，再写实现
-- **增量可编译**：每步完成后 `cargo build -p llm-client` 通过
-- **阶段性 breaking change**：Phase 1 会破坏 agent-core（事件流 + Message 类型变更）。llm-client 内部先完成所有变更，Phase 2.2 一次性修复 agent-core。Phase 1-2.1 期间仅检查 `cargo build -p llm-client`，Phase 2.2 起恢复 `cargo build -p agent-core` 检查。
+- **增量可编译**：每步完成后 `cargo build -p ai-provider` 通过
+- **阶段性 breaking change**：Phase 1 会破坏 agent-core（事件流 + Message 类型变更）。ai-provider 内部先完成所有变更，Phase 2.2 一次性修复 agent-core。Phase 1-2.1 期间仅检查 `cargo build -p ai-provider`，Phase 2.2 起恢复 `cargo build -p agent-core` 检查。
 
 ---
 
@@ -49,9 +49,9 @@ regex = "1"
 phf = { version = "0.11", features = ["macros"] }
 ```
 
-### T0.2 更新 llm-client Cargo.toml
+### T0.2 更新 ai-provider Cargo.toml
 
-**文件**: `crates/llm-client/Cargo.toml`
+**文件**: `crates/ai-provider/Cargo.toml`
 
 追加依赖：
 ```toml
@@ -71,7 +71,7 @@ wiremock = "0.6"
 tokio-test = "0.4"
 ```
 
-**验证**: `cargo build -p llm-client` 成功
+**验证**: `cargo build -p ai-provider` 成功
 
 ---
 
@@ -81,7 +81,7 @@ tokio-test = "0.4"
 
 ### T1.1 升级 LlmError
 
-**文件**: `crates/llm-client/src/error.rs`
+**文件**: `crates/ai-provider/src/error.rs`
 **Spec**: §7.1
 
 改动：
@@ -91,11 +91,11 @@ tokio-test = "0.4"
 - 新增 `StreamError(String)` variant
 - 新增 `impl LlmError { pub fn is_retryable(&self) -> bool }`
 
-**测试**: `cargo test -p llm-client -- error` (现有内联测试需更新)
+**测试**: `cargo test -p ai-provider -- error` (现有内联测试需更新)
 
 ### T1.2 Content 字段补全
 
-**文件**: `crates/llm-client/src/types.rs`
+**文件**: `crates/ai-provider/src/types.rs`
 **Spec**: §3.1, §3.2
 
 改动：
@@ -107,7 +107,7 @@ tokio-test = "0.4"
 
 ### T1.3 Message 类型补全
 
-**文件**: `crates/llm-client/src/types.rs`
+**文件**: `crates/ai-provider/src/types.rs`
 **Spec**: §3.4, §3.5
 
 改动：
@@ -120,7 +120,7 @@ tokio-test = "0.4"
 
 ### T1.4 升级 AssistantMessageEvent
 
-**文件**: `crates/llm-client/src/streaming.rs`
+**文件**: `crates/ai-provider/src/streaming.rs`
 **Spec**: §4.1
 
 从当前 5 变体升级到 12 变体：
@@ -137,7 +137,7 @@ tokio-test = "0.4"
 
 ### T1.5 升级 AssistantMessageEventStream
 
-**文件**: `crates/llm-client/src/streaming.rs`
+**文件**: `crates/ai-provider/src/streaming.rs`
 **Spec**: §4.2
 
 从 `Pin<Box<dyn Stream>>` 类型别名改为 concrete struct：
@@ -163,7 +163,7 @@ pub struct AssistantMessageEventStream {
 
 ### T2.1 扩展 StreamOptions + 新建 cache.rs, hooks.rs
 
-**文件**: `crates/llm-client/src/provider.rs` (修改), `src/cache.rs` (新建), `src/hooks.rs` (新建)
+**文件**: `crates/ai-provider/src/provider.rs` (修改), `src/cache.rs` (新建), `src/hooks.rs` (新建)
 **Spec**: §6, §18, §19
 
 **新建文件 `src/cache.rs`**:
@@ -223,7 +223,7 @@ pub type OnResponseFn = Arc<dyn Fn(&ProviderResponse, &Model) -> Pin<Box<dyn Fut
 
 ### T3.1 util.rs — 工具函数
 
-**文件**: `crates/llm-client/src/util.rs` (新建)
+**文件**: `crates/ai-provider/src/util.rs` (新建)
 **Spec**: §10
 
 ```rust
@@ -235,7 +235,7 @@ pub fn build_tool_defs(tools: &[ToolDef]) -> Vec<ToolDef>;
 
 ### T3.2 retry.rs — 指数退避重试
 
-**文件**: `crates/llm-client/src/retry.rs` (新建)
+**文件**: `crates/ai-provider/src/retry.rs` (新建)
 **Spec**: §8
 
 ```rust
@@ -255,7 +255,7 @@ pub async fn with_retry<F, Fut>(
 
 ### T3.3 repair.rs — JSON 修复
 
-**文件**: `crates/llm-client/src/repair.rs` (新建)
+**文件**: `crates/ai-provider/src/repair.rs` (新建)
 **Spec**: §23
 
 ```rust
@@ -280,7 +280,7 @@ pub fn sanitize_unicode(s: &str) -> String;
 
 ### T4.1 Model 类型定义 (不含 compat 字段)
 
-**文件**: `crates/llm-client/src/models.rs` (新建)
+**文件**: `crates/ai-provider/src/models.rs` (新建)
 **Spec**: §14.1, §14.3
 
 ```rust
@@ -300,7 +300,7 @@ pub fn supports_xhigh(model_id: &str) -> bool;
 
 ### T4.2 模型数据与注册表
 
-**文件**: `crates/llm-client/src/models_data.rs` (新建)
+**文件**: `crates/ai-provider/src/models_data.rs` (新建)
 **Spec**: §14.2, §14.4
 
 **实现方式**：不使用嵌套 `phf::Map<&str, phf::Map<&str, Model>>`（嵌套 compile-time map 在 phf crate 中支持有限）。
@@ -331,7 +331,7 @@ static PROVIDER_MODELS: phf::Map<&'static str, &'static [&'static str]> = phf_ma
 - OpenAI (8): gpt-5.*, gpt-5.1-codex
 - Google (4): gemini-2.5-*, gemini-3.0-*
 
-**文件**: `crates/llm-client/src/models.rs` (续)
+**文件**: `crates/ai-provider/src/models.rs` (续)
 
 `ModelRegistry` 基于 `models_data.rs` 中的两个 `phf::Map` 实现：
 
@@ -360,7 +360,7 @@ pub fn providers() -> Vec<&'static str>;
 
 ### T5.1 overflow.rs
 
-**文件**: `crates/llm-client/src/overflow.rs` (新建)
+**文件**: `crates/ai-provider/src/overflow.rs` (新建)
 **Spec**: §15
 
 ```rust
@@ -386,7 +386,7 @@ pub fn is_context_overflow(
 
 ### T6.1 validation.rs — Tool Call 参数校验
 
-**文件**: `crates/llm-client/src/validation.rs` (新建)
+**文件**: `crates/ai-provider/src/validation.rs` (新建)
 **Spec**: §16
 
 ```rust
@@ -409,7 +409,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T6.2 compat.rs — Provider 兼容层
 
-**文件**: `crates/llm-client/src/compat.rs` (新建)
+**文件**: `crates/ai-provider/src/compat.rs` (新建)
 **Spec**: §17
 
 类型定义:
@@ -436,7 +436,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T7.1 cache.rs — 补全实现
 
-**文件**: `crates/llm-client/src/cache.rs`
+**文件**: `crates/ai-provider/src/cache.rs`
 **Spec**: §18
 
 如果 Phase 2 时仅定义了类型签名，此处补全：
@@ -444,7 +444,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T7.2 hooks.rs — 验证
 
-**文件**: `crates/llm-client/src/hooks.rs`
+**文件**: `crates/ai-provider/src/hooks.rs`
 
 类型已在 Phase 2 定义。如果 Phase 2 时未提供 `Default` impl 或辅助函数，此处补全。
 
@@ -454,7 +454,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T8.1 公共基础设施
 
-**文件**: `crates/llm-client/src/providers/mod.rs` (新建)
+**文件**: `crates/ai-provider/src/providers/mod.rs` (新建)
 
 - 定义 `API_KEY_RESOLUTION_ORDER`: `StreamOptions::api_key` → env var (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GOOGLE_API_KEY`) → `Err(AuthError)`
 - 统一 `reqwest::Client` 构造辅助（timeout, headers 合并）
@@ -463,7 +463,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T8.2 AnthropicProvider
 
-**文件**: `crates/llm-client/src/providers/anthropic.rs` (新建)
+**文件**: `crates/ai-provider/src/providers/anthropic.rs` (新建)
 **Spec**: §9.1
 
 实现 `LlmProvider` trait。
@@ -473,7 +473,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 - Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
 - 合并 `StreamOptions::headers`
 
-**消息转换** (llm-client → Anthropic format):
+**消息转换** (ai-provider → Anthropic format):
 - `system_prompt` → `system: [{ text, cache_control }]`
 - `UserMessage` → `{ role: "user", content: [{ type: "text", text }, ...] }`
 - `AssistantMessage` → `{ role: "assistant", content: [{ type: "text" }, { type: "thinking" }, { type: "tool_use" }] }`
@@ -520,7 +520,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T8.3 OpenAiProvider
 
-**文件**: `crates/llm-client/src/providers/openai.rs` (新建)
+**文件**: `crates/ai-provider/src/providers/openai.rs` (新建)
 **Spec**: §9.2
 
 实现 `LlmProvider` trait。
@@ -559,7 +559,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T8.4 GoogleProvider
 
-**文件**: `crates/llm-client/src/providers/google.rs` (新建)
+**文件**: `crates/ai-provider/src/providers/google.rs` (新建)
 **Spec**: §9.3
 
 实现 `LlmProvider` trait。
@@ -596,7 +596,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T9.1 MistralProvider
 
-**文件**: `crates/llm-client/src/providers/mistral.rs` (新建)
+**文件**: `crates/ai-provider/src/providers/mistral.rs` (新建)
 **Spec**: §9.4
 
 - SSE 解析 (与 OpenAI Completions 同构)
@@ -605,7 +605,7 @@ fn coerce_arguments(args: &mut serde_json::Value, schema: &serde_json::Value);
 
 ### T9.2 AwsBedrockProvider
 
-**文件**: `crates/llm-client/src/providers/bedrock.rs` (新建)
+**文件**: `crates/ai-provider/src/providers/bedrock.rs` (新建)
 **Spec**: §9.5
 
 - 依赖 `aws-sdk-bedrockruntime` (optional feature gate)
@@ -683,11 +683,11 @@ T0.1 ──→ T0.2 ──→ T1.1 ──→ T1.2 ──→ T1.3 ──→ T1.4 
 每 task 完成后执行：
 
 ```bash
-cargo build -p llm-client           # 编译通过
-cargo test -p llm-client            # 测试通过 (如适用)
+cargo build -p ai-provider           # 编译通过
+cargo test -p ai-provider            # 测试通过 (如适用)
 ```
 
-**Phase 1-2.1 期间**: agent-core 编译会中断（breaking changes）。仅检查 llm-client。
+**Phase 1-2.1 期间**: agent-core 编译会中断（breaking changes）。仅检查 ai-provider。
 
 **Phase 2.2 起**:
 ```bash
@@ -697,7 +697,7 @@ cargo test -p agent-core            # agent-core 测试通过
 
 **全部完成**:
 ```bash
-cargo clippy -p llm-client          # 无 lint 警告
+cargo clippy -p ai-provider          # 无 lint 警告
 ```
 
 ### Breaking Change 管理
@@ -705,7 +705,7 @@ cargo clippy -p llm-client          # 无 lint 警告
 Phase 1.4-1.5 (AssistantMessageEvent + Stream 升级) 和 Phase 1.3 (AssistantMessage 结构变更) 会破坏 agent-core。
 
 处理策略：
-1. 先在 llm-client 完成所有类型变更
+1. 先在 ai-provider 完成所有类型变更
 2. 再一次性更新 agent-core 的适配代码
 3. agent-core 适配放在 Phase 2.2，作为 breaking change 的最终消费点
 

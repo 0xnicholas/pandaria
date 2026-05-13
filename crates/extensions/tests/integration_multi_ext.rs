@@ -90,8 +90,8 @@ impl Extension for ContextAppendExt {
 
     async fn on_context(&self, ctx: &ContextCtx) -> ContextMutation {
         let mut messages = ctx.messages.clone();
-        messages.push(agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+        messages.push(agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
                 text: self.prefix.clone(),
                 text_signature: None,
             }],
@@ -111,7 +111,7 @@ impl Extension for ResultMutatorExt {
 
     async fn on_tool_result(&self, ctx: &ToolResultCtx) -> ToolResultMutation {
         let mut content = ctx.content.clone();
-        content.push(llm_client::Content::Text {
+        content.push(ai_provider::Content::Text {
             text: self.append_text.clone(),
             text_signature: None,
         });
@@ -256,8 +256,8 @@ async fn test_multi_extension_chain_merge_context() {
     let ctx = ContextCtx {
         tenant_id: "t1".to_string(),
         session_id: "s1".to_string(),
-        messages: vec![agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text { text: "original".to_string(), text_signature: None }],
+        messages: vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
         })],
     };
@@ -287,7 +287,7 @@ async fn test_multi_extension_chain_merge_tool_result() {
         tool_name: "t".to_string(),
         tool_call_id: "c1".to_string(),
         input: serde_json::json!({}),
-        content: vec![llm_client::Content::Text { text: "base".to_string(), text_signature: None }],
+        content: vec![ai_provider::Content::Text { text: "base".to_string(), text_signature: None }],
         details: None,
         is_error: false,
     };
@@ -298,7 +298,7 @@ async fn test_multi_extension_chain_merge_tool_result() {
     // Should have: base + _A + _B (each ext appends to previous)
     assert_eq!(content.len(), 3);
     match &content[2] {
-        llm_client::Content::Text { text, .. } => assert_eq!(text, "_B"),
+        ai_provider::Content::Text { text, .. } => assert_eq!(text, "_B"),
         _ => panic!("expected text"),
     }
 }

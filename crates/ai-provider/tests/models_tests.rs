@@ -1,4 +1,4 @@
-use llm_client::{
+use ai_provider::{
     calculate_cost, get_model, models_are_equal, models_for_provider, providers, supports_xhigh,
 };
 
@@ -33,7 +33,7 @@ fn test_providers_list() {
 #[test]
 fn test_calculate_cost() {
     let model = get_model("anthropic", "claude-sonnet-4-20250514").unwrap();
-    let usage = llm_client::Usage {
+    let usage = ai_provider::Usage {
         input_tokens: 1_000_000,
         output_tokens: 500_000,
         cache_read_input_tokens: Some(100_000),

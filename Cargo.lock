@@ -12,9 +12,9 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agent-core"
 version = "0.1.0"
 dependencies = [
+ "ai-provider",
  "async-trait",
  "futures",
- "llm-client",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -46,6 +46,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "ai-provider"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "aws-config",
+ "aws-sdk-bedrockruntime",
+ "eventsource-stream",
+ "futures",
+ "jsonschema",
+ "regex",
+ "reqwest",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-test",
+ "tokio-util",
+ "tracing",
+ "wiremock",
 ]
 
 [[package]]
@@ -1143,9 +1166,9 @@ name = "extensions"
 version = "0.1.0"
 dependencies = [
  "agent-core",
+ "ai-provider",
  "async-trait",
  "dashmap",
- "llm-client",
  "regex",
  "serde_json",
  "thiserror 2.0.18",
@@ -2022,29 +2045,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
-name = "llm-client"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "aws-config",
- "aws-sdk-bedrockruntime",
- "eventsource-stream",
- "futures",
- "jsonschema",
- "regex",
- "reqwest",
- "secrecy",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-test",
- "tokio-util",
- "tracing",
- "wiremock",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2435,6 +2435,11 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 [[package]]
 name = "pandaria"
 version = "0.1.0"
+dependencies = [
+ "tokio",
+ "tracing-subscriber",
+ "tui",
+]
 
 [[package]]
 name = "parking"
@@ -3158,23 +3163,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "session-store"
-version = "0.1.0"
-dependencies = [
- "agent-core",
- "async-trait",
- "llm-client",
- "redis",
- "serde_json",
- "sqlx",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3523,6 +3511,23 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "storage"
+version = "0.1.0"
+dependencies = [
+ "agent-core",
+ "ai-provider",
+ "async-trait",
+ "redis",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
 
 [[package]]
 name = "stringprep"

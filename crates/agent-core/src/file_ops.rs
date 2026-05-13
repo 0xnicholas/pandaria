@@ -39,7 +39,7 @@ impl FileOperationExtractor for DefaultFileOperationExtractor {
         for msg in messages {
             if let AgentMessage::Assistant(assistant) = msg {
                 for content in &assistant.content {
-                    if let llm_client::Content::ToolCall(tc) = content {
+                    if let ai_provider::Content::ToolCall(tc) = content {
                         let path = tc
                             .arguments
                             .get(&self.path_arg_name)

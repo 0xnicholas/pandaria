@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::error::CompactionError;
 use crate::file_ops::{FileOperationExtractor, FileOperations};
-use crate::session_entry::{CompactionDetails, SessionEntry};
+use crate::persistence::entry::{CompactionDetails, SessionEntry};
 use crate::types::AgentMessage;
 
 // ============================================================================
@@ -65,25 +65,25 @@ fn estimate_tokens(message: &AgentMessage) -> usize {
     let chars: usize = match message {
         AgentMessage::User(user) => {
             user.content.iter().map(|c| match c {
-                llm_client::Content::Text { text, .. } => text.len(),
-                llm_client::Content::Image { .. } => 4800,
+                ai_provider::Content::Text { text, .. } => text.len(),
+                ai_provider::Content::Image { .. } => 4800,
                 _ => 0,
             }).sum()
         }
         AgentMessage::Assistant(assistant) => {
             assistant.content.iter().map(|c| match c {
-                llm_client::Content::Text { text, .. } => text.len(),
-                llm_client::Content::Thinking { thinking, .. } => thinking.len(),
-                llm_client::Content::ToolCall(tc) => {
+                ai_provider::Content::Text { text, .. } => text.len(),
+                ai_provider::Content::Thinking { thinking, .. } => thinking.len(),
+                ai_provider::Content::ToolCall(tc) => {
                     tc.name.len() + serde_json::to_string(&tc.arguments).unwrap_or_default().len()
                 }
-                llm_client::Content::Image { .. } => 4800,
+                ai_provider::Content::Image { .. } => 4800,
             }).sum()
         }
         AgentMessage::ToolResult(result) => {
             result.content.iter().map(|c| match c {
-                llm_client::Content::Text { text, .. } => text.len(),
-                llm_client::Content::Image { .. } => 4800,
+                ai_provider::Content::Text { text, .. } => text.len(),
+                ai_provider::Content::Image { .. } => 4800,
                 _ => 0,
             }).sum()
         }
@@ -101,8 +101,8 @@ pub fn estimate_context_tokens(entries: &[SessionEntry]) -> usize {
             message: AgentMessage::Assistant(assistant),
             ..
         } = entry
-            && assistant.stop_reason != llm_client::StopReason::Aborted
-            && assistant.stop_reason != llm_client::StopReason::Error
+            && assistant.stop_reason != ai_provider::StopReason::Aborted
+            && assistant.stop_reason != ai_provider::StopReason::Error
             && assistant.usage.compute_total() as usize > 0
         {
             last_usage_tokens = Some(assistant.usage.compute_total() as usize);
@@ -239,7 +239,7 @@ fn find_cut_point(
 
 pub struct CompactionActor {
     pub config: CompactionConfig,
-    provider: Arc<dyn llm_client::LlmProvider>,
+    provider: Arc<dyn ai_provider::LlmProvider>,
     model: String,
     file_op_extractor: Arc<dyn FileOperationExtractor>,
 }
@@ -247,7 +247,7 @@ pub struct CompactionActor {
 impl CompactionActor {
     pub fn new(
         config: CompactionConfig,
-        provider: Arc<dyn llm_client::LlmProvider>,
+        provider: Arc<dyn ai_provider::LlmProvider>,
         model: String,
         file_op_extractor: Arc<dyn FileOperationExtractor>,
     ) -> Self {
@@ -455,11 +455,11 @@ fn serialize_messages(messages: &[AgentMessage]) -> String {
     output
 }
 
-fn extract_text(content: &[llm_client::Content]) -> String {
+fn extract_text(content: &[ai_provider::Content]) -> String {
     content
         .iter()
         .filter_map(|c| match c {
-            llm_client::Content::Text { text, .. } => Some(text.as_str()),
+            ai_provider::Content::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -468,7 +468,7 @@ fn extract_text(content: &[llm_client::Content]) -> String {
 
 async fn generate_history_summary(
     messages: &[AgentMessage],
-    provider: &dyn llm_client::LlmProvider,
+    provider: &dyn ai_provider::LlmProvider,
     model: &str,
     previous_summary: Option<String>,
     max_tokens: usize,
@@ -488,15 +488,15 @@ async fn generate_history_summary(
     }
     prompt_text.push_str(base_prompt);
 
-    let llm_messages = vec![llm_client::Message::User(llm_client::UserMessage {
-        content: vec![llm_client::Content::Text {
+    let llm_messages = vec![ai_provider::Message::User(ai_provider::UserMessage {
+        content: vec![ai_provider::Content::Text {
             text: prompt_text,
             text_signature: None,
         }],
         timestamp: std::time::SystemTime::now(),
     })];
 
-    let ctx = llm_client::LlmContext {
+    let ctx = ai_provider::LlmContext {
         system_prompt: Some(SUMMARIZATION_SYSTEM_PROMPT.to_string()),
         messages: llm_messages,
         tools: None,
@@ -506,7 +506,7 @@ async fn generate_history_summary(
         .stream(
             model,
             ctx,
-            llm_client::StreamOptions {
+            ai_provider::StreamOptions {
                 max_tokens: Some(max_tokens as u32),
                 ..Default::default()
             },
@@ -519,22 +519,22 @@ async fn generate_history_summary(
 
     while let Some(event) = stream.next().await {
         match event {
-            llm_client::AssistantMessageEvent::TextDelta { delta, .. } => {
+            ai_provider::AssistantMessageEvent::TextDelta { delta, .. } => {
                 summary_text.push_str(&delta);
             }
-            llm_client::AssistantMessageEvent::Done { message, .. } => {
+            ai_provider::AssistantMessageEvent::Done { message, .. } => {
                 summary_text = message
                     .content
                     .iter()
                     .filter_map(|c| match c {
-                        llm_client::Content::Text { text, .. } => Some(text.as_str()),
+                        ai_provider::Content::Text { text, .. } => Some(text.as_str()),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
                 break;
             }
-            llm_client::AssistantMessageEvent::Error { error } => {
+            ai_provider::AssistantMessageEvent::Error { error } => {
                 let msg = error.error_message.unwrap_or_else(|| "LLM error".to_string());
                 return Err(CompactionError::LlmError(msg));
             }
@@ -553,7 +553,7 @@ async fn generate_history_summary(
 
 async fn generate_turn_prefix_summary(
     messages: &[AgentMessage],
-    provider: &dyn llm_client::LlmProvider,
+    provider: &dyn ai_provider::LlmProvider,
     model: &str,
     max_tokens: usize,
     signal: CancellationToken,
@@ -564,15 +564,15 @@ async fn generate_turn_prefix_summary(
         conversation_text, TURN_PREFIX_SUMMARIZATION_PROMPT
     );
 
-    let llm_messages = vec![llm_client::Message::User(llm_client::UserMessage {
-        content: vec![llm_client::Content::Text {
+    let llm_messages = vec![ai_provider::Message::User(ai_provider::UserMessage {
+        content: vec![ai_provider::Content::Text {
             text: prompt_text,
             text_signature: None,
         }],
         timestamp: std::time::SystemTime::now(),
     })];
 
-    let ctx = llm_client::LlmContext {
+    let ctx = ai_provider::LlmContext {
         system_prompt: Some(SUMMARIZATION_SYSTEM_PROMPT.to_string()),
         messages: llm_messages,
         tools: None,
@@ -582,7 +582,7 @@ async fn generate_turn_prefix_summary(
         .stream(
             model,
             ctx,
-            llm_client::StreamOptions {
+            ai_provider::StreamOptions {
                 max_tokens: Some(max_tokens as u32),
                 ..Default::default()
             },
@@ -595,22 +595,22 @@ async fn generate_turn_prefix_summary(
 
     while let Some(event) = stream.next().await {
         match event {
-            llm_client::AssistantMessageEvent::TextDelta { delta, .. } => {
+            ai_provider::AssistantMessageEvent::TextDelta { delta, .. } => {
                 summary_text.push_str(&delta);
             }
-            llm_client::AssistantMessageEvent::Done { message, .. } => {
+            ai_provider::AssistantMessageEvent::Done { message, .. } => {
                 summary_text = message
                     .content
                     .iter()
                     .filter_map(|c| match c {
-                        llm_client::Content::Text { text, .. } => Some(text.as_str()),
+                        ai_provider::Content::Text { text, .. } => Some(text.as_str()),
                         _ => None,
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
                 break;
             }
-            llm_client::AssistantMessageEvent::Error { error } => {
+            ai_provider::AssistantMessageEvent::Error { error } => {
                 let msg = error.error_message.unwrap_or_else(|| "LLM error".to_string());
                 return Err(CompactionError::LlmError(msg));
             }

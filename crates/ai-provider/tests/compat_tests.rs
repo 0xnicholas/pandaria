@@ -1,4 +1,4 @@
-use llm_client::{
+use ai_provider::{
     CacheControlFormat, OpenAiCompat, ThinkingFormat, detect_openai_compat, merge_openai_compat,
 };
 

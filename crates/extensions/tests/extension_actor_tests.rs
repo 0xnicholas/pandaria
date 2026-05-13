@@ -53,8 +53,8 @@ impl Extension for ContextMutateExt {
 
     async fn on_context(&self, ctx: &ContextCtx) -> ContextMutation {
         let mut messages = ctx.messages.clone();
-        messages.push(agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+        messages.push(agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
                 text: self.append_text.clone(),
                 text_signature: None,
             }],
@@ -165,7 +165,7 @@ async fn test_blocking_hook_response() {
 async fn test_chain_hook_response_tool_result() {
     let ext = Arc::new(ChainExt {
         mutation: ToolResultMutation {
-            content: Some(vec![llm_client::Content::Text {
+            content: Some(vec![ai_provider::Content::Text {
                 text: "mutated".to_string(),
                 text_signature: None,
             }]),

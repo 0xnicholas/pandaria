@@ -1,5 +1,5 @@
-use llm_client::providers::openai::OpenAiProvider;
-use llm_client::{AssistantMessageEvent, LlmContext, LlmProvider, StopReason, StreamOptions};
+use ai_provider::providers::openai::OpenAiProvider;
+use ai_provider::{AssistantMessageEvent, LlmContext, LlmProvider, StopReason, StreamOptions};
 use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};

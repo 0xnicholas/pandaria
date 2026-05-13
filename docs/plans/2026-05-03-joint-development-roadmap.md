@@ -1,4 +1,4 @@
-# 联合开发顺序：llm-client / agent-core / extensions
+# 联合开发顺序：ai-provider / agent-core / extensions
 
 **Date:** 2026-05-03
 **Status:** Draft（基于三模块计划审查结果）
@@ -9,7 +9,7 @@
 ## 依赖图
 
 ```
-               llm-client v0.2 P1 (P1)
+               ai-provider v0.2 P1 (P1)
                     │
                     │ 全程并行，零依赖
                     ▼
@@ -21,7 +21,7 @@ extensions ──→ agent-core Phase 0 (P0) ──→ agent-core Phase 1-9 (P0)
                                         │
                                         │ 可并行
                                         ▼
-                              llm-client v0.2 P3 (P3 — 可选)
+                              ai-provider v0.2 P3 (P3 — 可选)
 ```
 
 ---
@@ -33,7 +33,7 @@ extensions ──→ agent-core Phase 0 (P0) ──→ agent-core Phase 1-9 (P0)
 | 模块 | 任务 | 优先级 | 时长 | 产出 |
 |---|---|---|---|---|
 | **agent-core** | Phase 0: Foundation Types | **P0** | ~1h | 8 Ctx + 5 Mutation 类型 |
-| llm-client | v0.2 Phase 1: 测试补全 | P1 | ~7h | 89 → 150+ tests |
+| ai-provider | v0.2 Phase 1: 测试补全 | P1 | ~7h | 89 → 150+ tests |
 
 **关键决策**: agent-core Phase 0 完成后立即通知 extensions 开发者启动。
 
@@ -47,17 +47,17 @@ extensions ──→ agent-core Phase 0 (P0) ──→ agent-core Phase 1-9 (P0)
 |---|---|---|---|
 | **agent-core** | Phase 1-4: Events + SessionEntry + ErrorRecovery + FileOps | **P0** | ~3h |
 | **extensions** | Phase 1-4: trait + Actor + EventBus + HookRouter | **P0** | ~5h |
-| llm-client | v0.2 Phase 1 收尾（如尚未完成） | P1 | ~2h |
+| ai-provider | v0.2 Phase 1 收尾（如尚未完成） | P1 | ~2h |
 
 **并行机会**:
 - agent-core Phase 1-4 和 extensions Phase 1-4 完全独立，可并行
-- llm-client v0.2 P1 与上述两者并行
+- ai-provider v0.2 P1 与上述两者并行
 
 **验证检查点**:
 ```bash
 # 第 2 周末执行
 cargo build --workspace              # 全量编译通过
-cargo test -p llm-client            # 测试通过
+cargo test -p ai-provider            # 测试通过
 cargo test -p agent-core            # 测试通过
 cargo test -p extensions            # 测试通过
 ```
@@ -88,9 +88,9 @@ cargo test -p extensions            # 测试通过
 | 模块 | 任务 | 优先级 | 时长 |
 |---|---|---|---|
 | agent-core | Phase 10-11: lib.rs + 文档 | P1 | ~1h |
-| llm-client | v0.2 Phase 2-3: Mistral + Bedrock + OAuth | P3 | ~16h |
+| ai-provider | v0.2 Phase 2-3: Mistral + Bedrock + OAuth | P3 | ~16h |
 
-**建议**: llm-client v0.2 P3 在所有核心模块 P0 完成后启动，避免并行维护多个大型变更集。
+**建议**: ai-provider v0.2 P3 在所有核心模块 P0 完成后启动，避免并行维护多个大型变更集。
 
 ---
 
@@ -109,7 +109,7 @@ cargo test -p extensions            # 测试通过
 
 | 模块 | 任务 | 预估时长 |
 |---|---|---|
-| llm-client | v0.2 Phase 1: 测试补全 + thinking_format | ~7.5h |
+| ai-provider | v0.2 Phase 1: 测试补全 + thinking_format | ~7.5h |
 | agent-core | Phase 10-11: lib.rs + 文档 | ~1h |
 | extensions | Phase 5-7: Manager + Builtins + Tests | ~6h |
 | **P1 总计** | | **~14.5h** |
@@ -118,9 +118,9 @@ cargo test -p extensions            # 测试通过
 
 | 模块 | 任务 | 预估时长 |
 |---|---|---|
-| llm-client | v0.2 Phase 2: MistralProvider | ~4h |
-| llm-client | v0.2 Phase 2: AwsBedrockProvider | ~10h |
-| llm-client | v0.2 Phase 3: OAuth | ~2h |
+| ai-provider | v0.2 Phase 2: MistralProvider | ~4h |
+| ai-provider | v0.2 Phase 2: AwsBedrockProvider | ~10h |
+| ai-provider | v0.2 Phase 3: OAuth | ~2h |
 | **P3 总计** | | **~16h** |
 
 **全部总计**: ~52.5h（约 6.5 人天，假设单人全栈开发）
@@ -141,8 +141,8 @@ cargo test -p extensions            # 测试通过
 | extensions | `*Mutation` (5 个) | agent-core | Phase 0.3 | **P0** |
 | extensions | `HookDispatcher` (14 方法) | agent-core | Phase 0.5 | **P0** |
 | extensions | `AgentToolResult` | agent-core | 需确认 | **P0** |
-| agent-core | `with_retry()` | llm-client | retry.rs (已存在) | P1 |
-| agent-core | `AssistantMessageEventStream` | llm-client | v0.1 (已存在) | P0 |
+| agent-core | `with_retry()` | ai-provider | retry.rs (已存在) | P1 |
+| agent-core | `AssistantMessageEventStream` | ai-provider | v0.1 (已存在) | P0 |
 
 ---
 
@@ -152,7 +152,7 @@ cargo test -p extensions            # 测试通过
 |---|---|---|
 | agent-core Phase 0 延迟 | extensions 无法启动 | Phase 0 仅约 1h，建议第一天优先完成 |
 | AgentLoop 重构引入 bug | agent-core 测试失效 | 拆分为子任务，保留旧实现作为 fallback |
-| Bedrock Provider 复杂度超预期 | llm-client P3 延期 | 预留 10h（而非 6h），拆分为两个里程碑 |
+| Bedrock Provider 复杂度超预期 | ai-provider P3 延期 | 预留 10h（而非 6h），拆分为两个里程碑 |
 | 类型定义冲突 | 编译失败 | agent-core 统一定义所有共享类型，extensions 直接复用 |
 
 ---
@@ -162,7 +162,7 @@ cargo test -p extensions            # 测试通过
 ### 检查点 1：Phase 0 完成（第 1 周）
 ```bash
 cargo build -p agent-core          # 编译通过
-cargo test -p llm-client           # 89+ tests passing
+cargo test -p ai-provider           # 89+ tests passing
 # extensions 尚不能编译（等待 Phase 0）
 ```
 
@@ -180,7 +180,7 @@ cargo test --workspace                   # 200+ tests passing
 
 ### 检查点 4：全部完成（第 4 周+）
 ```bash
-cargo test -p llm-client --all-features  # 含 Bedrock feature
+cargo test -p ai-provider --all-features  # 含 Bedrock feature
 cargo build --workspace                  # 最终验证
 ```
 
@@ -190,7 +190,7 @@ cargo build --workspace                  # 最终验证
 
 - `docs/plans/2026-05-03-agent-core-implementation.md` — agent-core 详细计划
 - `docs/plans/2026-05-03-extensions-implementation.md` — extensions 详细计划
-- `docs/plans/2026-05-03-llm-client-v0.2.md` — llm-client v0.2 详细计划
+- `docs/plans/2026-05-03-ai-provider-v0.2.md` — ai-provider v0.2 详细计划
 - `docs/specs/2026-05-02-agent-core.md` — agent-core 规格
 - `docs/specs/2026-05-02-extensions.md` — extensions 规格
 - `AGENTS.md` — 架构决策记录

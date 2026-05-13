@@ -11,7 +11,7 @@ pub enum HookDecision {
 /// Mutation returned by chain hooks for tool results
 #[derive(Debug, Clone, Default)]
 pub struct ToolResultMutation {
-    pub content: Option<Vec<llm_client::Content>>,
+    pub content: Option<Vec<ai_provider::Content>>,
     pub details: Option<serde_json::Value>,
     pub is_error: Option<bool>,
     /// Override the terminate flag set by the tool execution.
@@ -53,13 +53,13 @@ pub struct BeforeAgentStartMutation {
 pub struct ProviderRequestMutation {
     pub system_prompt: Option<Option<String>>,
     pub messages: Option<Vec<AgentMessage>>,
-    pub tools: Option<Option<Vec<llm_client::ToolDef>>>,
-    pub options: Option<crate::provider_opts::ProviderStreamOptions>,
+    pub tools: Option<Option<Vec<ai_provider::ToolDef>>>,
+    pub options: Option<crate::utils::provider_opts::ProviderStreamOptions>,
 }
 
 /// Mutation returned by on_after_provider_response hook
 #[derive(Debug, Clone, Default)]
 pub struct ProviderResponseMutation {
-    pub content: Option<Vec<llm_client::Content>>,
-    pub stop_reason: Option<llm_client::StopReason>,
+    pub content: Option<Vec<ai_provider::Content>>,
+    pub stop_reason: Option<ai_provider::StopReason>,
 }

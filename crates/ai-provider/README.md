@@ -1,4 +1,4 @@
-# llm-client
+# ai-provider
 
 LLM provider 抽象层。定义消息类型、Tool 定义、LlmProvider trait 及流式 SSE 事件类型。
 
@@ -51,9 +51,9 @@ Note: This library only includes models that support tool calling (function call
 ## 边界
 
 - **不处理** tenant 上下文、session 生命周期、资源配额检查。这些由调用方（`agent-core` / `tenant` 层）通过 tracing span 注入。
-- **HTTP 连接**：由 `reqwest::Client` 内部管理。支持上层通过 `with_client()` 注入统一配置的 Client 以复用连接，但连接池本身不由 llm-client 维护。
-- **可观测性**：llm-client 内部不创建 tracing span。调用方（`agent-core`）应在调用 `stream()` 前创建带 `tenant_id`/`session_id` 的 span。
-- **Token 计量**：llm-client 返回 `Usage` 原始数据，per-tenant 计量由调用方（`agent-core` 或 `tenant` 层）计算。
+- **HTTP 连接**：由 `reqwest::Client` 内部管理。支持上层通过 `with_client()` 注入统一配置的 Client 以复用连接，但连接池本身不由 ai-provider 维护。
+- **可观测性**：ai-provider 内部不创建 tracing span。调用方（`agent-core`）应在调用 `stream()` 前创建带 `tenant_id`/`session_id` 的 span。
+- **Token 计量**：ai-provider 返回 `Usage` 原始数据，per-tenant 计量由调用方（`agent-core` 或 `tenant` 层）计算。
 - **不实现**具体的 OAuth 流程（Browser OAuth / Device code 等留到后续版本）
 - **Bedrock** 为占位实现，仅包含模型列表和基础结构
 - 所有类型支持 `serde` 序列化/反序列化
@@ -75,8 +75,8 @@ Note: This library only includes models that support tool calling (function call
 ## 测试
 
 ```bash
-cargo test -p llm-client
-cargo clippy -p llm-client --all-features -- -D warnings
+cargo test -p ai-provider
+cargo clippy -p ai-provider --all-features -- -D warnings
 ```
 
 当前测试覆盖：~184 个测试全部通过（95 单元测试 + 89 集成测试）。

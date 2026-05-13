@@ -1,4 +1,4 @@
-use llm_client::{LlmError, OAuthToken, is_expired};
+use ai_provider::{LlmError, OAuthToken, is_expired};
 use secrecy::{ExposeSecret, SecretString};
 use std::time::SystemTime;
 
@@ -33,8 +33,8 @@ fn test_oauth_token_debug_no_refresh_token() {
 
 #[tokio::test]
 async fn test_resolve_oauth_key_success() {
-    use llm_client::oauth::OAuthProvider;
-    use llm_client::resolve_oauth_key;
+    use ai_provider::oauth::OAuthProvider;
+    use ai_provider::resolve_oauth_key;
     use std::sync::Arc;
 
     struct MockOAuthProvider;
@@ -76,8 +76,8 @@ async fn test_resolve_oauth_key_success() {
 
 #[tokio::test]
 async fn test_resolve_oauth_key_expired_refresh_success() {
-    use llm_client::oauth::OAuthProvider;
-    use llm_client::resolve_oauth_key;
+    use ai_provider::oauth::OAuthProvider;
+    use ai_provider::resolve_oauth_key;
     use std::sync::Arc;
 
     struct MockOAuthProvider;
@@ -124,17 +124,17 @@ async fn test_resolve_oauth_key_expired_refresh_success() {
 
 #[tokio::test]
 async fn test_resolve_oauth_key_no_provider() {
-    use llm_client::resolve_oauth_key;
+    use ai_provider::resolve_oauth_key;
 
-    let oauth: Option<std::sync::Arc<dyn llm_client::oauth::OAuthProvider>> = None;
+    let oauth: Option<std::sync::Arc<dyn ai_provider::oauth::OAuthProvider>> = None;
     let key = resolve_oauth_key(oauth.as_ref()).await;
     assert!(key.is_none());
 }
 
 #[tokio::test]
 async fn test_resolve_oauth_key_refresh_failure_falls_back() {
-    use llm_client::oauth::OAuthProvider;
-    use llm_client::resolve_oauth_key;
+    use ai_provider::oauth::OAuthProvider;
+    use ai_provider::resolve_oauth_key;
     use std::sync::Arc;
 
     struct FailingOAuthProvider;

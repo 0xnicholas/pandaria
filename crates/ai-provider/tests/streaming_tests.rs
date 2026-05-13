@@ -1,4 +1,4 @@
-use llm_client::{
+use ai_provider::{
     Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, StopReason,
     Usage,
 };

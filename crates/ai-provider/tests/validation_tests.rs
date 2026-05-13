@@ -1,4 +1,4 @@
-use llm_client::{ToolCall, ToolDef, ValidationError, validate_tool_arguments, validate_tool_call};
+use ai_provider::{ToolCall, ToolDef, ValidationError, validate_tool_arguments, validate_tool_call};
 use serde_json::Value;
 
 fn make_tool(name: &str, schema: Value) -> ToolDef {

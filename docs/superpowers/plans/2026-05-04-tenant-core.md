@@ -29,7 +29,7 @@
 
 | File | Responsibility |
 |---|---|
-| `crates/tenant/Cargo.toml` | Crate manifest, depends on agent-core, llm-client, extensions, dashmap |
+| `crates/tenant/Cargo.toml` | Crate manifest, depends on agent-core, ai-provider, extensions, dashmap |
 | `crates/tenant/src/lib.rs` | Public exports |
 | `crates/tenant/src/error.rs` | `TenantError` enum (thiserror) |
 | `crates/tenant/src/tenant.rs` | `Tenant` struct, `TenantQuota`, `QuotaCheck` |
@@ -78,7 +78,7 @@ edition = "2024"
 
 [dependencies]
 agent-core = { path = "../agent-core" }
-llm-client = { path = "../llm-client" }
+ai-provider = { path = "../ai-provider" }
 extensions = { path = "../extensions" }
 tokio = { workspace = true }
 async-trait = { workspace = true }

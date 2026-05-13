@@ -1,4 +1,4 @@
-use llm_client::{StreamingJsonParser, parse_json_with_repair, repair_json, sanitize_unicode};
+use ai_provider::{StreamingJsonParser, parse_json_with_repair, repair_json, sanitize_unicode};
 
 #[test]
 fn test_repair_unclosed_string() {

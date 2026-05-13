@@ -83,7 +83,7 @@ The codebase already has:
 
 ```toml
 [dependencies]
-llm-client = { path = "../llm-client" }
+ai-provider = { path = "../ai-provider" }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
@@ -3158,7 +3158,7 @@ This plan evolves agent-core from a basic skeleton to a production-ready agent l
 
 **P0 总计**: ~16h | **P1 总计**: ~1h | **全部总计**: ~17h
 
-**Dependencies:** llm-client (already implemented), uuid (new)
+**Dependencies:** ai-provider (already implemented), uuid (new)
 **Risk areas:**
 - AgentLoop refactor (Task 7.2) is large and affects all existing tests — **建议拆分为子任务**
 - SessionActor refactor (Task 9.1) changes core data model from Vec<AgentMessage> to Vec<SessionEntry>
@@ -3168,10 +3168,10 @@ This plan evolves agent-core from a basic skeleton to a production-ready agent l
 ```
 第 1 步: agent-core Phase 0 (P0) — 阻塞级，单独完成
          └─ 完成后通知 extensions 启动
-第 2 步: agent-core Phase 1-4 (P0) + llm-client v0.2 P1 (P1) 并行
+第 2 步: agent-core Phase 1-4 (P0) + ai-provider v0.2 P1 (P1) 并行
 第 3 步: agent-core Phase 5-7 (P0) + extensions Phase 1-5 (P0) 并行
 第 4 步: agent-core Phase 8-9 (P0) + extensions Phase 6-7 (P1) 并行
-第 5 步: agent-core Phase 10-11 (P1) + llm-client v0.2 P3 (P2) 可选
+第 5 步: agent-core Phase 10-11 (P1) + ai-provider v0.2 P3 (P2) 可选
 ```
 
 **Next steps after this plan:**

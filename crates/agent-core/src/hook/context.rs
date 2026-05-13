@@ -25,7 +25,7 @@ pub struct ToolResultCtx {
     pub tool_name: String,
     pub tool_call_id: String,
     pub input: serde_json::Value,
-    pub content: Vec<llm_client::Content>,
+    pub content: Vec<ai_provider::Content>,
     pub details: Option<serde_json::Value>,
     pub is_error: bool,
 }
@@ -84,8 +84,8 @@ pub struct ProviderRequestCtx {
     pub system_prompt: Option<String>,
     pub messages: Vec<AgentMessage>,
     pub turn_index: u64,
-    pub tools: Option<Vec<llm_client::ToolDef>>,
-    pub options: crate::provider_opts::ProviderStreamOptions,
+    pub tools: Option<Vec<ai_provider::ToolDef>>,
+    pub options: crate::utils::provider_opts::ProviderStreamOptions,
 }
 
 /// Context passed to Extension::on_after_provider_response
@@ -94,11 +94,11 @@ pub struct ProviderResponseCtx {
     pub tenant_id: String,
     pub session_id: String,
     pub model: String,
-    pub content: Vec<llm_client::Content>,
+    pub content: Vec<ai_provider::Content>,
     pub turn_index: u64,
     pub attempt: u32,
     pub messages_before: Vec<AgentMessage>,
-    pub stop_reason: llm_client::StopReason,
+    pub stop_reason: ai_provider::StopReason,
 }
 
 /// Context passed to Extension::on_before_compact
@@ -107,7 +107,7 @@ pub struct CompactCtx {
     pub tenant_id: String,
     pub session_id: String,
     pub preparation: crate::compaction::CompactionPreparation,
-    pub entries: Vec<crate::session_entry::SessionEntry>,
+    pub entries: Vec<crate::persistence::entry::SessionEntry>,
     pub reason: CompactReason,
 }
 

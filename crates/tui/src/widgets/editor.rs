@@ -1,10 +1,11 @@
+use crate::component::Component;
 use crate::ui::theme::Theme;
 use ratatui::{
+    buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
-    Frame,
+    widgets::{Block, Borders, Paragraph, Widget},
 };
 
 #[derive(Clone, PartialEq)]
@@ -25,10 +26,13 @@ pub struct Editor {
     kill_ring: Vec<String>,
     last_kill_appended: bool,
     undo_stack: Vec<EditorState>,
+    pub theme: Theme,
+    pub focused: bool,
+    pub busy: bool,
 }
 
 impl Editor {
-    pub fn new() -> Self {
+    pub fn new(theme: Theme) -> Self {
         Self {
             lines: vec![String::new()],
             cursor_line: 0,
@@ -40,6 +44,9 @@ impl Editor {
             kill_ring: Vec::new(),
             last_kill_appended: false,
             undo_stack: Vec::new(),
+            theme,
+            focused: true,
+            busy: false,
         }
     }
 
@@ -554,20 +561,17 @@ impl Editor {
         self.insert_text(&marker);
     }
 
-    pub fn render(
+    pub fn render_buf(
         &self,
-        f: &mut Frame,
         area: Rect,
-        theme: &Theme,
-        focused: bool,
-        busy: bool,
+        buf: &mut Buffer,
     ) {
         let block = Block::default()
             .borders(Borders::TOP)
-            .border_style(Style::default().fg(theme.border));
+            .border_style(Style::default().fg(self.theme.border));
 
         let inner = block.inner(area);
-        f.render_widget(block, area);
+        block.render(area, buf);
 
         let max_lines = inner.height as usize;
         let visible_lines: Vec<Line> = if self.lines.iter().all(|l| l.is_empty()) {
@@ -580,7 +584,7 @@ impl Editor {
                 .enumerate()
                 .map(|(i, line)| {
                     let is_current_line = self.viewport_top + i == self.cursor_line;
-                    if is_current_line && focused {
+                    if is_current_line && self.focused {
                         let chars: Vec<char> = line.chars().collect();
                         let before: String = chars.iter().take(self.cursor_col).collect();
                         let at_cursor = chars
@@ -591,19 +595,19 @@ impl Editor {
                             chars.iter().skip(self.cursor_col + 1).collect();
 
                         Line::from(vec![
-                            Span::styled(before, Style::default().fg(theme.text)),
+                            Span::styled(before, Style::default().fg(self.theme.text)),
                             Span::styled(
                                 at_cursor,
                                 Style::default()
-                                    .fg(theme.text)
+                                    .fg(self.theme.text)
                                     .add_modifier(Modifier::REVERSED),
                             ),
-                            Span::styled(after, Style::default().fg(theme.text)),
+                            Span::styled(after, Style::default().fg(self.theme.text)),
                         ])
                     } else {
                         Line::from(Span::styled(
                             line.clone(),
-                            Style::default().fg(theme.text),
+                            Style::default().fg(self.theme.text),
                         ))
                     }
                 })
@@ -611,29 +615,29 @@ impl Editor {
         };
 
         if visible_lines.is_empty() {
-            let text = if busy {
+            let text = if self.busy {
                 "Interrupt (Esc)..."
             } else {
                 "Write a message or /command..."
             };
             let placeholder =
-                Span::styled(text, Style::default().fg(theme.dim));
-            f.render_widget(
-                Paragraph::new(Line::from(placeholder)).block(Block::default()),
-                inner,
-            );
+                Span::styled(text, Style::default().fg(self.theme.dim));
+            Paragraph::new(Line::from(placeholder)).block(Block::default()).render(inner, buf);
         } else {
-            f.render_widget(
-                Paragraph::new(visible_lines).block(Block::default()),
-                inner,
-            );
+            Paragraph::new(visible_lines).block(Block::default()).render(inner, buf);
         }
     }
 }
 
 impl Default for Editor {
     fn default() -> Self {
-        Self::new()
+        Self::new(Theme::default())
+    }
+}
+
+impl Component for Editor {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.render_buf(area, buf);
     }
 }
 
@@ -643,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_insert_char() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(Theme::default());
         ed.insert_char('h');
         ed.insert_char('i');
         assert_eq!(ed.lines[0], "hi");
@@ -652,7 +656,7 @@ mod tests {
 
     #[test]
     fn test_insert_newline() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(Theme::default());
         ed.insert_text("hello");
         ed.insert_newline();
         ed.insert_text("world");
@@ -663,7 +667,7 @@ mod tests {
 
     #[test]
     fn test_delete_char_backward() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(Theme::default());
         ed.insert_text("hi");
         ed.delete_char_backward();
         assert_eq!(ed.lines[0], "h");
@@ -672,7 +676,7 @@ mod tests {
 
     #[test]
     fn test_delete_word_backward() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(Theme::default());
         ed.insert_text("hello world");
         ed.delete_word_backward();
         assert_eq!(ed.lines[0], "hello ");
@@ -680,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_delete_to_line_end() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(Theme::default());
         ed.insert_text("hello world");
         ed.cursor_line_start();
         ed.delete_to_line_end();
@@ -689,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_history_navigation() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(Theme::default());
         ed.insert_text("first");
         ed.take_text();
         ed.insert_text("second");
@@ -703,7 +707,7 @@ mod tests {
 
     #[test]
     fn test_undo() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(Theme::default());
         ed.insert_text("hello");
         ed.undo();
         assert!(ed.is_empty());
@@ -711,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_cursor_word_movement() {
-        let mut ed = Editor::new();
+        let mut ed = Editor::new(Theme::default());
         ed.insert_text("hello world test");
         ed.cursor_word_left();
         assert_eq!(ed.cursor_col, 12);

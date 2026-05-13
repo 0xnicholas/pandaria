@@ -15,7 +15,7 @@
 ## 依赖方向
 
 ```
-api-gateway → tenant → extensions → agent-core → llm-client
+api-gateway → tenant → extensions → agent-core → ai-provider
 ```
 
 Gateway 通过 `TenantManager` trait（由 tenant crate 实现）与下游交互，禁止反向依赖。

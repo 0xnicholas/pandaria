@@ -266,12 +266,12 @@ impl Extension for ContentFilterExtension {
         let mut new_content = Vec::with_capacity(ctx.content.len());
 
         for content in &ctx.content {
-            if let llm_client::Content::Text { text, text_signature } = content {
+            if let ai_provider::Content::Text { text, text_signature } = content {
                 let redacted = self.redact_text(text);
                 if redacted != *text {
                     mutated = true;
                 }
-                new_content.push(llm_client::Content::Text {
+                new_content.push(ai_provider::Content::Text {
                     text: redacted,
                     text_signature: text_signature.clone(),
                 });
@@ -391,7 +391,7 @@ mod tests {
             tool_name: "echo".to_string(),
             tool_call_id: "c1".to_string(),
             input: serde_json::json!({}),
-            content: vec![llm_client::Content::Text {
+            content: vec![ai_provider::Content::Text {
                 text: "Email: user@example.com".to_string(),
                 text_signature: None,
             }],
@@ -402,7 +402,7 @@ mod tests {
         let mutation = ext.on_tool_result(&ctx).await;
         assert!(mutation.content.is_some());
         if let Some(content) = mutation.content {
-            if let llm_client::Content::Text { text, .. } = &content[0] {
+            if let ai_provider::Content::Text { text, .. } = &content[0] {
                 assert_eq!(text, "Email: [REDACTED_EMAIL]");
             }
         }

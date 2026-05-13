@@ -1,4 +1,4 @@
-use llm_client::{
+use ai_provider::{
     Api, AssistantMessage, Content, Message, StopReason, ToolCall, ToolResultMessage, Usage,
     UserMessage,
 };
@@ -182,7 +182,7 @@ fn test_usage_with_cache_tokens_roundtrip() {
 
 #[test]
 fn test_tool_def_serialization() {
-    let tool = llm_client::ToolDef {
+    let tool = ai_provider::ToolDef {
         name: "test_tool".to_string(),
         description: "A test tool".to_string(),
         parameters: serde_json::json!({
@@ -196,7 +196,7 @@ fn test_tool_def_serialization() {
     assert!(json.contains("\"name\":\"test_tool\""));
     assert!(json.contains("\"description\":\"A test tool\""));
     assert!(json.contains("\"parameters\""));
-    let back: llm_client::ToolDef = serde_json::from_str(&json).unwrap();
+    let back: ai_provider::ToolDef = serde_json::from_str(&json).unwrap();
     assert_eq!(back.name, "test_tool");
     assert_eq!(back.description, "A test tool");
 }

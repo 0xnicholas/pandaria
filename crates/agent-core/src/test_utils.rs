@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use llm_client::{
+use ai_provider::{
     AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content,
     LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall, Usage,
 };
@@ -191,7 +191,7 @@ impl TestProvider {
             content: content.clone(),
             provider: "test".to_string(),
             model: "test".to_string(),
-            api: llm_client::Api {
+            api: ai_provider::Api {
                 provider: "test".to_string(),
                 model: "test".to_string(),
             },
@@ -244,7 +244,7 @@ impl LlmProvider for TestProvider {
         _context: LlmContext,
         _options: StreamOptions,
         signal: CancellationToken,
-    ) -> Result<AssistantMessageEventStream, llm_client::LlmError> {
+    ) -> Result<AssistantMessageEventStream, ai_provider::LlmError> {
         let call_index = self.call_count.fetch_add(1, Ordering::SeqCst);
 
         // Special-case Cancel so that we block on the cancellation token.
@@ -254,7 +254,7 @@ impl LlmProvider for TestProvider {
                 _ = signal.cancelled() => {}
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {}
             }
-            return Err(llm_client::LlmError::Cancelled);
+            return Err(ai_provider::LlmError::Cancelled);
         }
 
         let (stream, tx) = AssistantMessageEventStream::new(8);
@@ -276,7 +276,7 @@ impl LlmProvider for TestProvider {
 // Shared test dispatcher (replaces the dozens of inline `AllowAllDispatcher`s)
 // ============================================================================
 
-use crate::hook_dispatcher::HookDispatcher;
+use crate::hook::dispatcher::HookDispatcher;
 
 pub struct AllowAllDispatcher;
 

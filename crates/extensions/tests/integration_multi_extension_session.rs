@@ -5,9 +5,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 use agent_core::context::{ToolCallCtx, TurnEndCtx, AgentEndCtx};
 use agent_core::mutations::{HookDecision, ToolCallMutation};
-use agent_core::session::SessionActor;
-use agent_core::session_entry::SessionEntry;
-use agent_core::store::SessionStore;
+use agent_core::SessionActor;
+use agent_core::SessionEntry;
+use agent_core::SessionStore;
 use agent_core::error::AgentError;
 use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::file_ops::DefaultFileOperationExtractor;
@@ -15,7 +15,7 @@ use agent_core::types::{AgentToolResult, AgentMessage};
 use agent_core::test_utils::{TestProvider, TestResponse, TestToolCall};
 use extensions::host::extension::Extension;
 use extensions::host::manager::ExtensionManager;
-use llm_client::{Content, ToolDef};
+use ai_provider::{Content, ToolDef};
 
 // ============================================================================
 // Mock Extensions
@@ -159,7 +159,7 @@ impl SessionStore for MemoryStore {
 // Helpers
 // ============================================================================
 
-fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> Arc<CompactionActor> {
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
     Arc::new(CompactionActor::new(
         CompactionConfig::default(),
         provider,

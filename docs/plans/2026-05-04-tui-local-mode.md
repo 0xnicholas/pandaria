@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Integrate `agent-core` and `llm-client` into the TUI crate so the TUI works as a self-contained standalone CLI tool without requiring a running pandaria server. Replace HTTP/SSE backend with an in-process agent loop, preserving the existing `ServerEvent`-based UI rendering path.
+**Goal:** Integrate `agent-core` and `ai-provider` into the TUI crate so the TUI works as a self-contained standalone CLI tool without requiring a running pandaria server. Replace HTTP/SSE backend with an in-process agent loop, preserving the existing `ServerEvent`-based UI rendering path.
 
 **Architecture:** Bottom-up: event mapping → StreamingProvider → Backend trait → LocalBackend → Config → App → Main. Each layer is independently testable.
 
-**Tech Stack:** Rust 2024 edition, tokio, ratatui 0.29, crossterm 0.28, clap 4, async-trait, secrecy, serde_json. Add deps on agent-core + llm-client (workspace crates).
+**Tech Stack:** Rust 2024 edition, tokio, ratatui 0.29, crossterm 0.28, clap 4, async-trait, secrecy, serde_json. Add deps on agent-core + ai-provider (workspace crates).
 
 **Spec Reference:** `docs/specs/2026-05-04-tui-local-mode.md`
 
@@ -16,7 +16,7 @@
 
 The TUI crate (`crates/tui/`) is a fully-featured terminal chat client that communicates with a pandaria server via HTTP REST + SSE. All slash commands (`/new`, `/switch`, `/model`, `/clear`, `/quit`) and message submission go through `RestClient` → HTTP calls to a server that doesn't exist yet.
 
-The `agent-core`, `llm-client`, and `extensions` crates have all the agent runtime logic but aren't wired to any binary. The root `src/main.rs` is an empty stub.
+The `agent-core`, `ai-provider`, and `extensions` crates have all the agent runtime logic but aren't wired to any binary. The root `src/main.rs` is an empty stub.
 
 **Working today:**
 - Terminal UI rendering (ratatui widgets, overlays, markdown)
@@ -45,7 +45,7 @@ The `agent-core`, `llm-client`, and `extensions` crates have all the agent runti
 ### Modified Files
 | File | Phase | Change |
 |---|---|---|
-| `crates/tui/Cargo.toml` | 1 | Add `agent-core`, `llm-client`, `secrecy` deps |
+| `crates/tui/Cargo.toml` | 1 | Add `agent-core`, `ai-provider`, `secrecy` deps |
 | `crates/tui/src/lib.rs` | 1 | Add `pub mod backend;` |
 | `crates/tui/src/config.rs` | 5 | Add `LlmConfig`, make `ServerConfig` optional, new CLI args |
 | `crates/tui/src/app.rs` | 6 | Replace `RestClient` + `reqwest_client` with `Box<dyn Backend>`. Update `App::new()`, `submit_input()`, `handle_overlay_confirm()` |
@@ -74,7 +74,7 @@ All UI widgets (`chat_view.rs`, `tool_call.rs`, `thinking.rs`, `status_bar.rs`, 
 
 # Internal workspace crates
 agent-core = { path = "../agent-core" }
-llm-client = { path = "../llm-client" }
+ai-provider = { path = "../ai-provider" }
 
 # Secret handling for API keys
 secrecy = "0.8"
@@ -1868,7 +1868,7 @@ Before declaring Phase 8 complete:
 ### Modified Files
 | File | Phase | Change Summary |
 |---|---|---|
-| `crates/tui/Cargo.toml` | 1 | +agent-core, +llm-client, +secrecy, +uuid |
+| `crates/tui/Cargo.toml` | 1 | +agent-core, +ai-provider, +secrecy, +uuid |
 | `crates/tui/src/lib.rs` | 1 | +`pub mod backend;` |
 | `crates/tui/src/config.rs` | 5 | +`LlmConfig`, `ServerConfig` optional, `force_local`, new CLI args |
 | `crates/tui/src/app.rs` | 6 | `RestClient` → `Arc<dyn Backend>`, rewrite `submit_input`, `handle_overlay_confirm`, interrupt |

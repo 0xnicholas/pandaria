@@ -6,18 +6,18 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use agent_core::context::{ContextCtx, ToolCallCtx, TurnEndCtx};
-use agent_core::loop_::{AgentLoop, AgentLoopConfig};
+use agent_core::harness::agent_loop::{AgentLoop, AgentLoopConfig};
 use agent_core::mutations::{ContextMutation, HookDecision, ToolCallMutation};
 use agent_core::types::{AgentMessage, AgentTool, AgentToolProgressUpdate, AgentToolRef, AgentToolResult};
 use extensions::host::event_bus::EventBus;
 use extensions::host::extension::Extension;
 use extensions::host::extension_actor::{ExtensionActor, ObsEvent};
 use extensions::host::hook_router::HookRouter;
-use llm_client::{Content, LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall};
+use ai_provider::{Content, LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall};
 
 fn make_loop_config(
     provider: Arc<dyn LlmProvider>,
-    hook_dispatcher: Arc<dyn agent_core::hook_dispatcher::HookDispatcher>,
+    hook_dispatcher: Arc<dyn agent_core::HookDispatcher>,
     tools: Vec<AgentToolRef>,
     system_prompt: Option<String>,
 ) -> AgentLoopConfig {
@@ -58,15 +58,15 @@ impl LlmProvider for EchoProvider {
         _context: LlmContext,
         _options: StreamOptions,
         _signal: CancellationToken,
-    ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-        let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
+    ) -> Result<ai_provider::AssistantMessageEventStream, ai_provider::LlmError> {
+        let (stream, tx) = ai_provider::AssistantMessageEventStream::new(4);
 
-        let partial = llm_client::AssistantMessage {
+        let partial = ai_provider::AssistantMessage {
             content: self.content.clone(),
             provider: "echo".to_string(),
             model: "echo".to_string(),
-            api: llm_client::Api { provider: "echo".to_string(), model: "echo".to_string() },
-            usage: llm_client::Usage {
+            api: ai_provider::Api { provider: "echo".to_string(), model: "echo".to_string() },
+            usage: ai_provider::Usage {
                 input_tokens: 0, output_tokens: 0,
                 cache_creation_input_tokens: None, cache_read_input_tokens: None,
                 total_tokens: 0,
@@ -78,8 +78,8 @@ impl LlmProvider for EchoProvider {
         };
 
         let events = vec![
-            llm_client::AssistantMessageEvent::Start { partial: partial.clone() },
-            llm_client::AssistantMessageEvent::Done { reason: self.stop_reason.clone(), message: partial },
+            ai_provider::AssistantMessageEvent::Start { partial: partial.clone() },
+            ai_provider::AssistantMessageEvent::Done { reason: self.stop_reason.clone(), message: partial },
         ];
 
         tokio::spawn(async move {
@@ -108,8 +108,8 @@ impl LlmProvider for ToolCallProvider {
         _context: LlmContext,
         _options: StreamOptions,
         _signal: CancellationToken,
-    ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-        let (stream, tx) = llm_client::AssistantMessageEventStream::new(8);
+    ) -> Result<ai_provider::AssistantMessageEventStream, ai_provider::LlmError> {
+        let (stream, tx) = ai_provider::AssistantMessageEventStream::new(8);
 
         let count = self.call_count.fetch_add(1, Ordering::SeqCst);
         
@@ -126,12 +126,12 @@ impl LlmProvider for ToolCallProvider {
             )
         };
 
-        let partial = llm_client::AssistantMessage {
+        let partial = ai_provider::AssistantMessage {
             content,
             provider: "tool-call".to_string(),
             model: "test".to_string(),
-            api: llm_client::Api { provider: "tool-call".to_string(), model: "test".to_string() },
-            usage: llm_client::Usage {
+            api: ai_provider::Api { provider: "tool-call".to_string(), model: "test".to_string() },
+            usage: ai_provider::Usage {
                 input_tokens: 0, output_tokens: 0,
                 cache_creation_input_tokens: None, cache_read_input_tokens: None,
                 total_tokens: 0,
@@ -143,8 +143,8 @@ impl LlmProvider for ToolCallProvider {
         };
 
         let events = vec![
-            llm_client::AssistantMessageEvent::Start { partial: partial.clone() },
-            llm_client::AssistantMessageEvent::Done { reason: stop_reason, message: partial },
+            ai_provider::AssistantMessageEvent::Start { partial: partial.clone() },
+            ai_provider::AssistantMessageEvent::Done { reason: stop_reason, message: partial },
         ];
 
         tokio::spawn(async move {
@@ -220,7 +220,7 @@ impl Extension for MutateContextExt {
 
     async fn on_context(&self, _ctx: &ContextCtx) -> ContextMutation {
         ContextMutation {
-            messages: Some(vec![AgentMessage::User(llm_client::UserMessage {
+            messages: Some(vec![AgentMessage::User(ai_provider::UserMessage {
                 content: vec![Content::Text {
                     text: self.marker.clone(),
                     text_signature: None,
@@ -263,7 +263,7 @@ async fn test_agent_loop_simple_with_router() {
     let config = make_loop_config(provider, Arc::new(router), vec![], Some("You are helpful.".to_string()));
     let loop_ = AgentLoop::new(config);
 
-    let user_msg = AgentMessage::User(llm_client::UserMessage {
+    let user_msg = AgentMessage::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     });
@@ -295,7 +295,7 @@ async fn test_agent_loop_context_mutation_via_extension() {
             context: LlmContext,
             _options: StreamOptions,
             _signal: CancellationToken,
-        ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
+        ) -> Result<ai_provider::AssistantMessageEventStream, ai_provider::LlmError> {
             assert_eq!(context.messages.len(), 1);
             match &context.messages[0] {
                 AgentMessage::User(user) => {
@@ -308,13 +308,13 @@ async fn test_agent_loop_context_mutation_via_extension() {
                 _ => panic!("expected user message"),
             }
 
-            let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
-            let partial = llm_client::AssistantMessage {
+            let (stream, tx) = ai_provider::AssistantMessageEventStream::new(4);
+            let partial = ai_provider::AssistantMessage {
                 content: vec![Content::Text { text: "ok".to_string(), text_signature: None }],
                 provider: "verify".to_string(),
                 model: "test".to_string(),
-                api: llm_client::Api { provider: "verify".to_string(), model: "test".to_string() },
-                usage: llm_client::Usage {
+                api: ai_provider::Api { provider: "verify".to_string(), model: "test".to_string() },
+                usage: ai_provider::Usage {
                     input_tokens: 0, output_tokens: 0,
                     cache_creation_input_tokens: None, cache_read_input_tokens: None,
                     total_tokens: 0,
@@ -326,8 +326,8 @@ async fn test_agent_loop_context_mutation_via_extension() {
             };
 
             tokio::spawn(async move {
-                let _ = tx.send(llm_client::AssistantMessageEvent::Start { partial: partial.clone() }).await;
-                let _ = tx.send(llm_client::AssistantMessageEvent::Done { reason: StopReason::Stop, message: partial }).await;
+                let _ = tx.send(ai_provider::AssistantMessageEvent::Start { partial: partial.clone() }).await;
+                let _ = tx.send(ai_provider::AssistantMessageEvent::Done { reason: StopReason::Stop, message: partial }).await;
             });
 
             Ok(stream)
@@ -338,7 +338,7 @@ async fn test_agent_loop_context_mutation_via_extension() {
     let config = make_loop_config(provider, Arc::new(router), vec![], None);
     let loop_ = AgentLoop::new(config);
 
-    let user_msg = AgentMessage::User(llm_client::UserMessage {
+    let user_msg = AgentMessage::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "original".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     });
@@ -372,7 +372,7 @@ async fn test_agent_loop_tool_blocked_by_extension() {
     let config = make_loop_config(provider, Arc::new(router), vec![tool], Some("You have tools.".to_string()));
     let loop_ = AgentLoop::new(config);
 
-    let user_msg = AgentMessage::User(llm_client::UserMessage {
+    let user_msg = AgentMessage::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "call tool".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     });
@@ -416,7 +416,7 @@ async fn test_agent_loop_turn_end_observed() {
     let config = make_loop_config(provider, Arc::new(router), vec![], Some("You are helpful.".to_string()));
     let loop_ = AgentLoop::new(config);
 
-    let user_msg = AgentMessage::User(llm_client::UserMessage {
+    let user_msg = AgentMessage::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     });

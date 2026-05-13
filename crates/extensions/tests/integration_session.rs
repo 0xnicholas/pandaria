@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use agent_core::context::{AgentEndCtx, SessionCtx, TurnEndCtx};
-use agent_core::session::SessionActor;
-use agent_core::store::SessionStore;
+use agent_core::SessionActor;
+use agent_core::SessionStore;
 use agent_core::types::{AgentMessage, SessionEntry};
 use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::error::AgentError;
@@ -15,7 +15,7 @@ use extensions::host::event_bus::EventBus;
 use extensions::host::extension::Extension;
 use extensions::host::extension_actor::{ExtensionActor, ObsEvent};
 use extensions::host::hook_router::HookRouter;
-use llm_client::Content;
+use ai_provider::Content;
 
 // ============================================================================
 // Mock LLM Provider
@@ -24,38 +24,38 @@ use llm_client::Content;
 struct EchoProvider;
 
 #[async_trait]
-impl llm_client::LlmProvider for EchoProvider {
+impl ai_provider::LlmProvider for EchoProvider {
     fn provider_name(&self) -> &str { "echo" }
     fn models(&self) -> Vec<String> { vec!["echo".to_string()] }
 
     async fn stream(
         &self,
         _model: &str,
-        _context: llm_client::LlmContext,
-        _options: llm_client::StreamOptions,
+        _context: ai_provider::LlmContext,
+        _options: ai_provider::StreamOptions,
         _signal: CancellationToken,
-    ) -> Result<llm_client::AssistantMessageEventStream, llm_client::LlmError> {
-        let (stream, tx) = llm_client::AssistantMessageEventStream::new(4);
+    ) -> Result<ai_provider::AssistantMessageEventStream, ai_provider::LlmError> {
+        let (stream, tx) = ai_provider::AssistantMessageEventStream::new(4);
 
-        let partial = llm_client::AssistantMessage {
+        let partial = ai_provider::AssistantMessage {
             content: vec![Content::Text { text: "response".to_string(), text_signature: None }],
             provider: "echo".to_string(),
             model: "echo".to_string(),
-            api: llm_client::Api { provider: "echo".to_string(), model: "echo".to_string() },
-            usage: llm_client::Usage {
+            api: ai_provider::Api { provider: "echo".to_string(), model: "echo".to_string() },
+            usage: ai_provider::Usage {
                 input_tokens: 0, output_tokens: 1,
                 cache_creation_input_tokens: None, cache_read_input_tokens: None,
                 total_tokens: 1,
             },
-            stop_reason: llm_client::StopReason::Stop,
+            stop_reason: ai_provider::StopReason::Stop,
             response_id: None,
             error_message: None,
             timestamp: std::time::SystemTime::now(),
         };
 
         let events = vec![
-            llm_client::AssistantMessageEvent::Start { partial: partial.clone() },
-            llm_client::AssistantMessageEvent::Done { reason: llm_client::StopReason::Stop, message: partial },
+            ai_provider::AssistantMessageEvent::Start { partial: partial.clone() },
+            ai_provider::AssistantMessageEvent::Done { reason: ai_provider::StopReason::Stop, message: partial },
         ];
 
         tokio::spawn(async move {
@@ -68,7 +68,7 @@ impl llm_client::LlmProvider for EchoProvider {
     }
 }
 
-fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> Arc<CompactionActor> {
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
     Arc::new(CompactionActor::new(
         CompactionConfig::default(),
         provider,
@@ -331,7 +331,7 @@ async fn test_session_steer_with_extension_hooks() {
     );
 
     // Queue a steer message
-    session.steer(AgentMessage::User(llm_client::UserMessage {
+    session.steer(AgentMessage::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "steer note".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     }));
@@ -379,7 +379,7 @@ async fn test_session_follow_up_with_extension_hooks() {
     );
 
     // Queue follow-up
-    session.follow_up(AgentMessage::User(llm_client::UserMessage {
+    session.follow_up(AgentMessage::User(ai_provider::UserMessage {
         content: vec![Content::Text { text: "follow up".to_string(), text_signature: None }],
         timestamp: std::time::SystemTime::now(),
     }));

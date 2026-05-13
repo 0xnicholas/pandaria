@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use crate::compaction::CompactionResult;
-use crate::context::CompactReason;
+use crate::harness::compaction::CompactionResult;
+use crate::hook::context::CompactReason;
 use crate::error::AgentError;
 use crate::types::AgentMessage;
 
@@ -38,7 +38,7 @@ pub enum AgentEvent {
     },
     ToolExecutionEnd {
         tool_call_id: String,
-        result: llm_client::ToolResultMessage,
+        result: ai_provider::ToolResultMessage,
     },
     CompactionStart {
         reason: CompactReason,

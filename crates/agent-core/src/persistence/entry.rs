@@ -58,8 +58,8 @@ impl SessionContextBuilder {
         if let Some(SessionEntry::Compaction { summary, .. }) =
             last_compaction_idx.map(|i| &entries[i])
         {
-            messages.push(AgentMessage::User(llm_client::UserMessage {
-                content: vec![llm_client::Content::Text {
+            messages.push(AgentMessage::User(ai_provider::UserMessage {
+                content: vec![ai_provider::Content::Text {
                     text: format!("[Context Summary]\n{}", summary),
                     text_signature: None,
                 }],
@@ -72,7 +72,7 @@ impl SessionContextBuilder {
         for entry in &entries[start_idx..] {
             if let SessionEntry::Message { message: msg, .. } = entry {
                 if let AgentMessage::Assistant(assistant) = msg
-                    && assistant.stop_reason == llm_client::StopReason::Error
+                    && assistant.stop_reason == ai_provider::StopReason::Error
                 {
                     continue;
                 }

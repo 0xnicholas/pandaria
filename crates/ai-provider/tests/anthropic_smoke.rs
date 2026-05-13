@@ -1,5 +1,5 @@
-use llm_client::providers::anthropic::AnthropicProvider;
-use llm_client::{LlmContext, LlmProvider, StreamOptions};
+use ai_provider::providers::anthropic::AnthropicProvider;
+use ai_provider::{LlmContext, LlmProvider, StreamOptions};
 use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
@@ -65,13 +65,13 @@ async fn test_anthropic_smoke_basic_text() {
     let event = stream.next().await.expect("should have Start");
     assert!(matches!(
         event,
-        llm_client::AssistantMessageEvent::Start { .. }
+        ai_provider::AssistantMessageEvent::Start { .. }
     ));
 
     let event = stream.next().await.expect("should have TextStart");
     assert!(matches!(
         event,
-        llm_client::AssistantMessageEvent::TextStart {
+        ai_provider::AssistantMessageEvent::TextStart {
             content_index: 0,
             ..
         }
@@ -79,18 +79,18 @@ async fn test_anthropic_smoke_basic_text() {
 
     let event = stream.next().await.expect("should have TextDelta 'Hello'");
     assert!(
-        matches!(&event, llm_client::AssistantMessageEvent::TextDelta { delta, .. } if delta == "Hello")
+        matches!(&event, ai_provider::AssistantMessageEvent::TextDelta { delta, .. } if delta == "Hello")
     );
 
     let event = stream.next().await.expect("should have TextDelta ' world'");
     assert!(
-        matches!(&event, llm_client::AssistantMessageEvent::TextDelta { delta, .. } if delta == " world")
+        matches!(&event, ai_provider::AssistantMessageEvent::TextDelta { delta, .. } if delta == " world")
     );
 
     let event = stream.next().await.expect("should have TextEnd");
     assert!(matches!(
         event,
-        llm_client::AssistantMessageEvent::TextEnd {
+        ai_provider::AssistantMessageEvent::TextEnd {
             content_index: 0,
             ..
         }
@@ -98,8 +98,8 @@ async fn test_anthropic_smoke_basic_text() {
 
     let event = stream.next().await.expect("should have Done");
     match event {
-        llm_client::AssistantMessageEvent::Done { reason, .. } => {
-            assert_eq!(reason, llm_client::StopReason::Stop);
+        ai_provider::AssistantMessageEvent::Done { reason, .. } => {
+            assert_eq!(reason, ai_provider::StopReason::Stop);
         }
         _ => panic!("expected Done"),
     }
@@ -167,7 +167,7 @@ async fn test_anthropic_smoke_tool_use() {
 
     let event = stream.next().await.expect("should have ToolCallEnd");
     match event {
-        llm_client::AssistantMessageEvent::ToolCallEnd { tool_call, .. } => {
+        ai_provider::AssistantMessageEvent::ToolCallEnd { tool_call, .. } => {
             assert_eq!(tool_call.name, "read");
             assert_eq!(tool_call.id, "toolu_001");
             assert_eq!(tool_call.arguments["path"], "/x");
@@ -177,8 +177,8 @@ async fn test_anthropic_smoke_tool_use() {
 
     let event = stream.next().await.expect("should have Done");
     match event {
-        llm_client::AssistantMessageEvent::Done { reason, .. } => {
-            assert_eq!(reason, llm_client::StopReason::ToolUse);
+        ai_provider::AssistantMessageEvent::Done { reason, .. } => {
+            assert_eq!(reason, ai_provider::StopReason::ToolUse);
         }
         _ => panic!("expected Done"),
     }

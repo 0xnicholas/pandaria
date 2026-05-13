@@ -187,7 +187,7 @@ mod tests {
             messages: vec![],
             turn_index: 2,
             tools: None,
-            options: agent_core::provider_opts::ProviderStreamOptions::default(),
+            options: agent_core::ProviderStreamOptions::default(),
         };
 
         let mutation = ext.on_before_provider_request(&provider_ctx).await;

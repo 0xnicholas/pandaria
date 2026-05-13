@@ -182,7 +182,7 @@ impl Extension for PathGuardExtension {
                     action = "leak_illegal_path"
                 );
                 return ToolResultMutation {
-                    content: Some(vec![llm_client::Content::Text {
+                    content: Some(vec![ai_provider::Content::Text {
                         text: "[PathGuard: illegal path reference removed]".to_string(),
                         text_signature: None,
                     }]),
