@@ -378,12 +378,12 @@
 - **技术依赖**：F-01（Usage）、F-16
 - **优先级**：P1
 
-**F-19** `session-store` crate — SessionStore Redis 适配器
+**F-19** `storage` crate — SessionStore Redis 适配器
 - **验收标准**：session 消息历史可写入 Redis 并完整恢复。
 - **技术依赖**：F-03（SessionEntry）、F-07（Compaction）
 - **优先级**：P0
 
-**F-20** `session-store` crate — SessionStore PostgreSQL 适配器
+**F-20** `storage` crate — SessionStore PostgreSQL 适配器
 - **验收标准**：同 F-19，后端为 PostgreSQL。
 - **技术依赖**：F-21（schema）
 - **优先级**：P1
@@ -502,7 +502,7 @@ HookDispatcher (trait)            ExtensionHandle
 **目标**：完成核心 agent loop + Extension 系统，可独立运行并通过 TUI 交互。
 
 **交付物**：
-- `llm-client` crate：4 个 Provider、SSE 流式、重试/校验/修复
+- `ai-provider` crate：4 个 Provider、SSE 流式、重试/校验/修复
 - `agent-core` crate：AgentLoop、SessionActor、ToolExecutor、CompactionActor、HookDispatcher trait
 - `extensions` crate：Extension trait、Actor Mailbox、EventBus、HookRouter、3 个内置 Extension
 - `tui` crate：多 session TUI 客户端
@@ -516,7 +516,7 @@ HookDispatcher (trait)            ExtensionHandle
 **交付物**：
 - `api-gateway` crate：gRPC / WebSocket 接入、认证、限流
 - `tenant` crate：调度器、配额管理、Session 注册表
-- `session-store` crate：Redis + PostgreSQL SessionStore 实现
+- `storage` crate：Redis + PostgreSQL SessionStore 实现
 - Session 持久化 schema
 
 **状态**：🔲 计划中
@@ -580,7 +580,7 @@ HookDispatcher (trait)            ExtensionHandle
 
 | 约束 | 说明 |
 |---|---|
-| 依赖方向单向 | 严格遵守 `api-gateway → tenant → extensions → agent-core → llm-client` 方向，禁止反向依赖 |
+| 依赖方向单向 | 严格遵守 `api-gateway → tenant → extensions → agent-core → ai-provider` 方向，禁止反向依赖 |
 | 公开 API 文档 | 所有公开 API 必须有 `///` 文档注释 |
 | 新 crate README | 新 crate 必须包含描述职责、公开接口和边界的 README.md |
 | 集成测试 | 集成测试使用 `testcontainers` 启动依赖，禁止测试依赖外部网络 |

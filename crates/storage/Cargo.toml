@@ -1,7 +1,8 @@
 [package]
-name = "session-store"
+name = "storage"
 version = "0.1.0"
 edition = "2024"
+description = "General-purpose storage layer for pandaria"
 
 [features]
 default = ["postgres", "redis"]
@@ -22,5 +23,5 @@ redis = { version = "0.27", features = ["tokio-comp", "aio"], optional = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true }
-llm-client = { path = "../llm-client" }
+ai-provider = { path = "../ai-provider" }
 uuid = { workspace = true }

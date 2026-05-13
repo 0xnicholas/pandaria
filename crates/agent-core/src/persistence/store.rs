@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
 use crate::error::AgentError;
-use crate::types::SessionEntry;
+use crate::persistence::entry::SessionEntry;
 
 /// Persistence boundary for session history (messages + compaction metadata).
 ///
-/// Implementations in the `session-store` crate provide Redis, PostgreSQL,
+/// Implementations in the `storage` crate provide Redis, PostgreSQL,
 /// or in-memory storage. Defined here as a trait so `agent-core` remains
 /// storage-agnostic.
 #[async_trait]

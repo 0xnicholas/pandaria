@@ -1,6 +1,8 @@
-/// Persistence-specific errors.
+/// Unified storage error type.
+///
+/// Aggregates errors from all storage domains (session, kv, blob, etc.)
 #[derive(Debug, thiserror::Error)]
-pub enum PersistenceError {
+pub enum StorageError {
     #[cfg(feature = "postgres")]
     #[error("postgres error: {0}")]
     Postgres(#[from] sqlx::Error),
@@ -18,3 +20,5 @@ pub enum PersistenceError {
     #[error("store not initialized — call init() first")]
     NotInitialized,
 }
+
+pub mod session;

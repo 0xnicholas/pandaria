@@ -6,7 +6,7 @@
 
 **Architecture:** 增量式修复，每个任务独立可验证。优先修复阻塞核心功能的 P1 缺口，再补全 P2 功能，最后处理 P3 工程规范。
 
-**Tech Stack:** Rust 2024 edition, tokio, async-trait, thiserror, tracing, uuid, llm-client
+**Tech Stack:** Rust 2024 edition, tokio, async-trait, thiserror, tracing, uuid, ai-provider
 
 **Spec Reference:** `docs/specs/2026-05-02-agent-core.md`, `AGENTS.md`
 
@@ -464,7 +464,7 @@ Expected: PASS
 
 > **问题**: spec §2.2 step 2.6 要求在 `call_llm_with_retry` 前调用 `llm_client::transform_messages()`，处理 image downgrade、thinking block、tool call ID normalization、orphan padding。
 >
-> **确认**: `llm-client` 已提供 `transform_messages(messages, &TransformOptions) -> Vec<Message>`。
+> **确认**: `ai-provider` 已提供 `transform_messages(messages, &TransformOptions) -> Vec<Message>`。
 
 ### Task 4.1: 在 AgentLoop 中集成 transform_messages
 
@@ -675,7 +675,7 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 ## 边界
 
 - **向上**: 被 `extensions` 和 `api-gateway` 依赖
-- **向下**: 依赖 `llm-client`
+- **向下**: 依赖 `ai-provider`
 - **横向**: `persistence` crate 实现 `SessionStore`
 
 ## 设计约束
@@ -699,7 +699,7 @@ Expected: 无警告
 
 **Files:**
 - Modify: `crates/agent-core/Cargo.toml`
-- Create: `crates/agent-core/tests/session_store_integration_tests.rs`
+- Create: `crates/agent-core/tests/storage_integration_tests.rs`
 
 **Steps:**
 
@@ -756,7 +756,7 @@ async fn test_session_persistence_roundtrip() {
 
 - [ ] **Step 3: 运行测试**
 
-Run: `cargo test -p agent-core --test session_store_integration_tests`
+Run: `cargo test -p agent-core --test storage_integration_tests`
 Expected: PASS
 
 ---

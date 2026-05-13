@@ -11,22 +11,43 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 - `ToolExecutor`：工具执行管道（prepare → on_tool_call → execute → on_tool_result → finalize）
 - `HookDispatcher` trait：hook 分发抽象（阻断型 + 链式 + 观测型），由 extensions crate 实现
 - `SessionActor`：session 状态管理、prompt/steer/followUp/abort/shutdown 生命周期、Drop 清理
-- `SessionStore` trait：持久化抽象，由 session-store crate 实现
+- `SessionStore` trait：持久化抽象，由 storage crate 实现
+
+## 模块结构
+
+```
+src/
+├── harness/          # 核心运行时（AgentLoop、SessionActor、ToolExecutor、CompactionActor）
+├── hook/             # Hook 协议（HookDispatcher trait、*Ctx、*Mutation、超时边界）
+├── persistence/      # 持久化边界（SessionStore trait、SessionEntry）
+├── utils/            # 工具函数与选项（ProviderStreamOptions、catch_panic）
+├── types.rs          # 基础类型（AgentMessage、AgentTool trait 等）
+├── error.rs          # 错误类型（AgentError、CompactionError）
+├── events.rs         # 事件系统（AgentEvent）
+├── file_ops.rs       # 文件操作提取器
+└── test_utils.rs     # 测试辅助
+```
 
 ## 公开接口
 
-| 模块 | 核心导出 |
-|---|---|
-| `types` | `AgentMessage`、`AgentTool` trait、`AgentToolResult`、`AgentToolRef`、`ToolExecutionMode` |
-| `context` | `ToolCallCtx`、`ToolResultCtx`、`TurnEndCtx`、`AgentEndCtx`、`SessionCtx`、`ContextCtx` |
-| `mutations` | `HookDecision`（Continue / Block）、`ToolResultMutation`、`ContextMutation` |
-| `hook_dispatcher` | `HookDispatcher` trait（阻断型 `on_tool_call`、链式 `on_tool_result`/`on_context`、观测型 `on_turn_end`/`on_agent_end`/`on_session_start`） |
-| `tool` | `ToolExecutor` |
-| `loop_` | `AgentLoop` |
-| `session` | `SessionActor` |
-| `store` | `SessionStore` trait |
-| `error` | `AgentError` |
-| `hook_timeout` | `with_timeout` — 所有 hook 调用的超时 + panic 边界 |
+| 模块 | 子模块 | 核心导出 |
+|---|---|---|
+| `harness` | `agent_loop` | `AgentLoop`、`AgentLoopConfig`、`TurnResult` |
+| `harness` | `session` | `SessionActor` |
+| `harness` | `tool` | `ToolExecutor` |
+| `harness` | `compaction` | `CompactionActor`、`CompactionConfig`、`should_compact` |
+| `harness` | `error_recovery` | `RecoveryAction`、`RecoveryStateMachine` |
+| `hook` | `dispatcher` | `HookDispatcher` trait |
+| `hook` | `context` | `ToolCallCtx`、`ToolResultCtx`、`TurnEndCtx`、`AgentEndCtx`、`SessionCtx`、`ContextCtx` |
+| `hook` | `mutations` | `HookDecision`、`ToolResultMutation`、`ContextMutation`、`ToolCallMutation` |
+| `hook` | `timeout` | `with_timeout` |
+| `persistence` | `store` | `SessionStore` trait |
+| `persistence` | `entry` | `SessionEntry`、`CompactionDetails`、`SessionContextBuilder` |
+| `utils` | `provider_opts` | `ProviderStreamOptions` |
+| `types` | — | `AgentMessage`、`AgentTool` trait、`AgentToolResult`、`AgentToolRef`、`ToolExecutionMode` |
+| `error` | — | `AgentError`、`CompactionError` |
+| `events` | — | `AgentEvent`、`AgentEventListener` |
+| `file_ops` | — | `FileOperationExtractor`、`DefaultFileOperationExtractor`、`FileOperations` |
 
 ## 边界
 
@@ -38,7 +59,7 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 
 ## 依赖
 
-- `llm-client` — 消息类型、LlmProvider trait
+- `ai-provider` — 消息类型、LlmProvider trait
 - `tokio` — 异步运行时
 - `async-trait` — async trait 支持
 - `thiserror` — 错误类型

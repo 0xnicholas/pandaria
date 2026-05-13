@@ -105,29 +105,33 @@ TenantSupervisor
 ```
 crates/
   agent-core/        # Agent loop、Tool pipeline、Session 生命周期、Compaction、HookDispatcher trait
+    harness/         #   核心运行时（AgentLoop、SessionActor、ToolExecutor、CompactionActor）
+    hook/            #   Hook 协议（HookDispatcher trait、*Ctx、*Mutation、超时边界）
+    persistence/     #   持久化边界（SessionStore trait、SessionEntry）
+    utils/           #   工具与选项
   extensions/        # Extension 系统
     host/            #   Extension trait、Actor Mailbox、EventBus、Hook 路由
     builtins/        #   内置 Extension 实现（audit、rate-limit、tool-guard 等）
   tenant/            # Tenant Scheduler、配额管理、Session 注册表
-  session-store/    # Session 状态序列化、Redis/PG 适配器
+  storage/          # 通用存储层（Session 状态序列化、Redis/PG 适配器）
   observability/     # tracing 集成、metrics、per-tenant 统计
-  llm-client/        # LLM provider 抽象、流式 SSE 解析、HTTP 通信协议
+  ai-provider/        # LLM provider 抽象、流式 SSE 解析、HTTP 通信协议
   api-gateway/       # gRPC / WebSocket 接入、认证、限流
 ```
 
-**llm-client 边界说明：**
+**ai-provider 边界说明：**
 
 - **纯通信层**：不负责 tenant 上下文、session 生命周期、资源配额检查。这些由调用方（`agent-core` / `tenant` 层）通过 tracing span 注入。
-- **HTTP 连接**：由 `reqwest::Client` 内部管理。支持上层通过 `with_client()` 注入统一配置的 Client 以复用连接，但连接池本身不由 llm-client 维护。
-- **可观测性**：llm-client 内部不创建 tracing span。调用方（`agent-core`）应在调用 `stream()` 前创建带 `tenant_id`/`session_id` 的 span。
-- **Token 计量**：llm-client 返回 `Usage` 原始数据，per-tenant 计量由调用方（`agent-core` 或 `tenant` 层）计算。
+- **HTTP 连接**：由 `reqwest::Client` 内部管理。支持上层通过 `with_client()` 注入统一配置的 Client 以复用连接，但连接池本身不由 ai-provider 维护。
+- **可观测性**：ai-provider 内部不创建 tracing span。调用方（`agent-core`）应在调用 `stream()` 前创建带 `tenant_id`/`session_id` 的 span。
+- **Token 计量**：ai-provider 返回 `Usage` 原始数据，per-tenant 计量由调用方（`agent-core` 或 `tenant` 层）计算。
 
 **依赖方向严格单向**（禁止反向依赖）：
 
 ```
-api-gateway → tenant → extensions → agent-core → llm-client
+api-gateway → tenant → extensions → agent-core → ai-provider
                    ↓         ↓
-             session-store  observability
+              storage        observability
 ```
 
 ---
@@ -164,7 +168,7 @@ api-gateway → tenant → extensions → agent-core → llm-client
 
 ## 参考系统对照
 
-本项目的 agent loop 语义以 [pi.dev](./_references/pi-mono-main) 为参考实现。
+本项目的 agent loop 语义以 [pi.dev](./_references/pi-main) 为参考实现。
 
 **pi 概念 → 本项目对应：**
 
@@ -199,8 +203,8 @@ api-gateway → tenant → extensions → agent-core → llm-client
 | Session 持久化 schema | ✅ 已实现（PostgreSQL adapter，Redis 待实现） |
 | LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral，Bedrock 待完成） |
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST，服务端正式设计文档待补充） |
-| 所有代码实现 | 🟡 核心栈完成（llm-client、agent-core、extensions、session-store），tenant/observability/api-gateway 待实现 |
-| session-store 集成测试 | ✅ 修复（并行测试 tenant/session ID 隔离） |
+| 所有代码实现 | 🟡 核心栈完成（ai-provider、agent-core、extensions、storage），tenant/observability/api-gateway 待实现 |
+| storage 集成测试 | ✅ 修复（并行测试 tenant/session ID 隔离） |
 | 代码质量 | ✅ 修复（4 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复） |
 
 ---

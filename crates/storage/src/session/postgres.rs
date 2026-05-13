@@ -4,7 +4,7 @@ use tracing::info;
 
 use agent_core::{AgentError, SessionEntry, SessionStore};
 
-use crate::error::PersistenceError;
+use crate::StorageError;
 
 /// PostgreSQL implementation of [`SessionStore`].
 ///
@@ -22,7 +22,7 @@ impl PgSessionStore {
     }
 
     /// Initialise the `sessions` table if it does not already exist.
-    pub async fn init(&self) -> Result<(), PersistenceError> {
+    pub async fn init(&self) -> Result<(), StorageError> {
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS sessions (
@@ -63,7 +63,7 @@ impl PgSessionStore {
     async fn list_sessions_inner(
         &self,
         tenant_id: &str,
-    ) -> Result<Vec<String>, PersistenceError> {
+    ) -> Result<Vec<String>, StorageError> {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT session_id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC",
         )
@@ -79,7 +79,7 @@ impl PgSessionStore {
         &self,
         tenant_id: &str,
         session_id: &str,
-    ) -> Result<(), PersistenceError> {
+    ) -> Result<(), StorageError> {
         sqlx::query("DELETE FROM sessions WHERE tenant_id = $1 AND session_id = $2")
             .bind(tenant_id)
             .bind(session_id)

@@ -5,7 +5,7 @@ use agent_core::{
     SessionActor, SessionEntry, SessionStore,
 };
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
-use session_store::postgres::PgSessionStore;
+use storage::session::postgres::PgSessionStore;
 use sqlx::PgPool;
 
 /// Connect to the local PostgreSQL test database.
@@ -32,7 +32,7 @@ async fn clean_table(pool: &PgPool) {
         .expect("failed to truncate sessions table");
 }
 
-fn make_compaction_actor(provider: Arc<dyn llm_client::LlmProvider>) -> Arc<CompactionActor> {
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
     Arc::new(CompactionActor::new(
         CompactionConfig::default(),
         provider,
@@ -54,8 +54,8 @@ async fn test_pg_store_roundtrip() {
     let entries = vec![
         SessionEntry::Message {
             id: uuid::Uuid::new_v4(),
-            message: agent_core::AgentMessage::User(llm_client::UserMessage {
-                content: vec![llm_client::Content::Text {
+            message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+                content: vec![ai_provider::Content::Text {
                     text: "hello".to_string(),
                     text_signature: None,
                 }],
@@ -71,7 +71,7 @@ async fn test_pg_store_roundtrip() {
     match &loaded[0] {
         SessionEntry::Message { message, .. } => match message {
             agent_core::AgentMessage::User(u) => {
-                assert!(u.content.iter().any(|c| matches!(c, llm_client::Content::Text { text, .. } if text == "hello")));
+                assert!(u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "hello")));
             }
             _ => panic!("expected user message"),
         },
@@ -91,8 +91,8 @@ async fn test_pg_store_overwrite() {
     let session = "overwrite_s";
     let entries_v1 = vec![SessionEntry::Message {
         id: uuid::Uuid::new_v4(),
-        message: agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+        message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
                 text: "first".to_string(),
                 text_signature: None,
             }],
@@ -103,8 +103,8 @@ async fn test_pg_store_overwrite() {
     let entries_v2 = vec![
         SessionEntry::Message {
             id: uuid::Uuid::new_v4(),
-            message: agent_core::AgentMessage::User(llm_client::UserMessage {
-                content: vec![llm_client::Content::Text {
+            message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+                content: vec![ai_provider::Content::Text {
                     text: "first".to_string(),
                     text_signature: None,
                 }],
@@ -113,22 +113,22 @@ async fn test_pg_store_overwrite() {
         },
         SessionEntry::Message {
             id: uuid::Uuid::new_v4(),
-            message: agent_core::AgentMessage::Assistant(llm_client::AssistantMessage {
-                content: vec![llm_client::Content::Text {
+            message: agent_core::AgentMessage::Assistant(ai_provider::AssistantMessage {
+                content: vec![ai_provider::Content::Text {
                     text: "second".to_string(),
                     text_signature: None,
                 }],
                 provider: "test".to_string(),
                 model: "test".to_string(),
-                api: llm_client::Api { provider: "test".to_string(), model: "test".to_string() },
-                usage: llm_client::Usage {
+                api: ai_provider::Api { provider: "test".to_string(), model: "test".to_string() },
+                usage: ai_provider::Usage {
                     input_tokens: 1,
                     output_tokens: 1,
                     cache_creation_input_tokens: None,
                     cache_read_input_tokens: None,
                     total_tokens: 2,
                 },
-                stop_reason: llm_client::StopReason::Stop,
+                stop_reason: ai_provider::StopReason::Stop,
                 response_id: None,
                 error_message: None,
                 timestamp: std::time::SystemTime::now(),
@@ -144,7 +144,7 @@ async fn test_pg_store_overwrite() {
     match &loaded[1] {
         SessionEntry::Message { message, .. } => match message {
             agent_core::AgentMessage::Assistant(a) => {
-                assert!(a.content.iter().any(|c| matches!(c, llm_client::Content::Text { text, .. } if text == "second")));
+                assert!(a.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "second")));
             }
             _ => panic!("expected assistant message"),
         },
@@ -162,8 +162,8 @@ async fn test_pg_store_tenant_isolation() {
 
     let entries_a = vec![SessionEntry::Message {
         id: uuid::Uuid::new_v4(),
-        message: agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+        message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
                 text: "tenant_a".to_string(),
                 text_signature: None,
             }],
@@ -173,8 +173,8 @@ async fn test_pg_store_tenant_isolation() {
 
     let entries_b = vec![SessionEntry::Message {
         id: uuid::Uuid::new_v4(),
-        message: agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+        message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
                 text: "tenant_b".to_string(),
                 text_signature: None,
             }],
@@ -198,7 +198,7 @@ async fn test_pg_store_tenant_isolation() {
     match &loaded_a[0] {
         SessionEntry::Message { message, .. } => match message {
             agent_core::AgentMessage::User(u) => {
-                assert!(u.content.iter().any(|c| matches!(c, llm_client::Content::Text { text, .. } if text == "tenant_a")));
+                assert!(u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "tenant_a")));
             }
             _ => panic!("expected user message"),
         },
@@ -208,7 +208,7 @@ async fn test_pg_store_tenant_isolation() {
     match &loaded_b[0] {
         SessionEntry::Message { message, .. } => match message {
             agent_core::AgentMessage::User(u) => {
-                assert!(u.content.iter().any(|c| matches!(c, llm_client::Content::Text { text, .. } if text == "tenant_b")));
+                assert!(u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "tenant_b")));
             }
             _ => panic!("expected user message"),
         },
@@ -270,7 +270,7 @@ async fn test_session_actor_persistence_loop() {
     // Verify the user message survived roundtrip
     assert!(msgs.iter().any(|m| {
         if let agent_core::AgentMessage::User(u) = m {
-            u.content.iter().any(|c| matches!(c, llm_client::Content::Text { text, .. } if text == "ping"))
+            u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "ping"))
         } else {
             false
         }
@@ -289,8 +289,8 @@ async fn test_pg_store_delete() {
     let session = "delete_s";
     let entries = vec![SessionEntry::Message {
         id: uuid::Uuid::new_v4(),
-        message: agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+        message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
                 text: "to-delete".to_string(),
                 text_signature: None,
             }],
@@ -318,8 +318,8 @@ async fn test_pg_store_list() {
     let tenant = "list_t";
     let entries = vec![SessionEntry::Message {
         id: uuid::Uuid::new_v4(),
-        message: agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+        message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
                 text: "list".to_string(),
                 text_signature: None,
             }],
@@ -346,8 +346,8 @@ async fn test_pg_store_tenant_list_isolation() {
 
     let entries = vec![SessionEntry::Message {
         id: uuid::Uuid::new_v4(),
-        message: agent_core::AgentMessage::User(llm_client::UserMessage {
-            content: vec![llm_client::Content::Text {
+        message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
                 text: "iso".to_string(),
                 text_signature: None,
             }],

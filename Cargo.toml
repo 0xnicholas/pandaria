@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/llm-client",
+    "crates/ai-provider",
     "crates/agent-core",
     "crates/extensions",
-    "crates/session-store",
+    "crates/storage",
     "crates/observability",
     "crates/tui",
 ]
@@ -28,5 +28,13 @@ dashmap = "6"
 name = "pandaria"
 version = "0.1.0"
 edition = "2024"
+default-run = "pandaria"
 
 [dependencies]
+tui = { path = "crates/tui" }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[[bin]]
+name = "pandaria"
+path = "src/main.rs"
