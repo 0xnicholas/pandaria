@@ -2,7 +2,8 @@
 pub enum Command {
     Quit, NewSession { title: Option<String> }, SwitchSession { id: String }, ListSessions,
     SelectModel { id: Option<String> }, Clear, Help, Connect { url: String },
-    Auth { token: String }, Tokens,
+    Auth { token: String }, Tokens, Retry, Copy,
+    Dump { filename: Option<String> }, Compact, Rename { title: String },
 }
 
 impl Command {
@@ -24,6 +25,11 @@ impl Command {
             "connect" if !args.is_empty() => Some(Command::Connect { url: args.to_string() }),
             "auth" if !args.is_empty() => Some(Command::Auth { token: args.to_string() }),
             "tokens" => Some(Command::Tokens),
+            "retry" => Some(Command::Retry),
+            "copy" => Some(Command::Copy),
+            "dump" => Some(Command::Dump { filename: if args.is_empty() { None } else { Some(args.to_string()) } }),
+            "compact" => Some(Command::Compact),
+            "rename" if !args.is_empty() => Some(Command::Rename { title: args.to_string() }),
             _ => None,
         }
     }
@@ -40,4 +46,9 @@ mod tests {
     #[test] fn test_unknown() { assert_eq!(Command::parse("/unknown"), None); }
     #[test] fn test_connect() { assert_eq!(Command::parse("/connect http://x"), Some(Command::Connect { url: "http://x".into() })); }
     #[test] fn test_auth() { assert_eq!(Command::parse("/auth sk-t"), Some(Command::Auth { token: "sk-t".into() })); }
+    #[test] fn test_retry() { assert_eq!(Command::parse("/retry"), Some(Command::Retry)); }
+    #[test] fn test_copy() { assert_eq!(Command::parse("/copy"), Some(Command::Copy)); }
+    #[test] fn test_dump() { assert_eq!(Command::parse("/dump out.md"), Some(Command::Dump { filename: Some("out.md".into()) })); }
+    #[test] fn test_compact() { assert_eq!(Command::parse("/compact"), Some(Command::Compact)); }
+    #[test] fn test_rename() { assert_eq!(Command::parse("/rename my session"), Some(Command::Rename { title: "my session".into() })); }
 }

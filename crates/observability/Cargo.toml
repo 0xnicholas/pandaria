@@ -9,3 +9,4 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 metrics = "0.24"
 metrics-exporter-prometheus = "0.15"
+regex = { workspace = true }

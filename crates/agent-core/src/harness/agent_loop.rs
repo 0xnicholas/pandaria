@@ -28,6 +28,10 @@ pub struct AgentLoopConfig {
     pub steer_queue: Arc<Mutex<Vec<AgentMessage>>>,
     pub follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
     pub event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static>,
+    /// Optional circuit breaker for the provider.
+    pub circuit_breaker: Option<Arc<crate::circuit_breaker::CircuitBreaker>>,
+    /// Skills available for this session.
+    pub skills: Vec<crate::skills::Skill>,
 }
 
 #[derive(Debug, Clone)]
@@ -226,8 +230,15 @@ impl AgentLoop {
         let mut transformed = ctx_mutation.messages.unwrap_or_else(|| messages.clone());
         resolve_orphan_tool_calls(&mut transformed);
 
+        let skills_xml = crate::skills::format_skills_for_prompt(&self.config.skills);
+        let effective_system_prompt = system_prompt.as_ref().map(|sp| {
+            if skills_xml.is_empty() { sp.clone() } else { format!("{}\n{}", sp, skills_xml) }
+        }).or_else(|| {
+            if skills_xml.is_empty() { None } else { Some(skills_xml) }
+        });
+
         let mut stream_opts = self.config.stream_options.clone();
-        let mut ctx = LlmContext { system_prompt: system_prompt.clone(), messages: transformed, tools: build_tool_defs(&self.config.tools) };
+        let mut ctx = LlmContext { system_prompt: effective_system_prompt, messages: transformed, tools: build_tool_defs(&self.config.tools) };
 
         let provider_req_ctx = ProviderRequestCtx {
             tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), model: self.config.model.clone(),
@@ -297,6 +308,7 @@ impl AgentLoop {
                 self.config.hook_dispatcher.on_turn_end(&TurnEndCtx {
                     tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(),
                     turn_index: *turn_index, messages: messages.clone(),
+                    usage: assistant_msg.usage.clone(),
                 }),
                 100,
                 (),
@@ -332,6 +344,7 @@ impl AgentLoop {
             self.config.hook_dispatcher.on_turn_end(&TurnEndCtx {
                 tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(),
                 turn_index: *turn_index, messages: messages.clone(),
+                usage: assistant_msg.usage.clone(),
             }),
             100,
             (),
@@ -347,6 +360,16 @@ impl AgentLoop {
         let mut retry_count: u32 = 0;
         let max_retries = stream_opts.max_retries;
 
+        // Check circuit breaker before first attempt
+        if let Some(ref cb) = self.config.circuit_breaker {
+            if let Err(e) = cb.check().await {
+                tracing::warn!(error = %e, "circuit breaker open, fast-failing provider request");
+                return Err(AgentError::LlmError(ai_provider::LlmError::ProviderError(
+                    format!("circuit breaker: {e}")
+                )));
+            }
+        }
+
         loop {
             if signal.is_cancelled() {
                 return Err(AgentError::Cancelled);
@@ -359,6 +382,9 @@ impl AgentLoop {
             let mut stream = match stream_result {
                 Ok(s) => s,
                 Err(e) if e.is_retryable() && retry_count < max_retries => {
+                    if let Some(ref cb) = self.config.circuit_breaker {
+                        cb.record_failure().await;
+                    }
                     retry_count += 1;
                     let delay_ms = 100 * 2_u64.pow(retry_count - 1);
                     (self.config.event_sink)(AgentEvent::AutoRetryStart { attempt: retry_count, max_attempts: max_retries, delay_ms });
@@ -367,6 +393,11 @@ impl AgentLoop {
                     continue;
                 }
                 Err(e) => {
+                    if let Some(ref cb) = self.config.circuit_breaker {
+                        if e.is_retryable() {
+                            cb.record_failure().await;
+                        }
+                    }
                     (self.config.event_sink)(AgentEvent::AutoRetryEnd { success: false, error: Some(e.to_string()) });
                     return Err(AgentError::LlmError(e));
                 }
@@ -440,6 +471,11 @@ impl AgentLoop {
                      "service unavailable", "fetch failed", "terminated",
                      "500", "502", "503", "504"].iter().any(|p| lower.contains(p))
                 });
+                if let Some(ref cb) = self.config.circuit_breaker {
+                    if is_retryable {
+                        cb.record_failure().await;
+                    }
+                }
                 if is_retryable && retry_count < max_retries {
                     retry_count += 1;
                     let delay_ms = 100 * 2_u64.pow(retry_count - 1);
@@ -450,6 +486,9 @@ impl AgentLoop {
                 }
             }
 
+            if let Some(ref cb) = self.config.circuit_breaker {
+                cb.record_success().await;
+            }
             (self.config.event_sink)(AgentEvent::AutoRetryEnd { success: true, error: None });
             return Ok((retry_count, assistant_msg));
         }
@@ -573,6 +612,8 @@ mod tests {
             steer_queue: Arc::new(Mutex::new(vec![])),
             follow_up_queue: Arc::new(Mutex::new(vec![])),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+            circuit_breaker: None,
+            skills: Vec::new(),
         }
     }
 
@@ -1279,6 +1320,8 @@ mod tests {
             steer_queue: steer_queue.clone(),
             follow_up_queue: Arc::new(Mutex::new(vec![])),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+            circuit_breaker: None,
+            skills: Vec::new(),
         };
         let loop_ = AgentLoop::new(config);
 
@@ -1314,6 +1357,8 @@ mod tests {
             steer_queue: Arc::new(Mutex::new(vec![])),
             follow_up_queue: follow_up_queue.clone(),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+            circuit_breaker: None,
+            skills: Vec::new(),
         };
         let loop_ = AgentLoop::new(config);
 

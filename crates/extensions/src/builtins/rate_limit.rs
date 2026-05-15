@@ -15,6 +15,9 @@ const DEFAULT_MAX_TRACKED_TENANTS: usize = 10_000;
 
 /// Rate-limit extension — sliding-window tool call frequency limit per tenant.
 ///
+/// ⚠️ DEPRECATED: This is a global rate limiter shared across all tenants.
+/// Use `tenant::extensions::quota::TenantQuotaExtension` for per-tenant enforcement.
+///
 /// Each tenant gets an independent call budget.  A global cap on the number
 /// of tracked tenants prevents unbounded memory growth.
 pub struct RateLimitExtension {

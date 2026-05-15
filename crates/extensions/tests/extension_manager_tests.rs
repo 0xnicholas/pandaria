@@ -1,12 +1,11 @@
 use std::sync::Arc;
 
 use agent_core::context::ToolCallCtx;
-use agent_core::mutations::{HookDecision, ToolCallMutation};
+use agent_core::mutations::HookDecision;
 use agent_core::HookDispatcher;
 use extensions::builtins::audit::AuditExtension;
 use extensions::builtins::rate_limit::RateLimitExtension;
 use extensions::builtins::tool_guard::ToolGuardExtension;
-use extensions::host::extension::Extension;
 use extensions::host::manager::ExtensionManager;
 
 #[tokio::test]
@@ -76,7 +75,7 @@ async fn test_manager_shutdown_terminates_actors() {
         Arc::new(AuditExtension),
     ]);
 
-    let (hook_router, handles, join_handles) = manager.spawn_all();
+    let (_hook_router, handles, join_handles) = manager.spawn_all();
 
     // Shutdown
     ExtensionManager::shutdown_all(&handles).await;

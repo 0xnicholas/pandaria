@@ -75,4 +75,23 @@ impl RestClient {
         let resp = Self::check_status(resp).await?;
         Ok(resp.json::<SessionInfo>().await?)
     }
+
+    pub async fn rename_session(&self, session_id: &str, title: &str, token: &str) -> Result<SessionInfo, TuiError> {
+        let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
+        let resp = self.client.patch(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({ "title": title }))
+            .send().await?;
+        let resp = Self::check_status(resp).await?;
+        Ok(resp.json::<SessionInfo>().await?)
+    }
+
+    pub async fn compact_session(&self, session_id: &str, token: &str) -> Result<(), TuiError> {
+        let url = format!("{}/api/v1/sessions/{}/compact", self.base_url, session_id);
+        let resp = self.client.post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send().await?;
+        Self::check_status(resp).await?;
+        Ok(())
+    }
 }

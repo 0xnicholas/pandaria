@@ -152,6 +152,7 @@ async fn test_extension_tool_blocked_by_another_extension() {
         compaction_actor,
         tools,
         None,
+    vec![],
     );
 
     let results = session.prompt("call tool".to_string()).await.unwrap();
@@ -213,6 +214,7 @@ async fn test_extension_tool_allowed_after_sanitization() {
         compaction_actor,
         tools,
         None,
+    vec![],
     );
 
     let results = session.prompt("call tool".to_string()).await.unwrap();

@@ -37,6 +37,7 @@ pub struct TurnEndCtx {
     pub session_id: String,
     pub turn_index: u64,
     pub messages: Vec<AgentMessage>,
+    pub usage: ai_provider::Usage,
 }
 
 /// Context passed to Extension::on_agent_end

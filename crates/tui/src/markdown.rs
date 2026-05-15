@@ -98,4 +98,56 @@ mod tests {
     #[test] fn test_heading() { assert!(!render_markdown("# Hello", &Theme::default(), "base16-ocean.dark").is_empty()); }
     #[test] fn test_code_block() { assert!(render_markdown("```\nfn main() {}\n```", &Theme::default(), "base16-ocean.dark").iter().any(|l| l.spans.iter().any(|s| s.content.contains("fn main")))); }
     #[test] fn test_paragraph() { let r = render_markdown("hello world", &Theme::default(), "base16-ocean.dark"); assert!(r[0].spans.iter().any(|s| s.content.contains("hello"))); }
+
+    #[test]
+    fn test_inline_code() {
+        let r = render_markdown("use `Vec::new()` here", &Theme::default(), "base16-ocean.dark");
+        assert!(r.iter().any(|l| l.spans.iter().any(|s| s.content.contains("Vec::new()"))));
+    }
+
+    #[test]
+    fn test_bold_text() {
+        let r = render_markdown("**bold**", &Theme::default(), "base16-ocean.dark");
+        assert!(r.iter().any(|l| l.spans.iter().any(|s| s.content.contains("bold") && s.style.add_modifier == ratatui::style::Modifier::BOLD)));
+    }
+
+    #[test]
+    fn test_italic_text() {
+        let r = render_markdown("*italic*", &Theme::default(), "base16-ocean.dark");
+        assert!(r.iter().any(|l| l.spans.iter().any(|s| s.content.contains("italic") && s.style.add_modifier == ratatui::style::Modifier::ITALIC)));
+    }
+
+    #[test]
+    fn test_nested_bold_italic() {
+        let r = render_markdown("***both***", &Theme::default(), "base16-ocean.dark");
+        let has_both = r.iter().any(|l| l.spans.iter().any(|s| s.content.contains("both")));
+        assert!(has_both);
+    }
+
+    #[test]
+    fn test_blockquote() {
+        let r = render_markdown("> quote line", &Theme::default(), "base16-ocean.dark");
+        assert!(r.iter().any(|l| l.spans.iter().any(|s| s.content.contains("│"))));
+    }
+
+    #[test]
+    fn test_link_truncation() {
+        let long_url = "https://example.com/".repeat(10);
+        let md = format!("[text]({})", long_url);
+        let r = render_markdown(&md, &Theme::default(), "base16-ocean.dark");
+        assert!(r.iter().any(|l| l.spans.iter().any(|s| s.content.contains("…"))));
+    }
+
+    #[test]
+    fn test_soft_break_creates_new_line() {
+        let r = render_markdown("line one  \nline two", &Theme::default(), "base16-ocean.dark");
+        assert!(r.len() >= 2);
+    }
+
+    #[test]
+    fn test_multiple_paragraphs() {
+        let r = render_markdown("p1\n\np2", &Theme::default(), "base16-ocean.dark");
+        assert!(r.iter().any(|l| l.spans.iter().any(|s| s.content.contains("p1"))));
+        assert!(r.iter().any(|l| l.spans.iter().any(|s| s.content.contains("p2"))));
+    }
 }

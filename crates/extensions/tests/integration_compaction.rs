@@ -84,6 +84,7 @@ async fn test_overflow_triggers_compaction_with_extension_hook() {
         compaction_actor,
         vec![],
         None,
+    vec![],
     );
 
     let result = session.prompt("trigger overflow".to_string()).await;
@@ -139,6 +140,7 @@ async fn test_extension_blocks_compaction() {
         compaction_actor,
         vec![],
         None,
+    vec![],
     );
 
     let result = session.prompt("trigger overflow".to_string()).await;

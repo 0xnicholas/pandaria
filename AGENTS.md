@@ -203,7 +203,7 @@ api-gateway → tenant → extensions → agent-core → ai-provider
 | Session 持久化 schema | ✅ 已实现（PostgreSQL adapter，Redis 待实现） |
 | LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral，Bedrock 待完成） |
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST，服务端正式设计文档待补充） |
-| 所有代码实现 | 🟡 核心栈完成（ai-provider、agent-core、extensions、storage），tenant/observability/api-gateway 待实现 |
+| 所有代码实现 | 🟡 核心栈完成（ai-provider、agent-core、extensions、storage），skills 支持已完成，tenant/observability/api-gateway 待实现 |
 | storage 集成测试 | ✅ 修复（并行测试 tenant/session ID 隔离） |
 | 代码质量 | ✅ 修复（4 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复） |
 

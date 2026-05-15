@@ -130,6 +130,7 @@ async fn test_complete_lifecycle_hooks() {
         compaction_actor,
         vec![],
         None,
+    vec![],
     );
 
     // Wait for session_start observational hook (fire-and-forget)

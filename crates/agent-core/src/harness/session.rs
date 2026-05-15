@@ -44,6 +44,8 @@ pub struct SessionActor {
     follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
     /// Optional persistence backend for session history
     store: Option<Arc<dyn SessionStore>>,
+    /// Skills available for this session.
+    skills: Vec<crate::skills::Skill>,
     /// Handle of the most recent fire-and-forget persistence task.
     /// Awaiting this before spawning a new save guarantees write ordering
     /// and prevents stale snapshots from overwriting newer ones.
@@ -78,6 +80,7 @@ impl SessionActor {
         compaction_actor: Arc<CompactionActor>,
         tools: Vec<AgentToolRef>,
         store: Option<Arc<dyn SessionStore>>,
+        skills: Vec<crate::skills::Skill>,
     ) -> Self {
         // Emit session_start (fire-and-forget, per ADR-003)
         let tool_defs: Vec<serde_json::Value> = tools
@@ -125,6 +128,7 @@ impl SessionActor {
             hook_dispatcher,
             compaction_actor,
             tools,
+            skills,
             entries: Vec::new(),
             steer_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
@@ -202,6 +206,30 @@ impl SessionActor {
         &mut self,
         text: String,
     ) -> Result<Vec<AgentMessage>, AgentError> {
+        // Handle /skill:name invocation
+        if let Some(skill_name) = crate::skills::parse_skill_invocation(&text) {
+            if let Some(skill) = self.skills.iter().find(|s| s.name == skill_name) {
+                let content = tokio::fs::read_to_string(&skill.file_path).await.map_err(|e| {
+                    AgentError::SkillLoadFailed(format!(
+                        "failed to read skill {}: {}",
+                        skill.name, e
+                    ))
+                })?;
+
+                let skill_msg = AgentMessage::User(ai_provider::UserMessage {
+                    content: vec![Content::Text {
+                        text: format!("[Skill: {}]\n{}", skill.name, content),
+                        text_signature: None,
+                    }],
+                    timestamp: std::time::SystemTime::now(),
+                });
+                self.steer(skill_msg);
+                return self.run_with_messages(None).await;
+            } else {
+                return Err(AgentError::SkillNotFound(skill_name.to_string()));
+            }
+        }
+
         let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content: vec![Content::Text {
                 text,
@@ -283,6 +311,8 @@ impl SessionActor {
                 event_sink,
                 steer_queue: self.steer_queue.clone(),
                 follow_up_queue: self.follow_up_queue.clone(),
+                circuit_breaker: None,
+                skills: self.skills.clone(),
             };
 
             match AgentLoop::new(config).run(messages, self.abort_token.child_token()).await {
@@ -422,7 +452,7 @@ impl SessionActor {
 
     fn model_context_window(&self) -> usize {
         if let Some(model_meta) = ai_provider::get_model(
-            &self.provider.provider_name(),
+            self.provider.provider_name(),
             &self.model,
         ) {
             model_meta.context_window as usize
@@ -647,6 +677,11 @@ impl SessionActor {
         Ok(())
     }
 
+    /// Get a clone of the cancellation token for this session.
+    pub fn abort_token(&self) -> CancellationToken {
+        self.abort_token.clone()
+    }
+
     /// Abort the current run
     pub fn abort(&self) {
         warn!(
@@ -744,7 +779,7 @@ impl Drop for SessionActor {
 mod tests {
     use super::*;
     use crate::harness::compaction::CompactionConfig;
-    use crate::hook::context::{AgentEndCtx, TurnEndCtx};
+    use crate::hook::context::AgentEndCtx;
     use crate::file_ops::DefaultFileOperationExtractor;
     use crate::test_utils::{AllowAllDispatcher, TestProvider};
     use async_trait::async_trait;
@@ -850,6 +885,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         let restored = session.restore().await.unwrap();
@@ -871,6 +907,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         // Queue a steer message
@@ -914,6 +951,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         // Queue a follow_up message
@@ -946,6 +984,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         // Test that abort() works by verifying the token propagates cancellation.
@@ -986,6 +1025,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             Some(store.clone()),
+            vec![],
         );
 
         // No messages yet, flush should save empty
@@ -1015,6 +1055,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider.clone())),
             vec![],
             Some(store.clone()),
+            vec![],
         );
             session.prompt("hello".to_string()).await.unwrap();
             session.flush().await.unwrap();
@@ -1031,6 +1072,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             Some(store.clone()),
+            vec![],
         );
 
         let restored = session2.restore().await.unwrap();
@@ -1056,6 +1098,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             Some(store.clone()),
+            vec![],
         );
 
         // Two consecutive prompts — each triggers a fire-and-forget save.
@@ -1088,6 +1131,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         // Add a compaction entry manually
@@ -1126,6 +1170,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         // Queue both steer and follow-up
@@ -1208,6 +1253,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         session.prompt("hello".to_string()).await.unwrap();
@@ -1242,6 +1288,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         let result1 = session.prompt("hello".to_string()).await.unwrap();
@@ -1277,6 +1324,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider.clone())),
             vec![],
             None,
+            vec![],
         );
 
         let mut s2 = SessionActor::new(
@@ -1289,6 +1337,7 @@ mod tests {
             Arc::new(make_compaction_actor(provider)),
             vec![],
             None,
+            vec![],
         );
 
         let (r1, r2) = tokio::join!(

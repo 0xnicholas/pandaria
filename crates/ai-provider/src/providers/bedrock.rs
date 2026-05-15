@@ -13,6 +13,7 @@ use crate::types::LlmContext;
 pub struct AwsBedrockProvider {
     client: aws_sdk_bedrockruntime::Client,
     region: String,
+    config: crate::providers::shared::ProviderConfig,
 }
 
 impl AwsBedrockProvider {
@@ -24,7 +25,16 @@ impl AwsBedrockProvider {
             .load()
             .await;
         let client = aws_sdk_bedrockruntime::Client::new(&config);
-        Self { client, region }
+        Self {
+            client,
+            region,
+            config: crate::providers::shared::ProviderConfig::new(
+                None,
+                "https://bedrock-runtime.amazonaws.com",
+                "bedrock",
+                "AWS_REGION",
+            ),
+        }
     }
 
     /// Create a provider with an existing AWS SDK client.
@@ -32,6 +42,12 @@ impl AwsBedrockProvider {
         Self {
             client,
             region: region.into(),
+            config: crate::providers::shared::ProviderConfig::new(
+                None,
+                "https://bedrock-runtime.amazonaws.com",
+                "bedrock",
+                "AWS_REGION",
+            ),
         }
     }
 }
@@ -44,6 +60,10 @@ impl LlmProvider for AwsBedrockProvider {
 
     fn models(&self) -> Vec<String> {
         crate::models::models_for_provider_names("bedrock")
+    }
+
+    fn config(&self) -> &crate::providers::shared::ProviderConfig {
+        &self.config
     }
 
     async fn stream(

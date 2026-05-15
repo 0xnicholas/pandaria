@@ -16,6 +16,8 @@ fn make_loop_config(provider: Arc<dyn LlmProvider>, dispatcher: Arc<dyn HookDisp
         steer_queue: Arc::new(Mutex::new(vec![])),
         follow_up_queue: Arc::new(Mutex::new(vec![])),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+        circuit_breaker: None,
+        skills: Vec::new(),
     }
 }
 
@@ -39,6 +41,8 @@ async fn test_follow_up_triggers_second_turn() {
         steer_queue: Arc::new(Mutex::new(vec![])),
         follow_up_queue: follow_up_queue.clone(),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+        circuit_breaker: None,
+        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
@@ -64,10 +68,23 @@ async fn test_steer_injection() {
     struct VerifyingProvider {
         expected_text: String,
     }
+    fn test_provider_config() -> &'static ai_provider::providers::shared::ProviderConfig {
+        use std::sync::OnceLock;
+        static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            ai_provider::providers::shared::ProviderConfig::new(
+                None, "http://test", "test", "TEST_API_KEY",
+            )
+        })
+    }
+
     #[async_trait]
     impl LlmProvider for VerifyingProvider {
         fn provider_name(&self) -> &str { "verify" }
         fn models(&self) -> Vec<String> { vec!["test".to_string()] }
+        fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+            test_provider_config()
+        }
         async fn stream(&self,
             _model: &str,
             context: LlmContext,
@@ -121,6 +138,8 @@ async fn test_steer_injection() {
         steer_queue: steer_queue.clone(),
         follow_up_queue: Arc::new(Mutex::new(vec![])),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+        circuit_breaker: None,
+        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
@@ -155,6 +174,8 @@ async fn test_event_sequence() {
         event_sink: Arc::new(move |event| {
             events_clone.lock().unwrap().push(event);
         }),
+        circuit_breaker: None,
+        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
@@ -265,6 +286,7 @@ async fn test_complete_returns_text_only() {
         )),
         vec![],
         None,
+        vec![],
     );
 
     let result: String = session.complete("hello".to_string()).await.unwrap();

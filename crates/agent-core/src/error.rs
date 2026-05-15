@@ -31,6 +31,24 @@ pub enum AgentError {
 
     #[error("persistence error: {0}")]
     Persistence(String),
+
+    #[error("quota exceeded: {0}")]
+    QuotaExceeded(String),
+
+    #[error("skill not found: {0}")]
+    SkillNotFound(String),
+
+    #[error("skill load failed: {0}")]
+    SkillLoadFailed(String),
+}
+
+impl AgentError {
+    /// Return a sanitized display string with secrets redacted.
+    ///
+    /// Use this when logging or sending error messages to external systems.
+    pub fn to_sanitized_string(&self) -> String {
+        observability::sanitize::sanitize_str(&self.to_string())
+    }
 }
 
 #[derive(Debug, Clone, Error)]

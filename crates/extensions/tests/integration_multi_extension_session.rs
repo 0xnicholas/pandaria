@@ -218,6 +218,7 @@ async fn test_multi_extension_collaboration() {
         compaction_actor,
         tools,
         None,
+    vec![],
     );
 
     let results = session.prompt("call tools".to_string()).await.unwrap();
@@ -342,6 +343,7 @@ async fn test_multi_extension_with_persistence() {
             compaction_actor,
             tools,
             Some(store.clone()),
+        vec![],
         );
 
         let results = session.prompt("call tool".to_string()).await.unwrap();
@@ -366,6 +368,7 @@ async fn test_multi_extension_with_persistence() {
             compaction_actor2,
             tools2,
             Some(store.clone()),
+        vec![],
         );
 
         let restored = session2.restore().await.unwrap();

@@ -16,7 +16,7 @@ crate::providers::shared::define_provider!(
 
 impl MistralProvider {
     #[allow(clippy::too_many_arguments)]
-    async fn try_stream(
+    async fn try_stream_inner(
         client: reqwest::Client,
         base_url: String,
         model: &str,
@@ -117,89 +117,30 @@ impl MistralProvider {
             body["reasoningEffort"] = serde_json::json!(effort);
         }
 
-        // on_payload hook
-        if let Some(hook) = &options.on_payload {
-            let placeholder = crate::Model {
-                id: model.to_string(),
-                name: model.to_string(),
-                api: "openai-completions".to_string(),
-                provider: "mistral".to_string(),
-                base_url: base_url.clone(),
-                reasoning: true,
-                input_modalities: vec![],
-                cost: Default::default(),
-                context_window: 128_000,
-                max_tokens: 128_000,
-                headers: None,
-                compat: crate::models::ModelCompat::None,
-            };
-            hook(&mut body, &placeholder).await;
-        }
+        let fallback = crate::protocol::request::fallback_model(
+            "mistral",
+            model,
+            "openai-completions",
+            &base_url,
+            128_000,
+            128_000,
+        );
 
-        // Send request
-        let mut req = client
-            .post(&base_url)
-            .header(
-                "Authorization",
-                format!("Bearer {}", api_key.expose_secret()),
-            )
-            .header("content-type", "application/json");
-
-        // Merge custom headers from StreamOptions
-        if let Some(custom) = &options.headers {
-            for (k, v) in custom {
-                req = req.header(k, v);
-            }
-        }
-
-        let response = req
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| LlmError::ProviderError(format!("HTTP error: {e}")))?;
-
-        let status = response.status().as_u16();
-        let headers: std::collections::HashMap<String, String> = response
-            .headers()
-            .iter()
-            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-            .collect();
-
-        if let Some(hook) = &options.on_response {
-            let placeholder = crate::Model {
-                id: model.to_string(),
-                name: model.to_string(),
-                api: "openai-completions".to_string(),
-                provider: "mistral".to_string(),
-                base_url: base_url.clone(),
-                reasoning: true,
-                input_modalities: vec![],
-                cost: Default::default(),
-                context_window: 128_000,
-                max_tokens: 128_000,
-                headers: None,
-                compat: crate::models::ModelCompat::None,
-            };
-            hook(&crate::ProviderResponse { status, headers }, &placeholder).await;
-        }
-
-        if status < 200 || status >= 300 {
-            let body = response.text().await.map_err(|e| {
-                LlmError::ProviderError(format!("failed to read response body: {e}"))
-            })?;
-            tracing::error!(
-                status = %status,
-                body = %body,
-                provider = "mistral",
-                "HTTP error response from provider"
-            );
-            let msg = crate::http_error::sanitize_http_error_body(status, &body);
-            return Err(LlmError::ProviderError(msg));
-        }
+        let response = crate::protocol::request::RequestBuilder::new(
+            client,
+            base_url,
+            fallback,
+            options,
+        )
+        .body(body)
+        .header("Authorization", format!("Bearer {}", api_key.expose_secret()))
+        .send()
+        .await?;
 
         // Process SSE stream (OpenAI-compatible format)
         use futures::StreamExt;
-        let mut sse_stream = response.bytes_stream();
+        let sse_stream = response.bytes_stream();
+        let mut decoder = crate::protocol::sse::SseDecoder::new(sse_stream, signal);
         let mut partial = crate::AssistantMessage {
             content: vec![],
             provider: "mistral".to_string(),
@@ -235,126 +176,108 @@ impl MistralProvider {
             (Option<String>, Option<String>, String),
         > = std::collections::BTreeMap::new();
 
-        let mut buffer = String::new();
-        while let Some(chunk) = sse_stream.next().await {
-            if signal.is_cancelled() {
-                return Err(LlmError::Cancelled);
+        while let Some(result) = decoder.next().await {
+            let event = result?;
+
+            if event.is_done_marker() {
+                if !text_accum.is_empty() {
+                    let _ = tx
+                        .send(AssistantMessageEvent::TextEnd {
+                            content_index: text_content_index,
+                            text: std::mem::take(&mut text_accum),
+                            partial: partial.clone(),
+                        })
+                        .await;
+                }
+                for (ci, (id, name, args)) in &tool_call_accum {
+                    if let Ok(args) = serde_json::from_str(args) {
+                        let _ = tx
+                            .send(AssistantMessageEvent::ToolCallEnd {
+                                content_index: *ci,
+                                tool_call: crate::ToolCall {
+                                    id: id
+                                        .clone()
+                                        .unwrap_or_else(|| format!("call_{}", ci)),
+                                    name: name.clone().unwrap_or_default(),
+                                    arguments: args,
+                                    thought_signature: None,
+                                },
+                                partial: partial.clone(),
+                            })
+                            .await;
+                    }
+                }
+                let _ = tx
+                    .send(AssistantMessageEvent::Done {
+                        reason: partial.stop_reason.clone(),
+                        message: partial.clone(),
+                    })
+                    .await;
+                return Ok(());
             }
-            match chunk {
-                Ok(bytes) => {
-                    buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(line_end) = buffer.find('\n') {
-                        let line = buffer[..line_end].trim().to_string();
-                        buffer = buffer[line_end + 1..].to_string();
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            if data == "[DONE]" {
-                                if !text_accum.is_empty() {
-                                    let _ = tx
-                                        .send(AssistantMessageEvent::TextEnd {
-                                            content_index: text_content_index,
-                                            text: std::mem::take(&mut text_accum),
-                                            partial: partial.clone(),
-                                        })
-                                        .await;
-                                }
-                                for (ci, (id, name, args)) in &tool_call_accum {
-                                    if let Ok(args) = serde_json::from_str(args) {
-                                        let _ = tx
-                                            .send(AssistantMessageEvent::ToolCallEnd {
-                                                content_index: *ci,
-                                                tool_call: crate::ToolCall {
-                                                    id: id
-                                                        .clone()
-                                                        .unwrap_or_else(|| format!("call_{}", ci)),
-                                                    name: name.clone().unwrap_or_default(),
-                                                    arguments: args,
-                                                    thought_signature: None,
-                                                },
-                                                partial: partial.clone(),
-                                            })
-                                            .await;
-                                    }
-                                }
+
+            let chunk: serde_json::Value = event.json()?;
+            if let Some(choices) = chunk["choices"].as_array() {
+                for choice in choices {
+                    let delta = &choice["delta"];
+
+                    // Text content
+                    if let Some(text) = delta["content"].as_str() {
+                        if !text_started {
+                            text_started = true;
+                            let _ = tx
+                                .send(AssistantMessageEvent::TextStart {
+                                    content_index: text_content_index,
+                                    partial: partial.clone(),
+                                })
+                                .await;
+                        }
+                        text_accum.push_str(text);
+                        let _ = tx
+                            .send(AssistantMessageEvent::TextDelta {
+                                content_index: text_content_index,
+                                delta: text.to_string(),
+                                partial: partial.clone(),
+                            })
+                            .await;
+                    }
+
+                    // Tool calls
+                    if let Some(tool_calls) = delta["tool_calls"].as_array() {
+                        for tc in tool_calls {
+                            let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                            let entry = tool_call_accum.entry(idx).or_default();
+                            if let Some(id) = tc["id"].as_str() {
+                                entry.0 = Some(truncate_tool_call_id(id));
+                            }
+                            if let Some(name) = tc["function"]["name"].as_str() {
+                                entry.1 = Some(name.to_string());
+                            }
+                            if let Some(args) = tc["function"]["arguments"].as_str() {
+                                entry.2.push_str(args);
                                 let _ = tx
-                                    .send(AssistantMessageEvent::Done {
-                                        reason: partial.stop_reason.clone(),
-                                        message: partial.clone(),
+                                    .send(AssistantMessageEvent::ToolCallDelta {
+                                        content_index: idx + 1,
+                                        delta: args.to_string(),
+                                        partial: partial.clone(),
                                     })
                                     .await;
-                                return Ok(());
-                            }
-                            if let Ok(chunk) = serde_json::from_str::<serde_json::Value>(data)
-                                && let Some(choices) = chunk["choices"].as_array()
-                            {
-                                for choice in choices {
-                                    let delta = &choice["delta"];
-
-                                    // Text content
-                                    if let Some(text) = delta["content"].as_str() {
-                                        if !text_started {
-                                            text_started = true;
-                                            let _ = tx
-                                                .send(AssistantMessageEvent::TextStart {
-                                                    content_index: text_content_index,
-                                                    partial: partial.clone(),
-                                                })
-                                                .await;
-                                        }
-                                        text_accum.push_str(text);
-                                        let _ = tx
-                                            .send(AssistantMessageEvent::TextDelta {
-                                                content_index: text_content_index,
-                                                delta: text.to_string(),
-                                                partial: partial.clone(),
-                                            })
-                                            .await;
-                                    }
-
-                                    // Tool calls
-                                    if let Some(tool_calls) = delta["tool_calls"].as_array() {
-                                        for tc in tool_calls {
-                                            let idx = tc["index"].as_u64().unwrap_or(0) as usize;
-                                            let entry = tool_call_accum.entry(idx).or_default();
-                                            if let Some(id) = tc["id"].as_str() {
-                                                entry.0 = Some(truncate_tool_call_id(id));
-                                            }
-                                            if let Some(name) = tc["function"]["name"].as_str() {
-                                                entry.1 = Some(name.to_string());
-                                            }
-                                            if let Some(args) = tc["function"]["arguments"].as_str()
-                                            {
-                                                entry.2.push_str(args);
-                                                let _ = tx
-                                                    .send(AssistantMessageEvent::ToolCallDelta {
-                                                        content_index: idx + 1,
-                                                        delta: args.to_string(),
-                                                        partial: partial.clone(),
-                                                    })
-                                                    .await;
-                                            }
-                                        }
-                                    }
-
-                                    // Finish reason
-                                    if let Some(reason) = choice["finish_reason"].as_str() {
-                                        partial.stop_reason = match reason {
-                                            "stop" => crate::StopReason::Stop,
-                                            "length" => crate::StopReason::Length,
-                                            "tool_calls" => crate::StopReason::ToolUse,
-                                            "content_filter" => crate::StopReason::Error,
-                                            "error" => crate::StopReason::Error,
-                                            _ => crate::StopReason::Stop,
-                                        };
-                                    }
-                                }
                             }
                         }
                     }
+
+                    // Finish reason
+                    if let Some(reason) = choice["finish_reason"].as_str() {
+                        partial.stop_reason = match reason {
+                            "stop" => crate::StopReason::Stop,
+                            "length" => crate::StopReason::Length,
+                            "tool_calls" => crate::StopReason::ToolUse,
+                            "content_filter" => crate::StopReason::Error,
+                            "error" => crate::StopReason::Error,
+                            _ => crate::StopReason::Stop,
+                        };
+                    }
                 }
-                Err(e) => return Err(LlmError::StreamError {
-                    kind: crate::StreamErrorKind::Network,
-                    message: format!("SSE error: {e}"),
-                }),
             }
         }
 

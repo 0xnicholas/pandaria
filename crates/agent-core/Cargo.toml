@@ -5,12 +5,15 @@ edition = "2024"
 
 [dependencies]
 ai-provider = { path = "../ai-provider" }
+observability = { path = "../observability" }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 tracing = { workspace = true }
+regex = { workspace = true }
 futures = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
@@ -19,3 +22,4 @@ uuid = { workspace = true }
 ai-provider = { path = "../ai-provider", features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true }
+tempfile = "3"

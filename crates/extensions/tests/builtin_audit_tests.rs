@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use agent_core::context::{ToolCallCtx, ToolResultCtx, TurnEndCtx};
-use agent_core::mutations::{HookDecision, ToolCallMutation};
+use agent_core::mutations::HookDecision;
 use extensions::builtins::audit::AuditExtension;
 use extensions::host::extension::Extension;
 
@@ -50,6 +48,13 @@ async fn test_audit_on_turn_end_does_not_panic() {
         session_id: "s1".to_string(),
         turn_index: 0,
         messages: vec![],
+        usage: ai_provider::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        },
     };
 
     // Should not panic — observational hook is fire-and-forget

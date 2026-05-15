@@ -7,6 +7,7 @@ members = [
     "crates/storage",
     "crates/observability",
     "crates/tui",
+    "crates/tenant",
 ]
 
 [workspace.dependencies]
@@ -21,6 +22,7 @@ tokio-util = "0.7"
 futures-util = "0.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1"
+serde_yaml = "0.9"
 uuid = { version = "1", features = ["v4", "serde"] }
 dashmap = "6"
 
@@ -34,6 +36,7 @@ default-run = "pandaria"
 tui = { path = "crates/tui" }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true }
+dotenvy = "0.15"
 
 [[bin]]
 name = "pandaria"

@@ -381,6 +381,80 @@ fn build_models() -> HashMap<String, Model> {
         128_000
     );
 
+    // ── DeepSeek ───────────────────────────────────────────────────
+    insert!(
+        m,
+        "deepseek",
+        "deepseek-chat",
+        "DeepSeek V3",
+        "openai-completions",
+        "https://api.deepseek.com",
+        false,
+        vec![Modality::Text],
+        TokenCost {
+            input: 0.14,
+            output: 0.28,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        64_000,
+        8192
+    );
+    insert!(
+        m,
+        "deepseek",
+        "deepseek-reasoner",
+        "DeepSeek R1",
+        "openai-completions",
+        "https://api.deepseek.com",
+        true,
+        vec![Modality::Text],
+        TokenCost {
+            input: 0.55,
+            output: 2.19,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        64_000,
+        8192
+    );
+    insert!(
+        m,
+        "deepseek",
+        "deepseek-v4-flash",
+        "DeepSeek V4 Flash",
+        "openai-completions",
+        "https://api.deepseek.com",
+        false,
+        vec![Modality::Text],
+        TokenCost {
+            input: 0.14,
+            output: 0.28,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        64_000,
+        8192
+    );
+    insert!(
+        m,
+        "deepseek",
+        "deepseek-v4-pro",
+        "DeepSeek V4 Pro",
+        "openai-completions",
+        "https://api.deepseek.com",
+        true,
+        vec![Modality::Text],
+        TokenCost {
+            input: 0.55,
+            output: 2.19,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        64_000,
+        8192
+    );
+
     // ── Google ─────────────────────────────────────────────────────
     insert!(
         m,
@@ -510,6 +584,15 @@ fn build_provider_list() -> HashMap<String, Vec<String>> {
         vec![
             "mistral-large-latest".to_string(),
             "mistral-medium-latest".to_string(),
+        ],
+    );
+    p.insert(
+        "deepseek".to_string(),
+        vec![
+            "deepseek-v4-flash".to_string(),
+            "deepseek-v4-pro".to_string(),
+            "deepseek-chat".to_string(),
+            "deepseek-reasoner".to_string(),
         ],
     );
     p.insert(

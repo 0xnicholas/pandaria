@@ -13,6 +13,7 @@ tokio-util = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 reqwest = { version = "0.12", features = ["stream", "json"] }
+bytes = "1"
 eventsource-stream = "0.2"
 secrecy = { version = "0.10", features = ["serde"] }
 regex = { workspace = true }
@@ -24,6 +25,35 @@ aws-config = { version = "1", optional = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 wiremock = "0.6"
 tokio-test = "0.4"
+dotenvy = "0.15"
+
+[[test]]
+name = "anthropic_smoke"
+path = "tests/integration/anthropic_smoke.rs"
+
+[[test]]
+name = "anthropic_tests"
+path = "tests/integration/anthropic_tests.rs"
+
+[[test]]
+name = "bedrock_tests"
+path = "tests/integration/bedrock_tests.rs"
+
+[[test]]
+name = "deepseek_tests"
+path = "tests/integration/deepseek_tests.rs"
+
+[[test]]
+name = "google_tests"
+path = "tests/integration/google_tests.rs"
+
+[[test]]
+name = "openai_tests"
+path = "tests/integration/openai_tests.rs"
+
+[[test]]
+name = "provider_requests"
+path = "tests/integration/provider_requests.rs"
 
 [features]
 bedrock = ["aws-sdk-bedrockruntime", "aws-config"]

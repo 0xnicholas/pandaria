@@ -35,6 +35,8 @@ fn make_loop_config(
         event_sink: Arc::new(|event| {
             tracing::debug!("event: {:?}", event);
         }),
+        circuit_breaker: None,
+        skills: Vec::new(),
     }
 }
 
@@ -51,6 +53,15 @@ struct EchoProvider {
 impl LlmProvider for EchoProvider {
     fn provider_name(&self) -> &str { "echo" }
     fn models(&self) -> Vec<String> { vec!["echo".to_string()] }
+    fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+        use std::sync::OnceLock;
+        static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            ai_provider::providers::shared::ProviderConfig::new(
+                None, "http://mock", "echo", "ECHO_API_KEY",
+            )
+        })
+    }
 
     async fn stream(
         &self,
@@ -101,6 +112,15 @@ struct ToolCallProvider {
 impl LlmProvider for ToolCallProvider {
     fn provider_name(&self) -> &str { "tool-call" }
     fn models(&self) -> Vec<String> { vec!["test".to_string()] }
+    fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+        use std::sync::OnceLock;
+        static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            ai_provider::providers::shared::ProviderConfig::new(
+                None, "http://mock", "tool-call", "TOOLCALL_API_KEY",
+            )
+        })
+    }
 
     async fn stream(
         &self,
@@ -288,6 +308,15 @@ async fn test_agent_loop_context_mutation_via_extension() {
     impl LlmProvider for VerifyProvider {
         fn provider_name(&self) -> &str { "verify" }
         fn models(&self) -> Vec<String> { vec!["test".to_string()] }
+        fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+            use std::sync::OnceLock;
+            static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
+            CONFIG.get_or_init(|| {
+                ai_provider::providers::shared::ProviderConfig::new(
+                    None, "http://mock", "verify", "VERIFY_API_KEY",
+                )
+            })
+        }
 
         async fn stream(
             &self,

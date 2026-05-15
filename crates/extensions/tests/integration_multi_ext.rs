@@ -339,6 +339,13 @@ async fn test_multi_extension_observational_hooks() {
         session_id: "s1".to_string(),
         turn_index: 0,
         messages: vec![],
+        usage: ai_provider::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        },
     };
     router.on_turn_end(&turn_ctx).await;
 

@@ -11,7 +11,7 @@ fn test_detect_openai_standard() {
 
 #[test]
 fn test_detect_deepseek_compat() {
-    let compat = detect_openai_compat("deepseek", "https://api.deepseek.com/v1", "deepseek-chat");
+    let compat = detect_openai_compat("deepseek", "https://api.deepseek.com", "deepseek-chat");
     assert_eq!(compat.thinking_format, Some(ThinkingFormat::DeepSeek));
     assert_eq!(
         compat.requires_reasoning_content_on_assistant_messages,

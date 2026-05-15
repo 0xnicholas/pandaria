@@ -238,6 +238,19 @@ impl LlmProvider for TestProvider {
         vec!["test".to_string()]
     }
 
+    fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+        use std::sync::OnceLock;
+        static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            ai_provider::providers::shared::ProviderConfig::new(
+                None,
+                "http://test",
+                "test",
+                "TEST_API_KEY",
+            )
+        })
+    }
+
     async fn stream(
         &self,
         _model: &str,

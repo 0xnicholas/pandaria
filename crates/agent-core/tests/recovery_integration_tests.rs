@@ -79,6 +79,7 @@ async fn test_recovery_overflow_then_compact_and_retry() {
         Arc::new(make_compaction_actor(provider.clone())),
         vec![],
         None,
+        vec![],
     );
 
     // Fill with enough entries to trigger compaction
@@ -166,6 +167,7 @@ async fn test_recovery_double_overflow_aborts() {
         Arc::new(make_compaction_actor(provider)),
         vec![],
         None,
+        vec![],
     );
 
     // Fill with enough entries

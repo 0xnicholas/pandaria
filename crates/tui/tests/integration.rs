@@ -92,6 +92,32 @@ fn test_config_defaults() {
     assert_eq!(config.ui.max_history, 500);
 }
 
+#[tokio::test]
+async fn test_rest_client_send_message() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/sessions/s1/messages"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&server)
+        .await;
+    let config = tui::config::ServerConfig { url: server.uri(), timeout_secs: 5 };
+    let client = tui::client::rest::RestClient::new(&config);
+    client.send_message("s1", "hello", "test-token").await.expect("send message");
+}
+
+#[tokio::test]
+async fn test_rest_client_interrupt() {
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/sessions/s1/messages/current"))
+        .respond_with(ResponseTemplate::new(204))
+        .mount(&server)
+        .await;
+    let config = tui::config::ServerConfig { url: server.uri(), timeout_secs: 5 };
+    let client = tui::client::rest::RestClient::new(&config);
+    client.interrupt("s1", "test-token").await.expect("interrupt");
+}
+
 #[test]
 fn test_keybinding_parse_all_valid_keys() {
     // Verify all user-configurable keybinding keys parse successfully

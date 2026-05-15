@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use agent_core::context::ToolCallCtx;
-use agent_core::mutations::{HookDecision, ToolCallMutation};
+use agent_core::mutations::HookDecision;
 use extensions::builtins::tool_guard::ToolGuardExtension;
 use extensions::host::extension::Extension;
 

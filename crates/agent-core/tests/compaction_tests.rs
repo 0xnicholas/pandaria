@@ -42,6 +42,16 @@ fn make_test_provider() -> Arc<dyn ai_provider::LlmProvider> {
     Arc::new(TestProvider)
 }
 
+fn test_provider_config() -> &'static ai_provider::providers::shared::ProviderConfig {
+    use std::sync::OnceLock;
+    static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
+    CONFIG.get_or_init(|| {
+        ai_provider::providers::shared::ProviderConfig::new(
+            None, "http://test", "test", "TEST_API_KEY",
+        )
+    })
+}
+
 struct TestProvider;
 #[async_trait::async_trait]
 impl ai_provider::LlmProvider for TestProvider {
@@ -50,6 +60,9 @@ impl ai_provider::LlmProvider for TestProvider {
     }
     fn models(&self) -> Vec<String> {
         vec!["test".to_string()]
+    }
+    fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+        test_provider_config()
     }
     async fn stream(
         &self,
@@ -148,6 +161,9 @@ fn mock_provider_with_summary(summary: &str) -> Arc<dyn LlmProvider> {
         fn models(&self) -> Vec<String> {
             vec!["mock".into()]
         }
+        fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+            test_provider_config()
+        }
         async fn stream(
             &self,
             _model: &str,
@@ -193,6 +209,9 @@ fn mock_provider_with_error(error_msg: &str) -> Arc<dyn LlmProvider> {
         fn models(&self) -> Vec<String> {
             vec!["mock".into()]
         }
+        fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+            test_provider_config()
+        }
         async fn stream(
             &self,
             _model: &str,
@@ -231,6 +250,9 @@ fn mock_provider_empty_done() -> Arc<dyn LlmProvider> {
         }
         fn models(&self) -> Vec<String> {
             vec!["mock".into()]
+        }
+        fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+            test_provider_config()
         }
         async fn stream(
             &self,
@@ -599,6 +621,7 @@ async fn test_compact_via_session_actor_writes_entry() {
         Arc::new(make_compaction_actor(provider)),
         vec![],
         None,
+        vec![],
     );
 
     // Fill entries with sufficient text to trigger summarization
@@ -654,6 +677,7 @@ async fn test_compact_truncates_old_entries() {
         Arc::new(make_compaction_actor(provider)),
         vec![],
         None,
+        vec![],
     );
 
     let entries = build_many_entries(10);
@@ -709,6 +733,7 @@ async fn test_multiple_compactions_truncate_incrementally() {
         Arc::new(make_compaction_actor(provider)),
         vec![],
         None,
+        vec![],
     );
 
     // First batch

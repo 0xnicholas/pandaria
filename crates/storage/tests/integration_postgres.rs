@@ -242,6 +242,7 @@ async fn test_session_actor_persistence_loop() {
             make_compaction_actor(provider.clone()),
             vec![],
             Some(store.clone()),
+        vec![],
         );
 
         session_actor.prompt("ping".to_string()).await.expect("prompt failed");
@@ -259,6 +260,7 @@ async fn test_session_actor_persistence_loop() {
         make_compaction_actor(provider),
         vec![],
         Some(store.clone()),
+    vec![],
     );
 
     let restored = session2.restore().await.expect("restore failed");

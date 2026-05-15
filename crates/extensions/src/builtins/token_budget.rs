@@ -121,6 +121,13 @@ mod tests {
             session_id: "s1".to_string(),
             turn_index: 0,
             messages: vec![],
+            usage: ai_provider::Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
         };
 
         ext.on_turn_end(&ctx).await;
@@ -139,6 +146,13 @@ mod tests {
             session_id: "s1".to_string(),
             turn_index: 0,
             messages: vec![],
+            usage: ai_provider::Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
         }).await;
 
         ext.on_turn_end(&TurnEndCtx {
@@ -146,12 +160,26 @@ mod tests {
             session_id: "s2".to_string(),
             turn_index: 0,
             messages: vec![],
+            usage: ai_provider::Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
         }).await;
         ext.on_turn_end(&TurnEndCtx {
             tenant_id: "t1".to_string(),
             session_id: "s2".to_string(),
             turn_index: 1,
             messages: vec![],
+            usage: ai_provider::Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
         }).await;
 
         assert_eq!(ext.current_turn_count("s1"), 1);
@@ -168,12 +196,26 @@ mod tests {
             session_id: "s1".to_string(),
             turn_index: 0,
             messages: vec![],
+            usage: ai_provider::Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
         }).await;
         ext.on_turn_end(&TurnEndCtx {
             tenant_id: "t1".to_string(),
             session_id: "s1".to_string(),
             turn_index: 1,
             messages: vec![],
+            usage: ai_provider::Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            },
         }).await;
 
         assert_eq!(ext.current_turn_count("s1"), 2);

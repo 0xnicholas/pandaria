@@ -22,9 +22,11 @@ pub mod persistence;
 pub mod utils;
 
 // Top-level modules
+pub mod circuit_breaker;
 pub mod error;
 pub mod events;
 pub mod file_ops;
+pub mod skills;
 pub mod test_utils;
 pub mod types;
 
@@ -54,6 +56,11 @@ pub use persistence::{
 };
 
 pub use utils::provider_opts::ProviderStreamOptions;
+
+pub use skills::{
+    FileSystemSkillLoader, LoadSkillsResult, Skill, SkillDiagnostic, SkillDiagnosticKind,
+    SkillFrontmatter, SkillLoader, SkillSource, format_skills_for_prompt, parse_skill_invocation,
+};
 
 pub use error::{AgentError, CompactionError};
 pub use error_recovery::{RecoveryAction, RecoveryStateMachine};

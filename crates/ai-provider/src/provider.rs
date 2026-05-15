@@ -144,6 +144,13 @@ pub trait LlmProvider: Send + Sync {
         }
     }
 
+    /// Access the shared provider configuration.
+    fn config(&self) -> &crate::providers::shared::ProviderConfig;
+
+    /// Stream LLM responses for the given model and context.
+    ///
+    /// Implementors should spawn provider-specific streaming logic on a
+    /// background task and return the receive end of an event channel.
     async fn stream(
         &self,
         model: &str,
@@ -168,6 +175,19 @@ mod tests {
 
         fn models(&self) -> Vec<String> {
             vec!["mock-v1".to_string()]
+        }
+
+        fn config(&self) -> &crate::providers::shared::ProviderConfig {
+            use std::sync::OnceLock;
+            static CONFIG: OnceLock<crate::providers::shared::ProviderConfig> = OnceLock::new();
+            CONFIG.get_or_init(|| {
+                crate::providers::shared::ProviderConfig::new(
+                    None,
+                    "http://mock",
+                    "mock",
+                    "MOCK_API_KEY",
+                )
+            })
         }
 
         async fn stream(

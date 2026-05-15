@@ -68,6 +68,16 @@ impl LlmProvider for VerifyProvider {
         vec!["verify".to_string()]
     }
 
+    fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+        use std::sync::OnceLock;
+        static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            ai_provider::providers::shared::ProviderConfig::new(
+                None, "http://mock", "verify", "VERIFY_API_KEY",
+            )
+        })
+    }
+
     async fn stream(
         &self,
         _model: &str,
@@ -174,6 +184,7 @@ async fn test_provider_request_mutation() {
         make_compaction_actor(provider),
         vec![],
         None,
+    vec![],
     );
 
     let results = session.prompt("hello".to_string()).await.unwrap();
@@ -200,6 +211,7 @@ async fn test_provider_response_mutation() {
         make_compaction_actor(provider),
         vec![],
         None,
+    vec![],
     );
 
     let results = session.prompt("hello".to_string()).await.unwrap();

@@ -27,6 +27,15 @@ struct EchoProvider;
 impl ai_provider::LlmProvider for EchoProvider {
     fn provider_name(&self) -> &str { "echo" }
     fn models(&self) -> Vec<String> { vec!["echo".to_string()] }
+    fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
+        use std::sync::OnceLock;
+        static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            ai_provider::providers::shared::ProviderConfig::new(
+                None, "http://mock", "echo", "ECHO_API_KEY",
+            )
+        })
+    }
 
     async fn stream(
         &self,
@@ -204,6 +213,7 @@ async fn test_session_prompt_with_router() {
         compaction_actor,
         vec![],
         None,
+    vec![],
     );
 
     let results = session.prompt("hello".to_string()).await.unwrap();
@@ -238,6 +248,7 @@ async fn test_session_observational_hooks() {
         compaction_actor,
         vec![],
         None,
+    vec![],
     );
 
     // session_start was fired on construction
@@ -275,6 +286,7 @@ async fn test_session_persistence_with_router() {
             compaction_actor,
             vec![],
             Some(store.clone()),
+        vec![],
         );
 
         session.prompt("hello".to_string()).await.unwrap();
@@ -295,6 +307,7 @@ async fn test_session_persistence_with_router() {
         compaction_actor2,
         vec![],
         Some(store.clone()),
+    vec![],
     );
 
     let restored = session2.restore().await.unwrap();
@@ -328,6 +341,7 @@ async fn test_session_steer_with_extension_hooks() {
         compaction_actor,
         vec![],
         None,
+    vec![],
     );
 
     // Queue a steer message
@@ -376,6 +390,7 @@ async fn test_session_follow_up_with_extension_hooks() {
         compaction_actor,
         vec![],
         None,
+    vec![],
     );
 
     // Queue follow-up

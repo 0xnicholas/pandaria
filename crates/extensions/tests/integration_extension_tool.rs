@@ -205,6 +205,7 @@ async fn test_extension_tool_executes_via_actor() {
         compaction_actor,
         tools,
         None,
+    vec![],
     );
 
     let results = session.prompt("call tool".to_string()).await.unwrap();
@@ -262,6 +263,7 @@ async fn test_extension_tool_with_mutation() {
         compaction_actor,
         tools,
         None,
+    vec![],
     );
 
     let results = session.prompt("call tool".to_string()).await.unwrap();

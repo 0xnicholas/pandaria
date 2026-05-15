@@ -42,6 +42,11 @@ impl SlashCommandProvider {
             SlashCommand { name: "auth".into(), description: "Authenticate with the server".into() },
             SlashCommand { name: "tokens".into(), description: "Show token usage for this session".into() },
             SlashCommand { name: "help".into(), description: "Show help".into() },
+            SlashCommand { name: "retry".into(), description: "Retry the last user message".into() },
+            SlashCommand { name: "copy".into(), description: "Copy last assistant reply to clipboard".into() },
+            SlashCommand { name: "dump".into(), description: "Export session to a Markdown file".into() },
+            SlashCommand { name: "compact".into(), description: "Trigger context compaction".into() },
+            SlashCommand { name: "rename".into(), description: "Rename the current session".into() },
         ];
         Self { commands }
     }
@@ -373,7 +378,11 @@ mod tests {
     fn test_slash_command_all_commands() {
         let provider = SlashCommandProvider::new();
         // All commands should be found with their full name prefix
-        let expected = vec!["quit", "new", "switch", "list", "model", "clear", "connect", "auth", "tokens", "help"];
+        let expected = vec![
+            "quit", "new", "switch", "list", "model", "clear",
+            "connect", "auth", "tokens", "help",
+            "retry", "copy", "dump", "compact", "rename",
+        ];
         for cmd in &expected {
             let ctx = make_context(&format!("/{}", cmd), cmd.len() + 1);
             let suggestions = provider.get_suggestions(&ctx);

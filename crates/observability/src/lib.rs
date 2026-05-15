@@ -1,7 +1,10 @@
 //! Observability layer for pandaria.
 //!
-//! Provides tracing initialisation, per-tenant metrics, and a Prometheus
-//! metrics endpoint that downstream crates (api-gateway, tenant) can mount.
+//! Provides tracing initialisation, per-tenant metrics, sensitive-data
+//! sanitization, and a Prometheus metrics endpoint that downstream crates
+//! (api-gateway, tenant) can mount.
+
+pub mod sanitize;
 
 use std::net::SocketAddr;
 
