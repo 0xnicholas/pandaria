@@ -1,0 +1,28 @@
+[package]
+name = "api-gateway"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio = { workspace = true, features = ["sync", "rt", "macros", "signal"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+dashmap = { workspace = true }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+secrecy = { version = "0.8", features = ["serde"] }
+tenant = { path = "../tenant" }
+agent-core = { path = "../agent-core" }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tower = { version = "0.5", features = ["util"] }

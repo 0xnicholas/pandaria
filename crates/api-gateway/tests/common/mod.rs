@@ -1,0 +1,192 @@
+use api_gateway::{AppState, ServerConfig};
+use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
+use tenant::{
+    CreateSessionParams, SessionInfo, SessionUpdates, TenantError, TenantManager,
+};
+use tokio::sync::mpsc;
+use uuid::Uuid;
+
+/// Mock TenantManager for integration tests.
+pub struct MockTenantManager {
+    pub sessions: Mutex<std::collections::HashMap<String, SessionInfo>>,
+    pub event_senders: Mutex<std::collections::HashMap<String, Vec<mpsc::Sender<agent_core::AgentEvent>>>>,
+}
+
+impl MockTenantManager {
+    pub fn new() -> Self {
+        Self {
+            sessions: Mutex::new(std::collections::HashMap::new()),
+            event_senders: Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl TenantManager for MockTenantManager {
+    async fn create_session(
+        &self,
+        tenant_id: &str,
+        params: CreateSessionParams,
+    ) -> Result<SessionInfo, TenantError> {
+        let id = Uuid::new_v4();
+        let info = SessionInfo {
+            id,
+            tenant_id: tenant_id.into(),
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .to_string(),
+            turn_count: 0,
+            system_prompt: params.system_prompt,
+            title: params.title,
+            model: "claude-sonnet-4".into(),
+        };
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), info.clone());
+        Ok(info)
+    }
+
+    async fn list_sessions(&self, tenant_id: &str) -> Result<Vec<SessionInfo>, TenantError> {
+        let sessions = self.sessions.lock().unwrap();
+        Ok(sessions
+            .values()
+            .filter(|s| s.tenant_id == tenant_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn get_session(
+        &self,
+        _tenant_id: &str,
+        session_id: &Uuid,
+    ) -> Result<SessionInfo, TenantError> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(&session_id.to_string())
+            .cloned()
+            .ok_or_else(|| TenantError::SessionNotFound(session_id.to_string()))
+    }
+
+    async fn send_message(
+        &self,
+        _tenant_id: &str,
+        _session_id: &Uuid,
+        _content: String,
+    ) -> Result<u64, TenantError> {
+        Ok(1)
+    }
+
+    async fn interrupt(
+        &self,
+        _tenant_id: &str,
+        _session_id: &Uuid,
+    ) -> Result<(), TenantError> {
+        Ok(())
+    }
+
+    async fn subscribe_events(
+        &self,
+        _tenant_id: &str,
+        session_id: &Uuid,
+    ) -> Result<mpsc::Receiver<agent_core::AgentEvent>, TenantError> {
+        let (tx, rx) = mpsc::channel(32);
+        self.event_senders
+            .lock()
+            .unwrap()
+            .entry(session_id.to_string())
+            .or_default()
+            .push(tx);
+        Ok(rx)
+    }
+
+    async fn delete_session(
+        &self,
+        _tenant_id: &str,
+        session_id: &Uuid,
+    ) -> Result<(), TenantError> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .remove(&session_id.to_string());
+        Ok(())
+    }
+
+    async fn update_session(
+        &self,
+        _tenant_id: &str,
+        session_id: &Uuid,
+        updates: SessionUpdates,
+    ) -> Result<SessionInfo, TenantError> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let info = sessions
+            .get_mut(&session_id.to_string())
+            .ok_or_else(|| TenantError::SessionNotFound(session_id.to_string()))?;
+        if let Some(title) = updates.title {
+            info.title = title;
+        }
+        if let Some(model) = updates.model {
+            info.model = model;
+        }
+        if let Some(system_prompt) = updates.system_prompt {
+            info.system_prompt = Some(system_prompt);
+        }
+        Ok(info.clone())
+    }
+
+    async fn compact_session(
+        &self,
+        _tenant_id: &str,
+        _session_id: &Uuid,
+    ) -> Result<(), TenantError> {
+        Ok(())
+    }
+
+    async fn get_session_messages(
+        &self,
+        _tenant_id: &str,
+        _session_id: &Uuid,
+    ) -> Result<Vec<agent_core::AgentMessage>, TenantError> {
+        Ok(vec![])
+    }
+
+    async fn shutdown(&self) {}
+}
+
+/// Build a test router with the mock tenant manager and a test auth secret.
+pub fn test_router() -> axum::Router {
+    let manager = Arc::new(MockTenantManager::new()) as Arc<dyn TenantManager>;
+    let config = ServerConfig {
+        auth_secret: secrecy::SecretString::new("test-secret-32-chars-long!!!".into()),
+        ..Default::default()
+    };
+    let state = Arc::new(AppState::new(manager, config));
+    api_gateway::build_router(state)
+}
+
+/// Create a valid test token signed with the test secret.
+pub fn test_token(tenant_id: &str) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+
+    let payload = serde_json::json!({"tenant_id": tenant_id, "iat": 1714608000u64});
+    let payload_json = serde_json::to_vec(&payload).unwrap();
+    let payload_b64 = base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        &payload_json,
+    );
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret-32-chars-long!!!").unwrap();
+    mac.update(&payload_json);
+    let signature = mac.finalize().into_bytes();
+    let sig_b64 = base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        &signature,
+    );
+
+    format!("{}.{}", payload_b64, sig_b64)
+}
