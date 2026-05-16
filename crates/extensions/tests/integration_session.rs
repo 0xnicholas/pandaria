@@ -206,7 +206,7 @@ async fn test_session_prompt_with_router() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "echo".to_string(),
         provider,
         Arc::new(router),
@@ -241,7 +241,7 @@ async fn test_session_observational_hooks() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "echo".to_string(),
         provider,
         Arc::new(router),
@@ -279,7 +279,7 @@ async fn test_session_persistence_with_router() {
         let mut session = SessionActor::new(
             "t1".to_string(),
             "s1".to_string(),
-            "You are helpful.".to_string(),
+            "You are helpful.".into(),
             "echo".to_string(),
             provider.clone(),
             Arc::new(router),
@@ -300,7 +300,7 @@ async fn test_session_persistence_with_router() {
     let mut session2 = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "echo".to_string(),
         provider,
         Arc::new(router2),
@@ -334,7 +334,7 @@ async fn test_session_steer_with_extension_hooks() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "echo".to_string(),
         provider,
         Arc::new(router),
@@ -383,7 +383,7 @@ async fn test_session_follow_up_with_extension_hooks() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "echo".to_string(),
         provider,
         Arc::new(router),

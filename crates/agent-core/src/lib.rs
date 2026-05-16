@@ -26,6 +26,7 @@ pub mod circuit_breaker;
 pub mod error;
 pub mod events;
 pub mod file_ops;
+pub mod prompt;
 pub mod skills;
 pub mod test_utils;
 pub mod types;
@@ -56,6 +57,8 @@ pub use persistence::{
 };
 
 pub use utils::provider_opts::ProviderStreamOptions;
+
+pub use prompt::{PromptBuilder, PromptMutation};
 
 pub use skills::{
     FileSystemSkillLoader, LoadSkillsResult, Skill, SkillDiagnostic, SkillDiagnosticKind,

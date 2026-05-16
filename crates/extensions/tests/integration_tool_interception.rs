@@ -145,7 +145,7 @@ async fn test_extension_tool_blocked_by_another_extension() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "test".to_string(),
         provider,
         Arc::new(hook_router),
@@ -207,7 +207,7 @@ async fn test_extension_tool_allowed_after_sanitization() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "test".to_string(),
         provider,
         Arc::new(hook_router),

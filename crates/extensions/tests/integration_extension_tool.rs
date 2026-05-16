@@ -198,7 +198,7 @@ async fn test_extension_tool_executes_via_actor() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "test".to_string(),
         provider,
         Arc::new(hook_router),
@@ -256,7 +256,7 @@ async fn test_extension_tool_with_mutation() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "test".to_string(),
         provider,
         Arc::new(hook_router),

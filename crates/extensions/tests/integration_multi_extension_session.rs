@@ -211,7 +211,7 @@ async fn test_multi_extension_collaboration() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "test".to_string(),
         provider,
         Arc::new(hook_router),
@@ -336,7 +336,7 @@ async fn test_multi_extension_with_persistence() {
         let mut session = SessionActor::new(
             "t1".to_string(),
             "s1".to_string(),
-            "You are helpful.".to_string(),
+            "You are helpful.".into(),
             "test".to_string(),
             provider.clone(),
             Arc::new(hook_router),
@@ -361,7 +361,7 @@ async fn test_multi_extension_with_persistence() {
         let mut session2 = SessionActor::new(
             "t1".to_string(),
             "s1".to_string(),
-            "You are helpful.".to_string(),
+            "You are helpful.".into(),
             "test".to_string(),
             provider,
             Arc::new(hook_router2),

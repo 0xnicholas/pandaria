@@ -123,7 +123,7 @@ async fn test_complete_lifecycle_hooks() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "test".to_string(),
         provider,
         Arc::new(router),

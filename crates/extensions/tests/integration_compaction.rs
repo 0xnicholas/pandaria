@@ -77,7 +77,7 @@ async fn test_overflow_triggers_compaction_with_extension_hook() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "test".to_string(),
         provider,
         Arc::new(router),
@@ -133,7 +133,7 @@ async fn test_extension_blocks_compaction() {
     let mut session = SessionActor::new(
         "t1".to_string(),
         "s1".to_string(),
-        "You are helpful.".to_string(),
+        "You are helpful.".into(),
         "test".to_string(),
         provider,
         Arc::new(router),
