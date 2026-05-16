@@ -451,14 +451,10 @@ impl SessionActor {
     }
 
     fn model_context_window(&self) -> usize {
-        if let Some(model_meta) = ai_provider::get_model(
-            self.provider.provider_name(),
-            &self.model,
-        ) {
-            model_meta.context_window as usize
-        } else {
-            0
-        }
+        self.provider
+            .model_metadata(&self.model)
+            .map(|m| m.context_window as usize)
+            .unwrap_or(0)
     }
 
     async fn run_auto_compaction(
@@ -1372,5 +1368,53 @@ mod tests {
                 false
             }
         }));
+    }
+
+    #[tokio::test]
+    async fn test_router_provider_model_context_window() {
+        let router = Arc::new(ai_provider::RouterProvider::new());
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let session = SessionActor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "You are helpful.".into(),
+            "openai/gpt-5.2".to_string(),
+            router.clone(),
+            dispatcher.clone(),
+            Arc::new(make_compaction_actor(router.clone())),
+            vec![],
+            None,
+            vec![],
+        );
+
+        let cw = session.model_context_window();
+        assert!(cw > 0, "model_context_window should be > 0 for openai/gpt-5.2");
+    }
+
+    #[tokio::test]
+    async fn test_cross_provider_model_context_window_switch() {
+        let router = Arc::new(ai_provider::RouterProvider::new());
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(
+            "t1".to_string(),
+            "s1".to_string(),
+            "You are helpful.".into(),
+            "openai/gpt-5.2".to_string(),
+            router.clone(),
+            dispatcher.clone(),
+            Arc::new(make_compaction_actor(router.clone())),
+            vec![],
+            None,
+            vec![],
+        );
+
+        let cw_openai = session.model_context_window();
+        assert!(cw_openai > 0);
+
+        session.set_model("anthropic/claude-sonnet-4-20250514".to_string());
+        let cw_anthropic = session.model_context_window();
+        assert!(cw_anthropic > 0);
+
+        assert_ne!(cw_openai, cw_anthropic);
     }
 }

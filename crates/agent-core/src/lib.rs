@@ -67,3 +67,6 @@ pub use error_recovery::{RecoveryAction, RecoveryStateMachine};
 pub use events::{AgentEvent, AgentEventListener};
 pub use file_ops::{DefaultFileOperationExtractor, FileOperationExtractor, FileOperations};
 pub use types::*;
+
+// Re-export ai-provider types used in public API
+pub use ai_provider::{Content, ToolResultMessage};

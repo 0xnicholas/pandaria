@@ -12,6 +12,8 @@ pub mod provider;
 pub mod providers;
 pub mod repair;
 pub mod retry;
+pub mod resolver;
+pub mod router;
 pub mod streaming;
 pub mod transform;
 pub mod types;
@@ -27,8 +29,8 @@ pub use compat::{
 pub use error::{LlmError, StreamErrorKind};
 pub use hooks::{OnPayloadFn, OnResponseFn, ProviderResponse};
 pub use models::{
-    Modality, Model, ModelRegistry, TokenCost, calculate_cost, get_model, models_are_equal,
-    models_for_provider, providers, supports_xhigh,
+    Modality, Model, ModelRegistry, TokenCost, calculate_cost, get_model, get_model_by_spec,
+    models_are_equal, models_for_provider, providers, supports_xhigh,
 };
 pub use oauth::{OAuthProvider, OAuthToken, is_expired, resolve_oauth_key};
 pub use providers::anthropic::AnthropicProvider;
@@ -36,6 +38,7 @@ pub use providers::deepseek::DeepSeekProvider;
 pub use providers::google::GoogleProvider;
 pub use providers::mistral::MistralProvider;
 pub use providers::openai::OpenAiProvider;
+pub use providers::openai_compatible::OpenAiCompatibleProvider;
 
 #[cfg(feature = "bedrock")]
 pub use providers::bedrock::AwsBedrockProvider;
@@ -43,7 +46,9 @@ pub use providers::bedrock::AwsBedrockProvider;
 pub use overflow::is_context_overflow;
 pub use provider::*;
 pub use repair::{StreamingJsonParser, parse_json_with_repair, repair_json, sanitize_unicode};
+pub use resolver::{ProviderFactory, ProviderResolver, ProviderRule, ResolvedModel};
 pub use retry::with_retry;
+pub use router::RouterProvider;
 pub use streaming::*;
 pub use transform::*;
 pub use types::*;

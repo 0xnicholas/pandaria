@@ -11,7 +11,7 @@ pub struct ProviderConfig {
     pub api_key: Option<SecretString>,
     pub base_url: String,
     pub oauth_provider: Option<Arc<dyn OAuthProvider>>,
-    pub provider_name: &'static str,
+    pub provider_name: String,
     pub env_key: &'static str,
 }
 
@@ -19,7 +19,7 @@ impl ProviderConfig {
     pub fn new(
         api_key: Option<SecretString>,
         base_url: &str,
-        provider_name: &'static str,
+        provider_name: &str,
         env_key: &'static str,
     ) -> Self {
         let client = reqwest::Client::builder()
@@ -31,7 +31,7 @@ impl ProviderConfig {
             api_key,
             base_url: base_url.to_string(),
             oauth_provider: None,
-            provider_name,
+            provider_name: provider_name.to_string(),
             env_key,
         }
     }
@@ -40,7 +40,7 @@ impl ProviderConfig {
         client: reqwest::Client,
         api_key: Option<SecretString>,
         base_url: &str,
-        provider_name: &'static str,
+        provider_name: &str,
         env_key: &'static str,
     ) -> Self {
         Self {
@@ -48,7 +48,7 @@ impl ProviderConfig {
             api_key,
             base_url: base_url.to_string(),
             oauth_provider: None,
-            provider_name,
+            provider_name: provider_name.to_string(),
             env_key,
         }
     }
@@ -135,7 +135,7 @@ macro_rules! define_provider {
         #[async_trait::async_trait]
         impl crate::provider::LlmProvider for $struct_name {
             fn provider_name(&self) -> &str {
-                $provider_str
+                &self.config.provider_name
             }
 
             fn models(&self) -> Vec<String> {

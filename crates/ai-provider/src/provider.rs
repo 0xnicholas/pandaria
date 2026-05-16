@@ -147,6 +147,15 @@ pub trait LlmProvider: Send + Sync {
     /// Access the shared provider configuration.
     fn config(&self) -> &crate::providers::shared::ProviderConfig;
 
+    /// Query model metadata from the global registry.
+    ///
+    /// Default implementation uses `provider_name()` + `model` to look up
+    /// the static model registry. Individual providers may override this
+    /// (e.g. `RouterProvider` resolves cross-provider specs).
+    fn model_metadata(&self, model: &str) -> Option<crate::models::Model> {
+        crate::models::get_model(self.provider_name(), model)
+    }
+
     /// Stream LLM responses for the given model and context.
     ///
     /// Implementors should spawn provider-specific streaming logic on a

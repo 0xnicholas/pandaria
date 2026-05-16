@@ -254,12 +254,14 @@ impl AgentLoop {
         apply_provider_request_mutation(&mut ctx, &mut stream_opts, provider_req_mutation);
 
         // Cross-provider message normalization (spec §2.2 step 2.6)
-        let provider_name = self.config.provider.provider_name();
-        let supports_images = ai_provider::get_model(provider_name, &self.config.model)
+        let model_meta = self.config.provider.model_metadata(&self.config.model);
+        let supports_images = model_meta
+            .as_ref()
             .map(|m| m.input_modalities.iter().any(|modality| matches!(modality, ai_provider::Modality::Image)))
             .unwrap_or(false);
+        let target_api = model_meta.map(|m| m.api);
         let transform_opts = ai_provider::TransformOptions {
-            target_api: Some(provider_name.to_string()),
+            target_api,
             supports_images,
             preserve_thinking: false, // v0.1: strip thinking for safety
         };

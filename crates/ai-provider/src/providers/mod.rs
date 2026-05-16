@@ -7,6 +7,7 @@ pub mod google;
 pub mod deepseek;
 pub mod mistral;
 pub mod openai;
+pub mod openai_compatible;
 
 #[cfg(feature = "bedrock")]
 pub mod bedrock;

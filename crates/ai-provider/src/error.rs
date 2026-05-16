@@ -41,6 +41,9 @@ pub enum LlmError {
     #[error("serialization error: {0}")]
     Serialization(String),
 
+    #[error("unknown provider: {0}")]
+    UnknownProvider(String),
+
     #[error("stream error ({kind:?}): {message}")]
     StreamError { kind: StreamErrorKind, message: String },
 }
