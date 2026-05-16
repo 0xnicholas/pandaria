@@ -200,8 +200,9 @@ pub struct SessionInfo {
     pub turn_count: u64,
     pub system_prompt: Option<String>,
     pub title: Option<String>,
-    // 以下字段当前 tenant crate 未返回，gateway 可填充默认值或从配置推导
+    /// tenant crate 已返回此字段，gateway 直接转发。
     pub model: String,
+    /// tenant crate 未返回此字段，gateway 从 `ServerConfig.default_context_window` 填充。
     pub context_window: Option<u64>,
 }
 
@@ -265,7 +266,7 @@ Response: 201 { "id": "uuid", "tenant_id": "...", "created_at": "...",
                 "title": "...", "model": "...", "context_window": 128000 }
 ```
 > **Serde 兼容：** TUI 的 `CreateSessionRequest` 当前仅包含 `title` 字段（无 `system_prompt`）。Gateway 的反序列化器必须支持缺失字段：`system_prompt` 需标记 `#[serde(default)]` 或定义为 `Option<String>`，确保 TUI 发送 `{ "title": null }` 时不会报错。
-> 注意：`model`, `context_window` 当前由 gateway 从 `ServerConfig` 填充默认值；`title` 由 tenant crate 返回。
+> 注意：`model` 由 tenant crate 返回，gateway 直接转发；`context_window` 由 gateway 从 `ServerConfig` 填充默认值；`title` 由 tenant crate 返回。
 
 **GET /api/v1/sessions**
 ```
@@ -276,7 +277,7 @@ Response: 200 [ SessionInfo, ... ]
 ```
 Response: 200 SessionInfo | 404
 ```
-> 返回的 `SessionInfo` 包含 gateway 填充的 `title`, `model`, `context_window` 默认值。
+> 返回的 `SessionInfo` 中 `model` 由 tenant crate 直接返回，`context_window` 由 gateway 从 `ServerConfig` 填充默认值。
 
 **PATCH /api/v1/sessions/{id}**
 ```
@@ -380,7 +381,7 @@ pub struct UsageInfo {
 
 ### 5.2 AgentEvent → ServerEvent 映射
 
-agent-core 定义的 `AgentEvent` 变体（参考 `docs/specs/2026-05-02-agent-core.md` 1.1 节）：
+agent-core 定义的 `AgentEvent` 变体（`crates/agent-core/src/events.rs`）：
 
 ```rust
 pub enum AgentEvent {
@@ -394,6 +395,10 @@ pub enum AgentEvent {
     ToolExecutionStart { tool_call_id: String, tool_name: String },
     ToolExecutionUpdate { tool_call_id: String, content: String },
     ToolExecutionEnd { tool_call_id: String, result: ToolResultMessage },
+    CompactionStart { reason: CompactReason },
+    CompactionEnd { reason: CompactReason, result: Option<CompactionResult>, aborted: bool, will_retry: bool, error_message: Option<String> },
+    AutoRetryStart { attempt: u32, max_attempts: u32, delay_ms: u64 },
+    AutoRetryEnd { success: bool, error: Option<String> },
     Error { error: AgentError },
 }
 ```
@@ -402,17 +407,23 @@ pub enum AgentEvent {
 |---|---|---|
 | `MessageStart { message_index }` | `MessageStart { message_index }` | 直通。通知客户端新的 assistant message 开始。 |
 | `MessageUpdate { message_index, content_delta }` | `TextDelta { delta }` | `delta = content_delta`，直通 |
-| `ThinkingStart { content_index }` | — | 不发送。客户端在收到第一个 `ThinkingDelta` 时隐式创建 thinking block。 |
-| `ThinkingDelta { content_index, delta }` | `ThinkingDelta { content_index, delta }` | ⚠️ 预留映射。当前 agent-core 未生成 `AgentEvent::ThinkingDelta`，agent loop 对 `ai_provider::AssistantMessageEvent::ThinkingDelta` 做空处理 `{}`。 |
-| `ToolCallStart { tool_call_id, tool_name }` | `ToolCallStarted { call_id, name }` | ⚠️ 预留映射。当前 agent-core 未生成 `AgentEvent::ToolCallStart` / `ToolCallDelta`。 |
-| `ToolCallDelta { tool_call_id, delta }` | `ToolCallDelta { call_id, delta }` | ⚠️ 预留映射。同上。 |
 | `ToolExecutionStart { tool_call_id, tool_name }` | — | 不发送。工具执行与 tool call 参数累积是不同概念，客户端只关心参数和最终结果。 |
 | `ToolExecutionUpdate { tool_call_id, content }` | — | 不发送。MVP 不支持流式工具输出。 |
 | `ToolExecutionEnd { tool_call_id, result }` | `ToolCallDone { call_id, result, is_error }` | `call_id = tool_call_id`。`result` 从 `ToolResultMessage.content` (`Vec<Content>`) 提取：拼接所有 `Content::Text` 的 `text` 字段为 `String`；若无 Text 内容则为 `None`。`is_error = result.is_error`。 |
 | `TurnEnd { turn_index, messages }` | `TurnEnd { stop_reason, usage }` | `stop_reason` 和 `usage` 从 `messages` 中**最后一个 `AssistantMessage`** 提取：`stop_reason = assistant.stop_reason.to_string()`, `usage = UsageInfo { input_tokens, output_tokens }`。`usage` 可能为 `None`（如工具调用 turn 无 LLM 调用）。 |
 | `AgentEnd { messages }` | — | 不发送。客户端通过 `TurnEnd` 感知每轮结束，无需显式的 agent 结束事件。 |
 | `Error { error }` | `Error { code, message }` | `code = error.variant_name()`, `message = error.to_string()` |
+| `CompactionStart` / `CompactionEnd` | — | **MVP 不转发**。客户端通过 `TurnEnd` 和后续消息变化感知上下文变更，无需显式 compaction 事件。 |
+| `AutoRetryStart` / `AutoRetryEnd` | — | **MVP 不转发**。自动重试对客户端透明，客户端继续接收正常的 `MessageUpdate` / `TurnEnd` 流。 |
 | `AgentStart` / `TurnStart` / `MessageEnd` | — | 不发送 |
+
+**协议预留字段**（当前 `AgentEvent` enum 中不存在，但 `ServerEvent` 已预留）：
+
+| ServerEvent 预留字段 | 说明 |
+|---|---|
+| `ThinkingDelta { content_index, delta }` | 未来若 agent-core 扩展支持 reasoning/thinking 流式输出则启用。当前 agent loop 对 `ai_provider::AssistantMessageEvent::ThinkingDelta` 做空处理 `{}`。 |
+| `ToolCallStarted { call_id, name }` | 未来若 agent-core 扩展支持 tool call 参数流式累积则启用。当前 `ToolExecutionStart` 不映射为此事件（两者语义不同）。 |
+| `ToolCallDelta { call_id, delta }` | 同上，tool call 参数增量预留。 |
 
 ### 5.3 SseStream（sse.rs）
 
@@ -694,25 +705,38 @@ impl IntoResponse for GatewayError {
 ### 9.1 Tracing
 
 每个请求注入 span：
+
+**推荐方案**：在 `auth_middleware` 验证成功后显式创建 `info_span!`，并作为当前 Span 注入，而非依赖 `TraceLayer::make_span_with`。
+
+原因：`TraceLayer` 附加在根 Router 上，先于 api_routes 内的 auth 中间件执行，此时 `tenant_id` 尚未从 token 中提取。若在 `make_span_with` 中读取 `req.extensions()`，只能得到 `"unknown"`。
+
 ```rust
-// middleware/tracing_mw.rs
-// 使用 tower_http::trace::TraceLayer，在 make_span_with 闭包中读取 request extensions。
-// 由于 TraceLayer 在根 Router 上先于 api_routes 添加，而 auth 在 api_routes 内部执行，
-// TraceLayer 的 make_span 闭包中 tenant_id 可能尚未注入（auth 还未执行）。
-// 因此更可靠的做法是在 handler 层或 auth 成功后显式创建子 span。
-//
-// session_id 从 axum extractors 获取：使用 MatchedPath 或直接从 URI 参数提取，
-// 避免硬编码 path segment 索引。
-//
-//   span = info_span!("http_request",
-//     http.method = %req.method(),
-//     http.uri = %req.uri(),
-//     tenant_id = %req.extensions().get::<String>().unwrap_or("unknown"),
-//     session_id = %session_id.unwrap_or("-"),
-//   )
+// middleware/auth.rs
+pub async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    mut req: Request,
+    next: Next,
+) -> Result<Response, GatewayError> {
+    // ... token 验证逻辑 ...
+    let payload = state.verify_token(token).ok_or(GatewayError::Unauthorized)?;
+
+    // 创建带 tenant_id 的 span，使其覆盖后续 handler 和 TenantManager 调用
+    let span = tracing::info_span!(
+        "http_request",
+        http.method = %req.method(),
+        http.uri = %req.uri(),
+        tenant_id = %payload.tenant_id,
+    );
+    let _enter = span.enter();
+
+    req.extensions_mut().insert(TenantId(payload.tenant_id));
+    Ok(next.run(req).await)
+}
 ```
 
-所有后续的 `TenantManager` 调用、SSE 任务都在此 span 下，确保 `tenant_id` 贯穿全链路。
+`session_id` 在 handler 层从 Path 提取后，通过 `tracing::info_span!(parent: &current_span, "handler", session_id = %id)` 创建子 span，确保 SSE 任务等异步操作也携带完整上下文。
+
+所有后续的 `TenantManager` 调用、SSE 任务都在此 span 下，确保 `tenant_id` / `session_id` 贯穿全链路。
 
 > **中间件顺序（修正）**：axum 的 `Router::layer()` 从外到内执行。最后一个 `.layer()` 最先执行。因此正确的顺序是：
 > ```rust
@@ -940,7 +964,7 @@ impl TenantManager for MockTenantManager {
 | `ServerEvent::Error` | `code: String, message: String` | `code: String, message: String` | ✅ | |
 | `SessionInfo.id` | `String` | `Uuid` | ⚠️ | tenant 返回 `Uuid`，gateway 需 `to_string()` 后转发 |
 | `SessionInfo.title` | `Option<String>` | `Option<String>` | ✅ | tenant 已返回，gateway 直接转发 |
-| `SessionInfo.model` | `String` | `String` | ⚠️ | tenant 不返回，gateway 需从 ServerConfig 填充默认值 |
+| `SessionInfo.model` | `String` | `String` | ✅ | tenant crate 已返回，gateway 直接转发 |
 | `SessionInfo.context_window` | `Option<u64>` | `Option<u64>` | ⚠️ | tenant 不返回，gateway 需从 ServerConfig 填充默认值 |
 | `SessionInfo.created_at` | `Option<String>` | `String` | ✅ | serde 自动处理 `String` → `Option<String>` 反序列化，无需 gateway 特殊处理 |
 | `SessionInfo.turn_count` | — | `u64` | — | TUI 无此字段，gateway 不转发给客户端 |
@@ -958,6 +982,7 @@ impl TenantManager for MockTenantManager {
 | 2026-05-14 | 审查修订：TUI 对齐、401 认证、中间件顺序、RateLimiter、auth_secret 检查、TenantError HTTP 映射、SessionInfo 字段差异标注、AgentEvent 预留事件标注、PATCH update 预留说明 |
 | 2026-05-15 | 修正：`CreateSessionParams` / `SessionInfo` 增加 `title`（tenant crate 已同步实现）；auth_secret 启动检查改为针对 `DEFAULT_TEST_SECRET`；`ServerConfig` 增加 `default_model` / `default_context_window`；auth/rate_limit 中间件使用 `TenantId` newtype；`IntoResponse` 伪代码修正为实际 `TenantError` 变体；增加 `agent-core` 直接依赖说明；`SessionInfo.created_at` 兼容性标注修正；增加 `CreateSessionRequest` serde 兼容说明；token payload 中 `tenant_id` 示例改为 `<tenant_id>` |
 | 2026-05-15 | 新增 API：`PATCH /sessions/{id}` 从预留改为正式实现；`POST /sessions/{id}/compact`；`GET /sessions/{id}/messages`；`TenantManager` trait 新增 `update_session` / `compact_session` / `get_session_messages`；新增附录 C（TUI 命令映射表） |
+| 2026-05-16 | 审查修订：AgentEvent 映射表删除不存在的 `ThinkingStart`/`ThinkingDelta`/`ToolCallStart`/`ToolCallDelta` 变体，补充 `CompactionStart/End` 和 `AutoRetryStart/End` 的 MVP 跳过策略；修正 `SessionInfo.model` 来源描述（tenant 已返回）；明确 tracing span 推荐方案（auth 中间件内创建 `info_span!`） |
 
 ---
 

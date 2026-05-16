@@ -17,7 +17,7 @@
 
 | 依赖 | 状态 | 说明 |
 |---|---|---|
-| `crates/tenant/` | 🟡 计划中 | `TenantManager` trait 及 `TenantError` 定义 |
+| `crates/tenant/` | ✅ 已完成 | `TenantManager` trait 及全部 11 个方法、`TenantError`、`CreateSessionParams`、`SessionUpdates`、`SessionInfo` 均已定义并实现 |
 | `crates/agent-core/` | ✅ 已完成 | `AgentEvent` 类型定义 |
 | `crates/tui/` | ✅ 已实现 | 客户端协议基准（字段必须与 TUI 对齐） |
 
@@ -185,3 +185,4 @@ cargo test -p api-gateway
 | 2026-05-14 | 文档修正：TenantError 变体与 HTTP 映射、SessionInfo 字段差异标注、AgentEvent 预留事件标注、PATCH update 预留说明 |
 | 2026-05-15 | 修正：tenant crate `CreateSessionParams` / `SessionInfo` 增加 `title`；auth_secret 检查针对默认测试密钥；`ServerConfig` 增加 `default_model` / `default_context_window`；`TenantId` newtype；IntoResponse 伪代码修正为实际 `TenantError` 变体；增加 `agent-core` 依赖说明；增加 `tracing_mw.rs` 任务；增加 `CreateSessionRequest` serde 兼容说明 |
 | 2026-05-15 | 新增 API 设计：`PATCH /sessions/{id}` 从预留改为正式实现；`POST /sessions/{id}/compact`；`GET /sessions/{id}/messages`；`TenantManager` trait 新增 `update_session` / `compact_session` / `get_session_messages` |
+| 2026-05-16 | 审查修订：更新 tenant 依赖状态为 ✅ 已完成；同步 spec 修正（AgentEvent 映射表、`SessionInfo.model` 来源、tracing 方案） |

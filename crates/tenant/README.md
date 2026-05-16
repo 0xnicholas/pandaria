@@ -79,3 +79,6 @@ boundaries before sessions are created.
 - **Does not** persist quota counters across restarts (MVP: in-memory sliding windows).
 - **Does not** enforce CPU time budget — `cpu_time_budget_ms_per_day` is reserved
   for future use (measurement and enforcement not yet implemented).
+- **Note**: `interrupt()` cancels the `CancellationToken` but does not reset it;
+  subsequent `send_message()` calls on the same session rely on `SessionActor`
+  to recreate or re-arm the token as needed.
