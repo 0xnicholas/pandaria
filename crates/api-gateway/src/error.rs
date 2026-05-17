@@ -91,7 +91,7 @@ impl IntoResponse for GatewayError {
         if status == StatusCode::TOO_MANY_REQUESTS && matches!(self, Self::RateLimited) {
             response
                 .headers_mut()
-                .insert("Retry-After", "1".parse().unwrap());
+                .insert("Retry-After", "1".parse().expect("literal '1' is valid header value"));
         }
 
         response

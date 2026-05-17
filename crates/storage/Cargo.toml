@@ -25,3 +25,5 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true }
 ai-provider = { path = "../ai-provider" }
 uuid = { workspace = true }
+testcontainers = { workspace = true }
+testcontainers-modules = { workspace = true }

@@ -1,45 +1,31 @@
-use std::sync::Arc;
-
-use agent_core::{
-    CompactionActor, CompactionConfig, DefaultFileOperationExtractor,
-    SessionActor, SessionEntry, SessionStore,
-};
-use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
-use storage::session::postgres::PgSessionStore;
-use sqlx::PgPool;
-use testcontainers_modules::postgres::Postgres;
+use agent_core::{SessionEntry, SessionStore};
+use storage::session::redis::RedisSessionStore;
+use redis::aio::MultiplexedConnection;
+use testcontainers_modules::redis::Redis;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
-/// Start a PostgreSQL container and return a connection pool.
-async fn start_pg() -> (PgPool, testcontainers_modules::testcontainers::ContainerAsync<Postgres>) {
-    let container = Postgres::default().start().await.expect("failed to start postgres container");
+/// Start a Redis container and return a multiplexed connection.
+async fn start_redis() -> (MultiplexedConnection, testcontainers_modules::testcontainers::ContainerAsync<Redis>) {
+    let container = Redis::default().start().await.expect("failed to start redis container");
     let host = container.get_host().await.expect("failed to get container host");
-    let port = container.get_host_port_ipv4(5432).await.expect("failed to get container port");
-    let url = format!("postgres://postgres:postgres@{}:{}/postgres", host, port);
+    let port = container.get_host_port_ipv4(6379).await.expect("failed to get container port");
+    let url = format!("redis://{}:{}", host, port);
 
-    let pool = PgPool::connect(&url)
+    let client = redis::Client::open(url).expect("invalid redis url");
+    let conn = client
+        .get_multiplexed_async_connection()
         .await
-        .expect("failed to connect to testcontainers postgres");
+        .expect("failed to connect to testcontainers redis");
 
-    (pool, container)
+    (conn, container)
 }
 
-
-fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
-    Arc::new(CompactionActor::new(
-        CompactionConfig::default(),
-        provider,
-        "test".to_string(),
-        Arc::new(DefaultFileOperationExtractor::default()),
-    ))
-}
 
 #[tokio::test]
-async fn test_pg_store_roundtrip() {
+async fn test_redis_store_roundtrip() {
     let _ = tracing_subscriber::fmt().try_init();
-    let (pool, _container) = start_pg().await;
-    let store = PgSessionStore::new(pool);
-    store.init().await.expect("init failed");
+    let (conn, _container) = start_redis().await;
+    let store = RedisSessionStore::new(conn);
 
     let tenant = "roundtrip_t";
     let session = "roundtrip_s";
@@ -72,11 +58,10 @@ async fn test_pg_store_roundtrip() {
 }
 
 #[tokio::test]
-async fn test_pg_store_overwrite() {
+async fn test_redis_store_overwrite() {
     let _ = tracing_subscriber::fmt().try_init();
-    let (pool, _container) = start_pg().await;
-    let store = PgSessionStore::new(pool);
-    store.init().await.expect("init failed");
+    let (conn, _container) = start_redis().await;
+    let store = RedisSessionStore::new(conn);
 
     let tenant = "overwrite_t";
     let session = "overwrite_s";
@@ -144,11 +129,10 @@ async fn test_pg_store_overwrite() {
 }
 
 #[tokio::test]
-async fn test_pg_store_tenant_isolation() {
+async fn test_redis_store_tenant_isolation() {
     let _ = tracing_subscriber::fmt().try_init();
-    let (pool, _container) = start_pg().await;
-    let store = PgSessionStore::new(pool);
-    store.init().await.expect("init failed");
+    let (conn, _container) = start_redis().await;
+    let store = RedisSessionStore::new(conn);
 
     let entries_a = vec![SessionEntry::Message {
         id: uuid::Uuid::new_v4(),
@@ -207,73 +191,10 @@ async fn test_pg_store_tenant_isolation() {
 }
 
 #[tokio::test]
-async fn test_session_actor_persistence_loop() {
+async fn test_redis_store_delete() {
     let _ = tracing_subscriber::fmt().try_init();
-    let (pool, _container) = start_pg().await;
-    let store = Arc::new(PgSessionStore::new(pool));
-    store.init().await.expect("init failed");
-
-    let provider = TestProvider::text("pong");
-    let dispatcher = Arc::new(AllowAllDispatcher);
-
-    let tenant = "loop_t";
-    let session = "loop_s";
-
-    // 1. Create session, prompt, flush
-    {
-        let mut session_actor = SessionActor::new(
-            tenant.to_string(),
-            session.to_string(),
-            "You are helpful.".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher.clone(),
-            make_compaction_actor(provider.clone()),
-            vec![],
-            Some(store.clone()),
-        vec![],
-        );
-
-        session_actor.prompt("ping".to_string()).await.expect("prompt failed");
-        session_actor.flush().await.expect("flush failed");
-    }
-
-    // 2. Restore into new session actor
-    let mut session2 = SessionActor::new(
-        tenant.to_string(),
-        session.to_string(),
-        "You are helpful.".to_string(),
-        "echo".to_string(),
-        provider.clone(),
-        dispatcher,
-        make_compaction_actor(provider),
-        vec![],
-        Some(store.clone()),
-    vec![],
-    );
-
-    let restored = session2.restore().await.expect("restore failed");
-    assert!(restored > 0, "expected restored entries > 0");
-
-    let msgs = session2.messages();
-    assert!(msgs.len() >= 2, "expected at least user + assistant messages");
-
-    // Verify the user message survived roundtrip
-    assert!(msgs.iter().any(|m| {
-        if let agent_core::AgentMessage::User(u) = m {
-            u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "ping"))
-        } else {
-            false
-        }
-    }));
-}
-
-#[tokio::test]
-async fn test_pg_store_delete() {
-    let _ = tracing_subscriber::fmt().try_init();
-    let (pool, _container) = start_pg().await;
-    let store = PgSessionStore::new(pool);
-    store.init().await.expect("init failed");
+    let (conn, _container) = start_redis().await;
+    let store = RedisSessionStore::new(conn);
 
     let tenant = "delete_t";
     let session = "delete_s";
@@ -298,11 +219,10 @@ async fn test_pg_store_delete() {
 }
 
 #[tokio::test]
-async fn test_pg_store_list() {
+async fn test_redis_store_list() {
     let _ = tracing_subscriber::fmt().try_init();
-    let (pool, _container) = start_pg().await;
-    let store = PgSessionStore::new(pool);
-    store.init().await.expect("init failed");
+    let (conn, _container) = start_redis().await;
+    let store = RedisSessionStore::new(conn);
 
     let tenant = "list_t";
     let entries = vec![SessionEntry::Message {
@@ -326,11 +246,10 @@ async fn test_pg_store_list() {
 }
 
 #[tokio::test]
-async fn test_pg_store_tenant_list_isolation() {
+async fn test_redis_store_tenant_list_isolation() {
     let _ = tracing_subscriber::fmt().try_init();
-    let (pool, _container) = start_pg().await;
-    let store = PgSessionStore::new(pool);
-    store.init().await.expect("init failed");
+    let (conn, _container) = start_redis().await;
+    let store = RedisSessionStore::new(conn);
 
     let entries = vec![SessionEntry::Message {
         id: uuid::Uuid::new_v4(),

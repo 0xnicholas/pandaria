@@ -26,6 +26,8 @@ regex = "1"
 serde_yaml = "0.9"
 uuid = { version = "1", features = ["v4", "serde"] }
 dashmap = "6"
+testcontainers = "0.27"
+testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
 
 [package]
 name = "pandaria"

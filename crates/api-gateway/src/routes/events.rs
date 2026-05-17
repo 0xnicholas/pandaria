@@ -142,7 +142,7 @@ impl ToSnakeCase for str {
                 if i > 0 && chars[i - 1].is_lowercase() {
                     result.push('_');
                 }
-                result.push(c.to_lowercase().next().unwrap());
+                result.push(c.to_lowercase().next().expect("uppercase char has at least one lowercase counterpart"));
             } else {
                 result.push(*c);
             }
