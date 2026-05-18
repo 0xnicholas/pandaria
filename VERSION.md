@@ -69,12 +69,5 @@
 
 #### v0.1.3 目标（短期）
 
-- [ ] observability 与 agent-core/tenant/api-gateway 深度集成（调用 `record_*` 埋点）
-- [ ] Bedrock 接入 RouterProvider / ProviderResolver
-- [ ] tenant CPU time 预算测量与执行
 
 #### v0.2.0 目标（中期）
-
-- [ ] WebSocket 接入层（补充现有 SSE）
-- [ ] Session 跨节点迁移支持
-- [ ] per-tenant 分布式 tracing（OpenTelemetry）

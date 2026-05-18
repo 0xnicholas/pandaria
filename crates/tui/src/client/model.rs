@@ -50,6 +50,50 @@ pub struct SendMessageRequest { pub content: String }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest { pub title: Option<String> }
 
+/// Historical message returned by `GET /sessions/{id}/messages`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "role")]
+pub enum HistoricalMessage {
+    #[serde(rename = "user")]
+    User(HistoricalUserMessage),
+    #[serde(rename = "assistant")]
+    Assistant(HistoricalAssistantMessage),
+    #[serde(rename = "toolResult")]
+    ToolResult(HistoricalToolResultMessage),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalUserMessage {
+    pub content: Vec<HistoricalContent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalAssistantMessage {
+    pub content: Vec<HistoricalContent>,
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoricalToolResultMessage {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub content: Vec<HistoricalContent>,
+    #[serde(default)]
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum HistoricalContent {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "thinking")]
+    Thinking { thinking: String },
+    #[serde(rename = "toolCall")]
+    ToolCall { id: String, name: String, arguments: serde_json::Value },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

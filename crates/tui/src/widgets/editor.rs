@@ -26,6 +26,8 @@ pub struct Editor {
     kill_ring: Vec<String>,
     last_kill_appended: bool,
     undo_stack: Vec<EditorState>,
+    redo_stack: Vec<EditorState>,
+    char_jump_target: Option<char>,
     pub theme: Theme,
     pub focused: bool,
     pub busy: bool,
@@ -44,6 +46,8 @@ impl Editor {
             kill_ring: Vec::new(),
             last_kill_appended: false,
             undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            char_jump_target: None,
             theme,
             focused: true,
             busy: false,
@@ -474,6 +478,26 @@ impl Editor {
 
     pub fn undo(&mut self) {
         if let Some(state) = self.undo_stack.pop() {
+            let current = EditorState {
+                lines: self.lines.clone(),
+                cursor_line: self.cursor_line,
+                cursor_col: self.cursor_col,
+            };
+            self.redo_stack.push(current);
+            self.lines = state.lines;
+            self.cursor_line = state.cursor_line;
+            self.cursor_col = state.cursor_col;
+        }
+    }
+
+    pub fn redo(&mut self) {
+        if let Some(state) = self.redo_stack.pop() {
+            let current = EditorState {
+                lines: self.lines.clone(),
+                cursor_line: self.cursor_line,
+                cursor_col: self.cursor_col,
+            };
+            self.undo_stack.push(current);
             self.lines = state.lines;
             self.cursor_line = state.cursor_line;
             self.cursor_col = state.cursor_col;
@@ -544,6 +568,7 @@ impl Editor {
         self.cursor_col = 0;
         self.viewport_top = 0;
         self.undo_stack.clear();
+        self.redo_stack.clear();
         text
     }
 
@@ -554,6 +579,29 @@ impl Editor {
         self.viewport_top = 0;
         self.history_index = None;
         self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.char_jump_target = None;
+    }
+
+    pub fn set_char_jump_target(&mut self, ch: char) {
+        self.char_jump_target = Some(ch);
+    }
+
+    pub fn char_jump(&mut self) {
+        if let Some(target) = self.char_jump_target {
+            self.save_undo_state();
+            let line = &self.lines[self.cursor_line];
+            let chars: Vec<char> = line.chars().collect();
+            if let Some(pos) = chars.iter().skip(self.cursor_col + 1).position(|&c| c == target) {
+                self.cursor_col = self.cursor_col + 1 + pos;
+                self.preferred_col = Some(self.cursor_col);
+            }
+            self.char_jump_target = None;
+        }
+    }
+
+    pub fn is_waiting_char_jump(&self) -> bool {
+        self.char_jump_target.is_some()
     }
 
     pub fn insert_paste_marker(&mut self, id: usize, line_count: usize) {
@@ -618,7 +666,7 @@ impl Editor {
             let text = if self.busy {
                 "Interrupt (Esc)..."
             } else {
-                "Write a message or /command..."
+                "Write a message · /help for commands · Ctrl+Shift+P palette"
             };
             let placeholder =
                 Span::styled(text, Style::default().fg(self.theme.dim));

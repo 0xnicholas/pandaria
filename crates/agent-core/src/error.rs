@@ -1,6 +1,12 @@
 use thiserror::Error;
 
+/// Errors that can occur during agent execution.
+///
+/// **Stability note:** This enum is `#[non_exhaustive]`. Consumers must always
+/// include a wildcard arm (`_ => {}`) when matching on `AgentError` to remain
+/// forward-compatible as new variants are added.
 #[derive(Debug, Clone, Error)]
+#[non_exhaustive]
 pub enum AgentError {
     #[error("tool not found: {0}")]
     ToolNotFound(String),

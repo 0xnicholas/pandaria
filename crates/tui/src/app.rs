@@ -1,12 +1,14 @@
 use crate::autocomplete::{
     AutocompleteContext, AutocompleteProvider, FilePathProvider, SlashCommandProvider,
 };
-use crate::client::model::{ServerEvent, SessionInfo};
+use crate::bash_mode;
+use crate::client::model::{HistoricalMessage, ServerEvent, SessionInfo};
 use crate::client::rest::RestClient;
 use crate::client::sse;
 use crate::command::Command;
 use crate::component::{Component, OverlayResult};
 use crate::config::Config;
+use crate::input_queue::{InputQueue, QueueStrategy};
 use crate::keybindings::{Keybinding, KeybindingsManager};
 use crate::paste::PasteStore;
 use crate::state::*;
@@ -14,6 +16,7 @@ use crate::ui::theme::Theme;
 use crate::widgets::chat_view::render_chat;
 use crate::widgets::editor::Editor;
 use crate::widgets::header::HeaderBar;
+use crate::widgets::pending_messages::PendingMessagesWidget;
 use crate::widgets::session_tabs::SessionTabsWidget;
 use crate::widgets::spinner::SpinnerWidget;
 use crate::widgets::status_bar::render_status_bar;
@@ -21,6 +24,7 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::widgets::Widget;
 use ratatui::Frame;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -30,6 +34,16 @@ pub enum TaskAction {
     SessionCreated(SessionInfo),
     ConnectionTested { url: String, ok: bool },
     SessionFetched(SessionInfo),
+    SessionDeleted { id: String },
+    HistoryLoaded { id: String, messages: Vec<HistoricalMessage> },
+    BashCompleted {
+        command: String,
+        stdout: String,
+        stderr: String,
+        exit_code: Option<i32>,
+        show_command: bool,
+        text_to_send: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +77,7 @@ pub struct App {
     pub scroll_offset: usize,
     pub user_scrolled_up: bool,
     pub running: bool,
+    pub input_queue: InputQueue,
 }
 
 impl App {
@@ -70,6 +85,7 @@ impl App {
         let rest = RestClient::new(&config.server);
         let data = crate::state::State::new(session_id, session_info);
         let context_window = data.active_session().info.context_window;
+
         let mut keybindings = KeybindingsManager::new();
         if let Some(ref keys_config) = config.keys {
             keybindings.load_user_config(keys_config);
@@ -103,6 +119,7 @@ impl App {
             scroll_offset: 0,
             user_scrolled_up: false,
             running: true,
+            input_queue: InputQueue::new(),
         }
     }
 
@@ -120,53 +137,43 @@ impl App {
     pub fn handle_key_event(&mut self, key: KeyEvent) {
         // Overlays take priority
         if let Some(overlay) = self.overlays.last_mut() {
-            // Non-capturing overlays dismiss on printable input
             if !overlay.is_capturing() {
                 match key.code {
-                    KeyCode::Char(_) | KeyCode::Enter => {
-                        let mut dismissed = false;
+                    KeyCode::Char(_) => {
                         overlay.handle_input(key);
-                        if let crate::component::OverlayResult::Dismissed = overlay.take_result() {
-                            dismissed = true;
+                        if matches!(overlay.take_result(), OverlayResult::Dismissed) {
+                            self.overlays.pop();
                         }
-                        if dismissed || matches!(overlay.take_result(), crate::component::OverlayResult::Dismissed) {
-                            self.overlays.pop();
-                        } else {
-                            self.overlays.pop();
+                        // Continue to editor char input below
+                    }
+                    _ => {
+                        overlay.handle_input(key);
+                        match overlay.take_result() {
+                            OverlayResult::Confirmed(value) => {
+                                self.overlays.pop();
+                                self.handle_overlay_confirm(value);
+                            }
+                            OverlayResult::Dismissed => {
+                                self.overlays.pop();
+                            }
+                            OverlayResult::Pending => {}
                         }
                         return;
                     }
-                    _ => {}
                 }
-            }
-
-            overlay.handle_input(key);
-
-            // Check if overlay completed
-            match overlay.take_result() {
-                OverlayResult::Confirmed(value) => {
-                    self.overlays.pop();
-                    self.handle_overlay_confirm(value);
+            } else {
+                overlay.handle_input(key);
+                match overlay.take_result() {
+                    OverlayResult::Confirmed(value) => {
+                        self.overlays.pop();
+                        self.handle_overlay_confirm(value);
+                    }
+                    OverlayResult::Dismissed => {
+                        self.overlays.pop();
+                    }
+                    OverlayResult::Pending => {}
                 }
-                OverlayResult::Dismissed => {
-                    self.overlays.pop();
-                }
-                OverlayResult::Pending => {}
-            }
-            return;
-        }
-
-        // Autocomplete overlay logic
-        let ctx = self.build_autocomplete_context();
-        for provider in &self.autocomplete_providers {
-            if provider.should_trigger(&ctx) {
-                let suggestions = provider.get_suggestions(&ctx);
-                if !suggestions.is_empty() {
-                    self.overlays.push(Box::new(
-                        crate::overlays::autocomplete::AutocompleteOverlay::new(suggestions),
-                    ));
-                    return;
-                }
+                return;
             }
         }
 
@@ -213,10 +220,7 @@ impl App {
             return;
         }
         if kb.matches(&key, Keybinding::AppSelectModel) {
-            let models = vec!["gpt-4o".to_string(), "claude-sonnet-4-20250514".to_string()];
-            self.overlays.push(Box::new(
-                crate::overlays::model_selector::ModelSelector::new(models),
-            ));
+            self.open_model_selector();
             return;
         }
         if kb.matches(&key, Keybinding::AppListSessions) {
@@ -246,7 +250,8 @@ impl App {
 
         // --- Editor keybindings ---
         if kb.matches(&key, Keybinding::EditorSubmit) {
-            self.submit_input();
+            let force_steer = key.modifiers.contains(KeyModifiers::ALT);
+            self.submit_input(force_steer);
             return;
         }
         if kb.matches(&key, Keybinding::EditorNewLine) {
@@ -254,7 +259,7 @@ impl App {
             return;
         }
         if kb.matches(&key, Keybinding::EditorCursorUp) {
-            if self.editor.cursor_line == 0 && self.editor.is_empty() {
+            if self.editor.cursor_line == 0 {
                 self.editor.history_prev();
             } else {
                 self.editor.cursor_up();
@@ -267,6 +272,11 @@ impl App {
             } else {
                 self.editor.cursor_down();
             }
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCharJump) {
+            // Enter char-jump mode: next character typed will be the jump target
+            self.editor.set_char_jump_target('\0'); // placeholder, will be overwritten by next char
             return;
         }
         if kb.matches(&key, Keybinding::EditorCursorLeft) { self.editor.cursor_left(); return; }
@@ -286,28 +296,82 @@ impl App {
         if kb.matches(&key, Keybinding::EditorYank) { self.editor.kill_ring_yank(); return; }
         if kb.matches(&key, Keybinding::EditorYankPop) { self.editor.kill_ring_yank_pop(); return; }
         if kb.matches(&key, Keybinding::EditorUndo) { self.editor.undo(); return; }
+        if kb.matches(&key, Keybinding::EditorRedo) { self.editor.redo(); return; }
         if kb.matches(&key, Keybinding::AutocompleteTrigger) {
+            let ctx = self.build_autocomplete_context();
+            for provider in &self.autocomplete_providers {
+                if provider.should_trigger(&ctx) {
+                    let suggestions = provider.get_suggestions(&ctx);
+                    if !suggestions.is_empty() {
+                        self.overlays.push(Box::new(
+                            crate::overlays::autocomplete::AutocompleteOverlay::new(suggestions),
+                        ));
+                    }
+                    return;
+                }
+            }
+            // No provider triggered — insert a literal tab (or spaces)
+            self.editor.insert_text("    ");
             return;
         }
         if kb.matches(&key, Keybinding::AppOpenCommandPalette) {
-            if self.editor.is_empty() {
-                self.overlays.push(Box::new(
-                    crate::overlays::command_palette::CommandPalette::new(),
-                ));
+            let snapshot = self.editor.lines.join("\n");
+            self.input_queue.snapshot_editor(snapshot);
+            self.overlays.push(Box::new(
+                crate::overlays::command_palette::CommandPalette::new(),
+            ));
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppExternalEditor) {
+            self.open_external_editor();
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppRestoreQueue) {
+            if let Some(text) = self.input_queue.restore_to_editor() {
+                self.editor.clear();
+                self.editor.insert_text(&text);
             }
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppCycleModelForward) {
+            self.cycle_model(true);
+            return;
+        }
+        if kb.matches(&key, Keybinding::AppCycleModelBackward) {
+            self.cycle_model(false);
             return;
         }
 
         // Char input
         if let KeyCode::Char(ch) = key.code {
             if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
-                self.editor.insert_char(ch);
+                if self.editor.is_waiting_char_jump() {
+                    self.editor.set_char_jump_target(ch);
+                    self.editor.char_jump();
+                } else {
+                    self.editor.insert_char(ch);
+                }
             }
         }
     }
 
     /// Check top overlay for confirmed/dismissed flags and process accordingly.
     fn handle_overlay_confirm(&mut self, value: String) {
+        if value.starts_with("delete:") {
+            let id = value.trim_start_matches("delete:").to_string();
+            let rest = self.rest.clone();
+            let token = self.config.auth.token.clone().unwrap_or_default();
+            let task_tx = self.task_tx.clone();
+            tokio::spawn(async move {
+                match rest.delete_session(&id, &token).await {
+                    Ok(()) => {
+                        let _ = task_tx.send(TaskAction::SessionDeleted { id }).await;
+                    }
+                    Err(e) => tracing::warn!("delete session failed: {e}"),
+                }
+            });
+            return;
+        }
         if let Some(cmd) = Command::parse(&value) {
             match cmd {
                 Command::Quit => self.running = false,
@@ -341,12 +405,19 @@ impl App {
                         let rest = self.rest.clone();
                         let token = self.config.auth.token.clone().unwrap_or_default();
                         let task_tx = self.task_tx.clone();
+                        let sid = id.clone();
                         tokio::spawn(async move {
-                            match rest.get_session(&id, &token).await {
+                            match rest.get_session(&sid, &token).await {
                                 Ok(info) => {
                                     let _ = task_tx.send(TaskAction::SessionFetched(info)).await;
                                 }
                                 Err(e) => tracing::warn!("switch session fetch failed: {e}"),
+                            }
+                            match rest.get_session_messages(&sid, &token).await {
+                                Ok(messages) => {
+                                    let _ = task_tx.send(TaskAction::HistoryLoaded { id: sid, messages }).await;
+                                }
+                                Err(e) => tracing::warn!("fetch history failed: {e}"),
                             }
                         });
                     }
@@ -375,11 +446,7 @@ impl App {
                         let session = self.data.active_session_mut();
                         session.info.model = model_id;
                     } else {
-                        let models =
-                            vec!["gpt-4o".to_string(), "claude-sonnet-4".to_string()];
-                        self.overlays.push(Box::new(
-                            crate::overlays::model_selector::ModelSelector::new(models),
-                        ));
+                        self.open_model_selector();
                     }
                 }
                 Command::Connect { url } => {
@@ -459,10 +526,16 @@ impl App {
                             MessageRole::User => {
                                 md.push_str("## User\n\n");
                                 for block in &msg.blocks {
-                                    if let MessageBlock::Text(lines) = block {
-                                        let text = lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
-                                        md.push_str(&text);
-                                        md.push('\n');
+                                    match block {
+                                        MessageBlock::Text(lines) => {
+                                            let text = lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+                                            md.push_str(&text);
+                                            md.push('\n');
+                                        }
+                                        MessageBlock::BashExecution(be) => {
+                                            md.push_str(&format!("```bash\n$ {}\n{}\n```\n", be.command, be.stdout));
+                                        }
+                                        _ => {}
                                     }
                                 }
                                 md.push('\n');
@@ -481,6 +554,12 @@ impl App {
                                         }
                                         MessageBlock::Thinking(tb) => {
                                             md.push_str(&format!("```thinking\n{}\n```\n", tb.thinking_text));
+                                        }
+                                        MessageBlock::BashExecution(be) => {
+                                            md.push_str(&format!("```bash\n$ {}\n{}\n```\n", be.command, be.stdout));
+                                        }
+                                        MessageBlock::CompactionSummary(cs) => {
+                                            md.push_str(&format!("```compaction\n{}\n```\n", cs.summary));
                                         }
                                     }
                                 }
@@ -514,6 +593,149 @@ impl App {
                                 let _ = task_tx.send(TaskAction::SessionFetched(info)).await;
                             }
                             Err(e) => tracing::warn!("rename failed: {e}"),
+                        }
+                    });
+                }
+                Command::Tree => {
+                    // Placeholder: display linear message list as tree preview
+                    let session = self.data.active_session();
+                    let tree_text = session
+                        .messages
+                        .iter()
+                        .enumerate()
+                        .map(|(i, m)| {
+                            let role = match m.role {
+                                MessageRole::User => "User",
+                                MessageRole::Assistant => "Assistant",
+                            };
+                            format!("{}: {}", i, role)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let msg = RenderedMessage {
+                        role: MessageRole::Assistant,
+                        blocks: vec![MessageBlock::Text(vec![ratatui::text::Line::from(
+                            format!("Session tree:\n{}", tree_text),
+                        )])],
+                        timestamp: std::time::SystemTime::now(),
+                        status: MessageStatus::Complete,
+                    };
+                    self.data.active_session_mut().messages.push(msg);
+                }
+                Command::Fork { message_id: _ } => {
+                    // Placeholder: fork is not yet implemented in backend
+                    self.data.last_error = Some("Fork is not yet implemented".to_string());
+                }
+                Command::Settings => {
+                    // Placeholder: open settings overlay
+                    self.data.last_error = Some("Settings overlay not yet implemented".to_string());
+                }
+                Command::Export { filename } => {
+                    let session = self.data.active_session();
+                    let mut md = String::new();
+                    md.push_str(&format!("# Session: {}\n\n", session.info.id));
+                    for msg in &session.messages {
+                        match msg.role {
+                            MessageRole::User => {
+                                md.push_str("## User\n\n");
+                                for block in &msg.blocks {
+                                    match block {
+                                        MessageBlock::Text(lines) => {
+                                            let text = lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+                                            md.push_str(&text);
+                                            md.push('\n');
+                                        }
+                                        MessageBlock::ToolCall(tc) => {
+                                            md.push_str(&format!("```tool\n{}: {}\n```\n", tc.name, tc.call_id));
+                                        }
+                                        MessageBlock::Thinking(tb) => {
+                                            md.push_str(&format!("```thinking\n{}\n```\n", tb.thinking_text));
+                                        }
+                                        MessageBlock::BashExecution(be) => {
+                                            md.push_str(&format!("```bash\n$ {}\n{}\n```\n", be.command, be.stdout));
+                                        }
+                                        MessageBlock::CompactionSummary(cs) => {
+                                            md.push_str(&format!("```compaction\n{}\n```\n", cs.summary));
+                                        }
+                                    }
+                                }
+                                md.push('\n');
+                            }
+                            MessageRole::Assistant => {
+                                md.push_str("## Assistant\n\n");
+                                for block in &msg.blocks {
+                                    match block {
+                                        MessageBlock::Text(lines) => {
+                                            let text = lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+                                            md.push_str(&text);
+                                            md.push('\n');
+                                        }
+                                        MessageBlock::ToolCall(tc) => {
+                                            md.push_str(&format!("```tool\n{}: {}\n```\n", tc.name, tc.call_id));
+                                        }
+                                        MessageBlock::Thinking(tb) => {
+                                            md.push_str(&format!("```thinking\n{}\n```\n", tb.thinking_text));
+                                        }
+                                        MessageBlock::BashExecution(be) => {
+                                            md.push_str(&format!("```bash\n$ {}\n{}\n```\n", be.command, be.stdout));
+                                        }
+                                        MessageBlock::CompactionSummary(cs) => {
+                                            md.push_str(&format!("```compaction\n{}\n```\n", cs.summary));
+                                        }
+                                    }
+                                }
+                                md.push('\n');
+                            }
+                        }
+                    }
+                    let filename = filename.unwrap_or_else(|| format!("session_{}.md", session.info.id));
+                    if let Err(e) = std::fs::write(&filename, md) {
+                        self.data.last_error = Some(format!("export failed: {e}"));
+                    }
+                }
+                Command::Import { filename } => {
+                    match std::fs::read_to_string(&filename) {
+                        Ok(content) => {
+                            let msg = RenderedMessage {
+                                role: MessageRole::Assistant,
+                                blocks: vec![MessageBlock::Text(vec![ratatui::text::Line::from(
+                                    format!("Imported {} ({} bytes)", filename, content.len()),
+                                )])],
+                                timestamp: std::time::SystemTime::now(),
+                                status: MessageStatus::Complete,
+                            };
+                            self.data.active_session_mut().messages.push(msg);
+                        }
+                        Err(e) => {
+                            self.data.last_error = Some(format!("import failed: {e}"));
+                        }
+                    }
+                }
+                Command::DeleteSession => {
+                    let id = self.data.active_session.clone();
+                    let rest = self.rest.clone();
+                    let token = self.config.auth.token.clone().unwrap_or_default();
+                    let task_tx = self.task_tx.clone();
+                    tokio::spawn(async move {
+                        match rest.delete_session(&id, &token).await {
+                            Ok(()) => {
+                                let _ = task_tx.send(TaskAction::SessionDeleted { id }).await;
+                            }
+                            Err(e) => tracing::warn!("delete session failed: {e}"),
+                        }
+                    });
+                }
+                Command::SystemPrompt { prompt } => {
+                    let rest = self.rest.clone();
+                    let token = self.config.auth.token.clone().unwrap_or_default();
+                    let sid = self.data.active_session.clone();
+                    let task_tx = self.task_tx.clone();
+                    tokio::spawn(async move {
+                        match rest.update_system_prompt(&sid, &prompt, &token).await {
+                            Ok(info) => {
+                                let _ = task_tx.send(TaskAction::SessionFetched(info)).await;
+                            }
+                            Err(e) => tracing::warn!("update system prompt failed: {e}"),
                         }
                     });
                 }
@@ -572,7 +794,7 @@ impl App {
         self.user_scrolled_up = false;
     }
 
-    fn submit_input(&mut self) {
+    fn submit_input(&mut self, force_steer: bool) {
         let text = self.editor.take_text();
         if text.trim().is_empty() {
             return;
@@ -583,8 +805,42 @@ impl App {
             return;
         }
 
+        // Detect bash mode
+        let is_bash = bash_mode::detect_bash_mode(&text).is_some();
+        let show_command = is_bash && bash_mode::is_double_bang(&text);
+        let bash_command = if is_bash {
+            bash_mode::detect_bash_mode(&text).map(|s| s.to_string())
+        } else {
+            None
+        };
+
         let text = self.paste_store.expand(&text);
 
+        // If busy, handle via input queue
+        if self.state == AppState::Busy {
+            let use_steer = force_steer || self.input_queue.strategy() == QueueStrategy::Steer;
+            if use_steer {
+                // Steer: interrupt current turn and send immediately
+                self.perform_steer(text, is_bash, bash_command, show_command);
+            } else {
+                // FollowUp: queue for later
+                self.input_queue.enqueue(text, is_bash);
+            }
+            return;
+        }
+
+        // Normal send
+        if is_bash {
+            if let Some(cmd) = bash_command {
+                self.spawn_bash_task(cmd, show_command);
+                return;
+            }
+        }
+
+        self.send_user_message(text);
+    }
+
+    fn send_user_message(&mut self, text: String) {
         let msg = RenderedMessage {
             role: MessageRole::User,
             blocks: vec![MessageBlock::Text(vec![ratatui::text::Line::from(
@@ -595,7 +851,6 @@ impl App {
         };
         self.data.active_session_mut().messages.push(msg);
 
-        // Trim old messages if exceeding max_history
         let max_history = self.config.ui.max_history;
         let session = self.data.active_session_mut();
         while session.messages.len() > max_history {
@@ -603,6 +858,91 @@ impl App {
         }
 
         self.start_streaming_turn(text);
+    }
+
+    fn spawn_bash_task(&self, command: String, show_command: bool) {
+        let task_tx = self.task_tx.clone();
+        tokio::spawn(async move {
+            let result = bash_mode::execute_bash(&command).await;
+            let text_to_send = bash_mode::format_for_send(&result, show_command);
+            let _ = task_tx
+                .send(TaskAction::BashCompleted {
+                    command: result.command,
+                    stdout: result.stdout,
+                    stderr: result.stderr,
+                    exit_code: result.exit_code,
+                    show_command,
+                    text_to_send,
+                })
+                .await;
+        });
+    }
+
+    fn finalize_bash_message(
+        &mut self,
+        command: String,
+        stdout: String,
+        stderr: String,
+        exit_code: Option<i32>,
+        show_command: bool,
+        text_to_send: String,
+    ) {
+        let msg = RenderedMessage {
+            role: MessageRole::User,
+            blocks: vec![MessageBlock::BashExecution(BashExecutionBlock {
+                command,
+                stdout,
+                stderr,
+                exit_code,
+                expanded: show_command,
+            })],
+            timestamp: std::time::SystemTime::now(),
+            status: MessageStatus::Complete,
+        };
+        self.data.active_session_mut().messages.push(msg);
+
+        let max_history = self.config.ui.max_history;
+        let session = self.data.active_session_mut();
+        while session.messages.len() > max_history {
+            session.messages.remove(0);
+        }
+
+        self.start_streaming_turn(text_to_send);
+    }
+
+    fn perform_steer(&mut self, text: String, is_bash: bool, bash_command: Option<String>, show_command: bool) {
+        // Interrupt current turn
+        let rest = self.rest.clone();
+        let token = self.config.auth.token.clone().unwrap_or_default();
+        let sid = self.data.active_session.clone();
+        tokio::spawn(async move {
+            if let Err(e) = rest.interrupt(&sid, &token).await {
+                tracing::error!("steer interrupt failed: {e}");
+            }
+        });
+
+        // Mark last assistant message as aborted
+        if let Some(last) = self.data.active_session_mut().messages.last_mut() {
+            if last.role == MessageRole::Assistant && last.status == MessageStatus::Streaming {
+                last.status = MessageStatus::Aborted;
+            }
+        }
+        self.data.active_session_mut().streaming = None;
+        self.state = AppState::Connected;
+
+        // Abort SSE task
+        if let Some(handle) = self.sse_task.take() {
+            handle.abort();
+        }
+
+        // Send the steer message
+        if is_bash {
+            if let Some(cmd) = bash_command {
+                self.spawn_bash_task(cmd, show_command);
+                return;
+            }
+        }
+        self.send_user_message(text);
     }
 
     pub fn handle_server_event(&mut self, event: ServerEvent) {
@@ -725,6 +1065,18 @@ impl App {
                 while s.messages.len() > max_history {
                     s.messages.remove(0);
                 }
+
+                // Auto-dequeue pending followUp messages
+                if let Some(item) = self.input_queue.dequeue() {
+                    if item.is_bash {
+                        if let Some(cmd) = bash_mode::detect_bash_mode(&item.text) {
+                            let show_command = bash_mode::is_double_bang(&item.text);
+                            self.spawn_bash_task(cmd.to_string(), show_command);
+                        }
+                    } else {
+                        self.send_user_message(item.text);
+                    }
+                }
             }
             ServerEvent::Error { code, message } => {
                 if let Some(last) = session.messages.last_mut() {
@@ -764,7 +1116,175 @@ impl App {
                     self.context_window = cw;
                 }
             }
+            TaskAction::BashCompleted {
+                command,
+                stdout,
+                stderr,
+                exit_code,
+                show_command,
+                text_to_send,
+            } => {
+                self.finalize_bash_message(
+                    command,
+                    stdout,
+                    stderr,
+                    exit_code,
+                    show_command,
+                    text_to_send,
+                );
+            }
+            TaskAction::SessionDeleted { id } => {
+                self.data.sessions.remove(&id);
+                if self.data.active_session == id {
+                    self.data.active_session = self.data.sessions.keys().next().cloned().unwrap_or_default();
+                    if let Some(s) = self.data.sessions.get(&self.data.active_session) {
+                        self.context_window = s.info.context_window;
+                    }
+                }
+            }
+            TaskAction::HistoryLoaded { id, messages } => {
+                if let Some(session) = self.data.sessions.get_mut(&id) {
+                    session.messages = Self::convert_history(messages);
+                }
+            }
         }
+    }
+
+    fn convert_history(messages: Vec<HistoricalMessage>) -> Vec<RenderedMessage> {
+        use crate::client::model::{HistoricalContent, HistoricalMessage};
+        messages
+            .into_iter()
+            .map(|m| {
+                let (role, blocks) = match m {
+                    HistoricalMessage::User(u) => {
+                        let lines: Vec<ratatui::text::Line> = u.content.into_iter().filter_map(|c| {
+                            match c {
+                                HistoricalContent::Text { text } => Some(ratatui::text::Line::from(text)),
+                                _ => None,
+                            }
+                        }).collect();
+                        (MessageRole::User, vec![MessageBlock::Text(lines)])
+                    }
+                    HistoricalMessage::Assistant(a) => {
+                        let mut blocks = Vec::new();
+                        let mut text_lines = Vec::new();
+                        for c in a.content {
+                            match c {
+                                HistoricalContent::Text { text } => {
+                                    text_lines.push(ratatui::text::Line::from(text));
+                                }
+                                HistoricalContent::Thinking { thinking } => {
+                                    if !text_lines.is_empty() {
+                                        blocks.push(MessageBlock::Text(std::mem::take(&mut text_lines)));
+                                    }
+                                    blocks.push(MessageBlock::Thinking(ThinkingBlock {
+                                        thinking_text: thinking,
+                                        is_expanded: false,
+                                        is_redacted: false,
+                                    }));
+                                }
+                                HistoricalContent::ToolCall { id, name, arguments } => {
+                                    if !text_lines.is_empty() {
+                                        blocks.push(MessageBlock::Text(std::mem::take(&mut text_lines)));
+                                    }
+                                    let json_text = serde_json::to_string_pretty(&arguments).unwrap_or_default();
+                                    blocks.push(MessageBlock::ToolCall(ToolCallWidget {
+                                        call_id: id,
+                                        name,
+                                        state: ToolCallState::Pending,
+                                        content: json_text.lines().map(|l| ratatui::text::Line::from(l.to_string())).collect(),
+                                        is_expanded: false,
+                                    }));
+                                }
+                            }
+                        }
+                        if !text_lines.is_empty() {
+                            blocks.push(MessageBlock::Text(text_lines));
+                        }
+                        (MessageRole::Assistant, blocks)
+                    }
+                    HistoricalMessage::ToolResult(t) => {
+                        let text = t.content.into_iter().filter_map(|c| {
+                            match c {
+                                HistoricalContent::Text { text } => Some(text),
+                                _ => None,
+                            }
+                        }).collect::<Vec<_>>().join("\n");
+                        let display = format!("ToolResult({}): {}", t.tool_name, text);
+                        (MessageRole::Assistant, vec![MessageBlock::Text(vec![ratatui::text::Line::from(display)])])
+                    }
+                };
+                RenderedMessage {
+                    role,
+                    blocks,
+                    timestamp: std::time::SystemTime::now(),
+                    status: MessageStatus::Complete,
+                }
+            })
+            .collect()
+    }
+
+    fn open_external_editor(&mut self) {
+        let editor_cmd = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "vi".to_string());
+
+        let current_text = self.editor.lines.join("\n");
+        let temp_file = std::env::temp_dir().join(format!("pandaria_edit_{}.md", std::process::id()));
+
+        if let Err(e) = std::fs::write(&temp_file, &current_text) {
+            self.data.last_error = Some(format!("Failed to write temp file: {}", e));
+            return;
+        }
+
+        // Suspend raw mode and run editor
+        let _ = crossterm::terminal::disable_raw_mode();
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("{} '{}'", editor_cmd, temp_file.display()))
+            .status();
+        let _ = crossterm::terminal::enable_raw_mode();
+
+        match status {
+            Ok(s) if s.success() => {
+                match std::fs::read_to_string(&temp_file) {
+                    Ok(content) => {
+                        self.editor.clear();
+                        self.editor.insert_text(content.trim_end());
+                    }
+                    Err(e) => {
+                        self.data.last_error = Some(format!("Failed to read temp file: {}", e));
+                    }
+                }
+            }
+            Ok(s) => {
+                self.data.last_error = Some(format!("Editor exited with status: {}", s));
+            }
+            Err(e) => {
+                self.data.last_error = Some(format!("Failed to launch editor: {}", e));
+            }
+        }
+
+        let _ = std::fs::remove_file(&temp_file);
+    }
+
+    fn open_model_selector(&mut self) {
+        let models = self.config.ui.models.clone();
+        self.overlays.push(Box::new(
+            crate::overlays::model_selector::ModelSelector::new(models),
+        ));
+    }
+
+    fn cycle_model(&mut self, forward: bool) {
+        let models: Vec<&str> = self.config.ui.models.iter().map(|s| s.as_str()).collect();
+        let current = self.data.active_session().info.model.as_str();
+        let pos = models.iter().position(|&m| m == current).unwrap_or(0);
+        let new_pos = if forward {
+            (pos + 1) % models.len()
+        } else {
+            pos.checked_sub(1).unwrap_or(models.len() - 1) % models.len()
+        };
+        self.data.active_session_mut().info.model = models[new_pos].to_string();
     }
 
     pub fn render_ui(&mut self, f: &mut Frame) {
@@ -774,12 +1294,20 @@ impl App {
         // Update stateful components from session data
         // (These are done inline in render rather than stored, to avoid borrow issues)
 
+        let pending = self.input_queue.pending_texts();
+        let pending_height = if pending.is_empty() {
+            0
+        } else {
+            (pending.len().min(2) + 1).min(3) as u16
+        };
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(1),
                 Constraint::Length(1),
                 Constraint::Min(1),
+                Constraint::Length(pending_height),
                 Constraint::Length(1),
                 Constraint::Length(3),
             ])
@@ -802,9 +1330,14 @@ impl App {
         // ChatView
         render_chat(f, chunks[2], theme, session);
 
+        // PendingMessagesWidget
+        if !pending.is_empty() {
+            PendingMessagesWidget::new(&pending, theme).render(chunks[3], f.buffer_mut());
+        }
+
         // StatusBar
         render_status_bar(
-            chunks[3],
+            chunks[4],
             f.buffer_mut(),
             theme,
             &self.data.connection_status,
@@ -813,10 +1346,12 @@ impl App {
             self.input_tokens,
             self.context_window,
             &session.info.model,
+            self.input_queue.len(),
+            self.input_queue.strategy(),
         );
 
         // Editor
-        self.editor.render(chunks[4], f.buffer_mut());
+        self.editor.render(chunks[5], f.buffer_mut());
 
         // Render overlays on top
         let full_area = f.area();
@@ -847,6 +1382,7 @@ mod tests {
                 show_tool_calls: true,
                 syntax_theme: "base16-ocean.dark".to_string(),
                 scrollback: 100,
+                models: crate::config::default_models(),
             },
             keys: None,
         }

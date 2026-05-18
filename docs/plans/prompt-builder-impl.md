@@ -32,24 +32,31 @@
 
 ---
 
-### M2: AgentLoopConfig / SessionActor Integration
-**Scope**: Replace `system_prompt: String` storage with `PromptBuilder` in `SessionActor` and `AgentLoopConfig`.
+### M2: SessionActor Internal PromptBuilder Integration (Phase 1)
+**Scope**: Replace `system_prompt: String` storage with `PromptBuilder` in `SessionActor`. AgentLoopConfig 继续使用 `Option<String>` 传递渲染后的 prompt，Hook mutation 类型保持不变（Phase 2 再改）。
 
 **Files**:
-- `agent-core/src/harness/session.rs` — `SessionActor` field + `set_system_prompt` refactor
-- `agent-core/src/harness/agent_loop.rs` — `AgentLoopConfig` field change
+- `agent-core/src/harness/session.rs` — `SessionActor` field + `set_system_prompt` + `system_prompt()` refactor
+- `agent-core/src/harness/agent_loop.rs` — `AgentLoopConfig` remove `skills` field; `run_turn()` remove skills concatenation
+- `tenant/src/manager.rs` — update `system_prompt()` call sites (return type changes from `&str` to `String`)
+
+**完整影响文件清单**：
+- `agent-core/src/harness/session.rs` — SessionActor 结构 + 方法
+- `agent-core/src/harness/agent_loop.rs` — AgentLoopConfig 去 skills、run_turn 去拼接、测试 helper 更新
+- `tenant/src/manager.rs` — SessionInfo 存储时调用 `actor.system_prompt()`
+
+**行为变化（需测试验证）**：
+- `on_before_agent_start` / `on_before_provider_request` 返回 raw string override 时，**不再保留 skills XML**（因为 skills 已在 SessionActor 中渲染进 builder，AgentLoop 只做字符串替换）
+- 这与旧行为不同：旧代码在 `run_turn()` 中拼接 skills，所以即使 Hook 覆盖了 system_prompt，skills 仍会追加
 
 **Acceptance Criteria**:
-- [ ] `SessionActor::new` accepts `PromptBuilder` instead of `String`
-- [ ] `SessionActor::set_system_prompt` converts `String` → `PromptBuilder::from_base`
-- [ ] `AgentLoopConfig` stores `prompt_builder: PromptBuilder`
-- [ ] `AgentLoop::run()` clones config builder, replaces it with `on_before_agent_start`
-  returned builder if present, and persists the final builder back into config
-  for all turns within this `AgentLoop::run()`
-- [ ] `AgentLoop::run_turn()` creates `turn_builder` from config builder,
-  applies skills + `on_before_provider_request` result,
-  and uses `turn_builder.render_option()` for LLM call
-- [ ] Existing `SessionActor` / `AgentLoop` tests compile and pass
+- [ ] `SessionActor::new` 签名不变（仍接受 `String`），内部创建 `PromptBuilder::from_base`
+- [ ] `SessionActor::set_system_prompt` 重建 PromptBuilder，保留 SkillsDirectory fragment
+- [ ] `SessionActor::system_prompt()` 返回 `String`（`builder.render()`），不再是 `&str`
+- [ ] `AgentLoopConfig` 移除 `skills: Vec<Skill>` 字段
+- [ ] `AgentLoop::run_turn()` 移除 skills XML 拼接，直接使用传入的 `system_prompt: Option<String>`
+- [ ] 所有调用 `system_prompt()` 的地方适配返回类型变化
+- [ ] Existing tests compile and pass
 
 **Dependencies**: M1
 
@@ -75,24 +82,25 @@
 
 ---
 
-### M4: Hook Mutation Types + HookRouter
-**Scope**: Update mutation structs and HookRouter to use `PromptBuilder`.
+### M4: Hook Mutation Types + HookRouter (Phase 2)
+**Scope**: Update mutation structs and HookRouter to expose `PromptBuilder` to Extensions.
 
 **Files**:
-- `agent-core/src/hook/mutations.rs` — update `BeforeAgentStartMutation.system_prompt: Option<PromptBuilder>`, `ProviderRequestMutation.system_prompt: Option<PromptBuilder>`
-- `agent-core/src/hook/context.rs` — add `prompt_builder: PromptBuilder` to `BeforeAgentStartCtx` and `ProviderRequestCtx`; keep `system_prompt: Option<String>` for backward compat
-- `extensions/src/host/hook_router.rs` — chain-merge logic: clone builder per Extension, return final builder
+- `agent-core/src/hook/mutations.rs` — add `prompt_mutation: Option<PromptMutation>` to `BeforeAgentStartMutation` and `ProviderRequestMutation`; keep `system_prompt` for backward compat
+- `agent-core/src/hook/context.rs` — add `prompt_builder: PromptBuilder` to `BeforeAgentStartCtx` and `ProviderRequestCtx`; keep `system_prompt: Option<String>` for render result
+- `extensions/src/host/hook_router.rs` — chain-merge logic: clone builder per Extension
+- `agent-core/src/prompt/mutation.rs` — add `impl From<Option<String>> for Option<PromptBuilder>`
 
 **Acceptance Criteria**:
-- [ ] `BeforeAgentStartMutation.system_prompt: Option<PromptBuilder>`
-- [ ] `ProviderRequestMutation.system_prompt: Option<PromptBuilder>`
+- [ ] `BeforeAgentStartMutation` has `prompt_mutation: Option<PromptMutation>` + `system_prompt: Option<String>` (legacy)
+- [ ] `ProviderRequestMutation` has `prompt_mutation: Option<PromptMutation>` + `system_prompt: Option<Option<String>>` (legacy)
 - [ ] `BeforeAgentStartCtx` has `prompt_builder: PromptBuilder` + `system_prompt: Option<String>`
 - [ ] `ProviderRequestCtx` has `prompt_builder: PromptBuilder` + `system_prompt: Option<String>`
-- [ ] `HookRouter::on_before_agent_start` passes builder clone to each Extension, returns final builder
-- [ ] `HookRouter::on_before_provider_request` passes builder clone to each Extension, returns final builder
-- [ ] Existing Extension implementations (builtins) compile without changes
+- [ ] `HookRouter` chain-merge passes builder clone to each Extension
+- [ ] `impl From<Option<String>> for Option<PromptBuilder>` exists
+- [ ] Existing Extension implementations compile with **minimal** changes (`.into()` → `PromptBuilder::from()`)
 
-**Dependencies**: M1
+**Dependencies**: M2 (Phase 1 complete)
 
 **Estimated Effort**: 1-2 sessions
 
@@ -119,42 +127,50 @@
 **Scope**: Fix all compilation errors in tests and add new integration tests.
 
 **Files**:
-- `agent-core/tests/loop_integration_tests.rs` — update `make_loop_config` helper
-- `agent-core/tests/hook_dispatcher_tests.rs` — update mock dispatcher returns
-- `agent-core/tests/skills_integration_tests.rs` — verify no regressions
+- `agent-core/tests/loop_integration_tests.rs` — update `make_loop_config` helper (remove skills field)
+- `agent-core/tests/hook_dispatcher_tests.rs` — verify hook override behavior (skills lost after raw string override)
+- `agent-core/tests/skills_integration_tests.rs` — verify skills render correctly via PromptBuilder
 - `extensions/tests/integration_agent_loop.rs` — update test helpers
-- `tenant/tests/integration.rs` — update session creation calls
+- `tenant/tests/integration.rs` — update session creation calls (if any direct system_prompt access)
 - `AGENTS.md` — update current status table
 
 **New Tests**:
-- `agent-core/src/prompt/builder_tests.rs` — comprehensive builder unit tests
-- `agent-core/src/prompt/mutation_tests.rs` — mutation application tests
-- `agent-core/tests/prompt_builder_integration_tests.rs` — end-to-end prompt assembly
+- `agent-core/src/harness/session.rs` (inline `#[cfg(test)]`) — `SessionActor` with skills: `system_prompt()` contains `<available_skills>`
+- `agent-core/src/harness/session.rs` — `set_system_prompt()` preserves SkillsDirectory fragment
+- `agent-core/tests/prompt_builder_integration_tests.rs` — end-to-end: SessionActor → AgentLoopConfig → AgentLoop → LLM context contains expected prompt
 
 **Acceptance Criteria**:
 - [ ] `cargo test --workspace` passes
 - [ ] `cargo clippy --workspace` passes
-- [ ] New integration test verifies: Extension adds fragment → render contains it → fragment metadata correct
+- [ ] `SessionActor::system_prompt()` with skills returns string containing `<available_skills>`
+- [ ] `set_system_prompt()` rebuilds BasePersona but keeps SkillsDirectory
+- [ ] Hook raw-string override replaces entire prompt (including skills) — verify with test
 
-**Dependencies**: M1-M5
+**Dependencies**: M1-M3 (Phase 1 only); M4-M5 for Phase 2
 
-**Estimated Effort**: 2-3 sessions
+**Estimated Effort**: 1-2 sessions (Phase 1 only)
 
 ---
 
 ## 2. 实施顺序
 
+### Phase 1（当前实施）
+
 ```
-M1 ──→ M2 ──→ M3 ──┐
-  │                 ├──→ M6
-  └──→ M4 ──→ M5 ──┘
+M1 ──→ M2 ──→ M3 ──→ M6
 ```
 
 **推荐顺序**：
-1. M1（独立，可并行于其他工作）
-2. M2 + M4 并行（SessionActor 集成 与 Hook 类型/Router 互不依赖）
-3. M3 + M5 并行（Skills 重构 与 TenantManager 初始化互不依赖）
-4. M6（集中测试修复 + AGENTS.md 更新）
+1. M1（已 ✅ 完成）
+2. M2（SessionActor 内部 PromptBuilder 化）
+3. M3（AgentLoop 移除 skills 拼接）
+4. M6（测试修复 + AGENTS.md 更新）
+
+### Phase 2（后续）
+
+```
+M4 ──→ M5 ──→ M6 扩展
+```
 
 ---
 
@@ -164,6 +180,7 @@ M1 ──→ M2 ──→ M3 ──┐
 |------|------|------|------|
 | 改动面过大，测试修复耗时超预期 | 中 | 高 | M1-M5 各自独立分支，逐步合并；优先保证 `cargo test` 在每一步都通过 |
 | `From<String>` 自动转换引入类型推断歧义 | 低 | 中 | 显式标注类型或使用 `PromptBuilder::from_base()` 替代 blanket `From` |
+| Hook override 后 skills 丢失导致 Extension 行为变化 | 中 | 中 | 在 Phase 1 文档中明确标注此行为；Phase 2 引入 `prompt_mutation` 后恢复精准修改能力 |
 | Extension 作者对 `PromptMutation` 概念困惑 | 低 | 中 | 文档 + 示例 Extension（`examples/prompt-mutating-extension.rs`） |
 | `PromptBuilder` clone 成本影响性能 | 低 | 低 | 每个 turn 仅 clone 一次（< 10 fragments）；使用 `Arc<str>` 优化未来可单独做 |
 
@@ -180,6 +197,6 @@ M1 ──→ M2 ──→ M3 ──┐
 - [ ] `cargo test --workspace` passes
 - [ ] `cargo clippy --workspace` passes
 - [ ] `cargo doc --workspace` builds without warnings
-- [ ] `docs/specs/prompt-builder.md` 中所有 P0 目标实现
-- [ ] AGENTS.md 当前状态表更新：PromptBuilder 标记为 ✅
+- [ ] `docs/specs/prompt-builder.md` 中 Phase 1 目标实现（G1/G3/G4 部分）
+- [ ] AGENTS.md 当前状态表更新：PromptBuilder 标记为 "✅ 已接入运行时代码（Phase 1）"
 - [ ] `render_option()` 语义验证：空 builder → `None`，非空 → `Some(text)`

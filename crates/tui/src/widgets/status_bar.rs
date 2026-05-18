@@ -7,6 +7,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
 
+use crate::input_queue::QueueStrategy;
+
 /// Render the status bar with full connection/state data.
 /// Called directly from app.rs since connection data changes every frame.
 #[allow(clippy::too_many_arguments)]
@@ -20,18 +22,34 @@ pub fn render_status_bar(
     input_tokens: u64,
     context_window: Option<u64>,
     model: &str,
+    pending_count: usize,
+    queue_strategy: QueueStrategy,
 ) {
     if area.width < 20 {
         return;
     }
-    let conn_icon = match connection {
-        ConnectionStatus::Connected => Span::styled("●", Style::default().fg(theme.success)),
-        ConnectionStatus::Disconnected => Span::styled("○", Style::default().fg(theme.muted)),
-        ConnectionStatus::Reconnecting => Span::styled("↻", Style::default().fg(theme.warning)),
+    let (conn_icon, conn_text) = match connection {
+        ConnectionStatus::Connected => (Span::styled("●", Style::default().fg(theme.success)), None),
+        ConnectionStatus::Disconnected => (Span::styled("●", Style::default().fg(theme.error)), Some(" Disconnected")),
+        ConnectionStatus::Reconnecting => (Span::styled("↻", Style::default().fg(theme.warning)), None),
     };
     let center = if busy {
+        let strategy_label = match queue_strategy {
+            QueueStrategy::Steer => "[steer]",
+            QueueStrategy::FollowUp => "[followUp]",
+        };
+        let pending_label = if pending_count > 0 {
+            format!(" ↑{}", pending_count)
+        } else {
+            String::new()
+        };
         Span::styled(
-            crate::widgets::spinner::SPINNER_FRAMES[spinner.frame_index].to_string(),
+            format!(
+                "{} {}{}",
+                crate::widgets::spinner::SPINNER_FRAMES[spinner.frame_index],
+                strategy_label,
+                pending_label
+            ),
             Style::default().fg(theme.accent),
         )
     } else {
@@ -55,7 +73,15 @@ pub fn render_status_bar(
     } else {
         Span::styled(model, Style::default().fg(theme.muted))
     };
-    let line = Line::from(vec![conn_icon, Span::from(" "), center, Span::from("   "), gauge]);
+    let mut left_parts = vec![conn_icon];
+    if let Some(text) = conn_text {
+        left_parts.push(Span::styled(text, Style::default().fg(theme.error)));
+    }
+    left_parts.push(Span::from(" "));
+    left_parts.push(center);
+    left_parts.push(Span::from("   "));
+    left_parts.push(gauge);
+    let line = Line::from(left_parts);
     Paragraph::new(line)
         .alignment(Alignment::Center)
         .render(area, buf);

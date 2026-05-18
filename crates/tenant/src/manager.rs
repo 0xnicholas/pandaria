@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use agent_core::{CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionStore};
+use agent_core::{CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig, SessionStore};
 use extensions::host::manager::ExtensionManager;
 use extensions::Extension;
 
@@ -208,18 +208,18 @@ impl TenantManager for TenantManagerImpl {
             .system_prompt
             .unwrap_or_else(|| self.default_system_prompt.clone());
 
-        let mut actor = SessionActor::new(
-            tenant_id.to_string(),
-            session_id.to_string(),
-            system_prompt.clone(),
-            self.default_model.clone(),
-            self.provider.clone(),
-            Arc::new(hook_router),
+        let mut actor = SessionActor::new(SessionConfig {
+            tenant_id: tenant_id.to_string(),
+            session_id: session_id.to_string(),
+            system_prompt: system_prompt.clone(),
+            model: self.default_model.clone(),
+            provider: self.provider.clone(),
+            hook_dispatcher: Arc::new(hook_router),
             compaction_actor,
             tools,
-            self.store.clone(),
-        vec![],
-        );
+            store: self.store.clone(),
+            skills: vec![],
+        });
 
         // 6. Set up event bridge and abort token
         let (event_tx, _) = tokio::sync::broadcast::channel(256);

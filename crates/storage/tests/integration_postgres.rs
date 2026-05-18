@@ -1,8 +1,24 @@
+//! PostgreSQL session store integration tests.
+//!
+//! # Running with a local PostgreSQL instance
+//!
+//! If Docker is unavailable, you can run these tests against a local PostgreSQL
+//! instance by setting the `PANDARIA_TEST_PG_URL` environment variable:
+//!
+//! ```bash
+//! # Start local PostgreSQL (e.g. via Postgres.app or Homebrew)
+//! pg_ctl -D "$HOME/Library/Application Support/Postgres/var-18" start
+//!
+//! # Run tests (must use --test-threads=1 because all tests share one DB)
+//! PANDARIA_TEST_PG_URL="postgres://postgres@localhost:5432/postgres" \
+//!   cargo test -p storage --test integration_postgres -- --test-threads=1
+//! ```
+
 use std::sync::Arc;
 
 use agent_core::{
     CompactionActor, CompactionConfig, DefaultFileOperationExtractor,
-    SessionActor, SessionEntry, SessionStore,
+    SessionActor, SessionConfig, SessionEntry, SessionStore,
 };
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
 use storage::session::postgres::PgSessionStore;
@@ -11,7 +27,19 @@ use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 /// Start a PostgreSQL container and return a connection pool.
-async fn start_pg() -> (PgPool, testcontainers_modules::testcontainers::ContainerAsync<Postgres>) {
+///
+/// If `PANDARIA_TEST_PG_URL` is set, connects to the local PostgreSQL instance
+/// instead of starting a Docker container via testcontainers. When using a local
+/// DB, tests **must** run with `--test-threads=1` because all tests share the
+/// same database and concurrent `CREATE TABLE IF NOT EXISTS` calls race.
+async fn start_pg() -> (PgPool, Option<testcontainers_modules::testcontainers::ContainerAsync<Postgres>>) {
+    if let Ok(url) = std::env::var("PANDARIA_TEST_PG_URL") {
+        let pool = PgPool::connect(&url)
+            .await
+            .expect("failed to connect to local postgres (check PANDARIA_TEST_PG_URL)");
+        return (pool, None);
+    }
+
     let container = Postgres::default().start().await.expect("failed to start postgres container");
     let host = container.get_host().await.expect("failed to get container host");
     let port = container.get_host_port_ipv4(5432).await.expect("failed to get container port");
@@ -21,7 +49,7 @@ async fn start_pg() -> (PgPool, testcontainers_modules::testcontainers::Containe
         .await
         .expect("failed to connect to testcontainers postgres");
 
-    (pool, container)
+    (pool, Some(container))
 }
 
 
@@ -221,36 +249,36 @@ async fn test_session_actor_persistence_loop() {
 
     // 1. Create session, prompt, flush
     {
-        let mut session_actor = SessionActor::new(
-            tenant.to_string(),
-            session.to_string(),
-            "You are helpful.".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher.clone(),
-            make_compaction_actor(provider.clone()),
-            vec![],
-            Some(store.clone()),
-        vec![],
-        );
+        let mut session_actor = SessionActor::new(SessionConfig {
+            tenant_id: tenant.to_string(),
+            session_id: session.to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher.clone(),
+            compaction_actor: make_compaction_actor(provider.clone()),
+            tools: vec![],
+            store: Some(store.clone()),
+            skills: vec![],
+        });
 
         session_actor.prompt("ping".to_string()).await.expect("prompt failed");
         session_actor.flush().await.expect("flush failed");
     }
 
     // 2. Restore into new session actor
-    let mut session2 = SessionActor::new(
-        tenant.to_string(),
-        session.to_string(),
-        "You are helpful.".to_string(),
-        "echo".to_string(),
-        provider.clone(),
-        dispatcher,
-        make_compaction_actor(provider),
-        vec![],
-        Some(store.clone()),
-    vec![],
-    );
+    let mut session2 = SessionActor::new(SessionConfig {
+        tenant_id: tenant.to_string(),
+        session_id: session.to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: make_compaction_actor(provider),
+        tools: vec![],
+        store: Some(store.clone()),
+        skills: vec![],
+    });
 
     let restored = session2.restore().await.expect("restore failed");
     assert!(restored > 0, "expected restored entries > 0");

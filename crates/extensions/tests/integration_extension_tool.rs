@@ -6,7 +6,7 @@ use ai_provider::{Content, ToolDef};
 use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::error::AgentError;
 use agent_core::file_ops::DefaultFileOperationExtractor;
-use agent_core::SessionActor;
+use agent_core::{SessionActor, SessionConfig};
 use agent_core::test_utils::{TestProvider, TestResponse, TestToolCall};
 use agent_core::types::{AgentMessage, AgentToolResult};
 use extensions::host::extension::Extension;
@@ -195,18 +195,18 @@ async fn test_extension_tool_executes_via_actor() {
     ]);
 
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "test".to_string(),
-        provider,
-        Arc::new(hook_router),
-        compaction_actor,
-        tools,
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "test".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(hook_router),
+        compaction_actor: compaction_actor,
+        tools: tools,
+        store: None,
+        skills: vec![],
+    });
 
     let results = session.prompt("call tool".to_string()).await.unwrap();
     assert_eq!(results.len(), 3, "expected 3 messages: assistant + tool_result + assistant");
@@ -253,18 +253,18 @@ async fn test_extension_tool_with_mutation() {
     ]);
 
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "test".to_string(),
-        provider,
-        Arc::new(hook_router),
-        compaction_actor,
-        tools,
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "test".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(hook_router),
+        compaction_actor: compaction_actor,
+        tools: tools,
+        store: None,
+        skills: vec![],
+    });
 
     let results = session.prompt("call tool".to_string()).await.unwrap();
     assert_eq!(results.len(), 3, "expected 3 messages: assistant + tool_result + assistant");

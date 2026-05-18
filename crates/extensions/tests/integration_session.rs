@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use agent_core::context::{AgentEndCtx, SessionCtx, TurnEndCtx};
-use agent_core::SessionActor;
+use agent_core::{SessionActor, SessionConfig};
 use agent_core::SessionStore;
 use agent_core::types::{AgentMessage, SessionEntry};
 use agent_core::compaction::{CompactionActor, CompactionConfig};
@@ -203,18 +203,18 @@ async fn test_session_prompt_with_router() {
 
     let provider = Arc::new(EchoProvider);
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "echo".to_string(),
-        provider,
-        Arc::new(router),
-        compaction_actor,
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "echo".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: compaction_actor,
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     let results = session.prompt("hello".to_string()).await.unwrap();
     assert!(!results.is_empty());
@@ -238,18 +238,18 @@ async fn test_session_observational_hooks() {
 
     let provider = Arc::new(EchoProvider);
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "echo".to_string(),
-        provider,
-        Arc::new(router),
-        compaction_actor,
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "echo".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: compaction_actor,
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     // session_start was fired on construction
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -276,18 +276,18 @@ async fn test_session_persistence_with_router() {
 
     // Create session, prompt, and flush
     {
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".into(),
-            "echo".to_string(),
-            provider.clone(),
-            Arc::new(router),
-            compaction_actor,
-            vec![],
-            Some(store.clone()),
-        vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".into(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: Arc::new(router),
+            compaction_actor: compaction_actor,
+            tools: vec![],
+            store: Some(store.clone()),
+            skills: vec![],
+        });
 
         session.prompt("hello".to_string()).await.unwrap();
         session.flush().await.unwrap();
@@ -297,18 +297,18 @@ async fn test_session_persistence_with_router() {
     let bus2 = Arc::new(EventBus::<ObsEvent>::new(16));
     let router2 = HookRouter::new(vec![], bus2);
     let compaction_actor2 = make_compaction_actor(provider.clone());
-    let mut session2 = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "echo".to_string(),
-        provider,
-        Arc::new(router2),
-        compaction_actor2,
-        vec![],
-        Some(store.clone()),
-    vec![],
-    );
+    let mut session2 = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "echo".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(router2),
+        compaction_actor: compaction_actor2,
+        tools: vec![],
+        store: Some(store.clone()),
+        skills: vec![],
+    });
 
     let restored = session2.restore().await.unwrap();
     assert!(restored > 0);
@@ -331,18 +331,18 @@ async fn test_session_steer_with_extension_hooks() {
 
     let provider = Arc::new(EchoProvider);
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "echo".to_string(),
-        provider,
-        Arc::new(router),
-        compaction_actor,
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "echo".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: compaction_actor,
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     // Queue a steer message
     session.steer(AgentMessage::User(ai_provider::UserMessage {
@@ -380,18 +380,18 @@ async fn test_session_follow_up_with_extension_hooks() {
 
     let provider = Arc::new(EchoProvider);
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "echo".to_string(),
-        provider,
-        Arc::new(router),
-        compaction_actor,
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "echo".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: compaction_actor,
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     // Queue follow-up
     session.follow_up(AgentMessage::User(ai_provider::UserMessage {

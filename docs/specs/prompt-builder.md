@@ -28,7 +28,7 @@
 | ID | 目标 | 优先级 | 验证方式 |
 |----|------|--------|----------|
 | G1 | 将 system prompt 拆分为语义明确的片段（segment） | P0 | 代码审查 + 单元测试 |
-| G2 | Extension 通过 Hook 可增量增删改特定片段 | P0 | 集成测试 |
+| G2 | Extension 通过 Hook 可增量增删改特定片段 | P0 → P1 | 集成测试（Phase 2 实现） |
 | G3 | 向后兼容：现有 Extension 不改动可继续工作 | P0 | 现有测试全部通过 |
 | G4 | 每片段的来源、类型、token 估算可追踪 | P1 | observability 测试 |
 | G5 | 支持 tenant 级模板 + 变量注入 | P1 | tenant 集成测试 |
@@ -284,27 +284,30 @@ TenantManager::create_session(tenant_id, params)
         │
         ├─→ stored in SessionActor.prompt_builder
         │
-        └─→ AgentLoop::run():
+        └─→ SessionActor::run_with_messages() outer loop:
               │
-              ├─→ config_builder = AgentLoopConfig.prompt_builder.clone()
+              ├─→ AgentLoopConfig created fresh each iteration
+              │     system_prompt = SessionActor.prompt_builder.render()
               │
-              ├─→ on_before_agent_start hook
-              │     Extension sees config_builder, returns final_builder
-              │     → AgentLoop replaces config_builder with final_builder
-              │     → config_builder persists for all turns within this AgentLoop::run()
+              ├─→ AgentLoop::run():
+              │       │
+              │       ├─→ on_before_agent_start hook
+              │       │     Extension sees render result, returns raw string mutation
+              │       │     → replaces system_prompt for this run
+              │       │
+              │       └─→ on each AgentLoop::run_turn():
+              │             │
+              │             ├─→ skills_xml = format_skills_for_prompt(&skills)
+              │             │     // Phase 1: still string concatenation in AgentLoop
+              │             │     // Phase 2: upsert SkillsDirectory fragment into builder
+              │             │
+              │             ├─→ on_before_provider_request hook
+              │             │     // Phase 2: Extension sees turn_builder clone
+              │             │
+              │             └─→ llm_ctx.system_prompt = effective_system_prompt
               │
-              └─→ on each AgentLoop::run_turn():
-                    │
-                    ├─→ turn_builder = config_builder.clone()
-                    │
-                    ├─→ skills_xml = format_skills_for_prompt(&skills)
-                    │     turn_builder.upsert_fragment(SkillsDirectory { ... })
-                    │
-                    ├─→ on_before_provider_request hook
-                    │     Extension sees turn_builder, returns final_builder
-                    │     → AgentLoop replaces turn_builder with final_builder
-                    │
-                    └─→ llm_ctx.system_prompt = turn_builder.render_option()
+              └─→ [outer loop continues → fresh AgentLoopConfig next iteration]
+                    // Hook mutations do NOT persist to SessionActor state
 ```
 
 ### 5.2 Skills 注入重构
@@ -370,8 +373,7 @@ Current plan: {{plan_tier}}.
 ### Phase 1（当前实现）
 
 - `PromptBuilder: From<String>` 和 `From<&str>` 通过 `from_base` 实现
-- 现有 Extension 的 `system_prompt: Some("...".into())` 自动转换为
-  `PromptBuilder::from_base("...")`，无需修改
+- **向后兼容说明**：`Extension` trait 的方法签名不改变，但返回 `system_prompt: Some("...".into())` 的现有实现需要微调——当字段类型变为 `Option<PromptBuilder>` 时，编译器无法推断 `"...".into()` 的目标类型。Extension 作者应改为 `Some(PromptBuilder::from("..."))`。为简化迁移，框架提供 `impl From<Option<String>> for Option<PromptBuilder>`，使 `Some(string_value.into())` 形式仍可工作（其中 `string_value` 为已绑定的 `String` 变量）。
 - `ProviderRequestMutation` 旧语义 `Some(None)`（清空 system prompt）映射为
   `Some(PromptBuilder::default())`，经 `render_option()` 后表现为 `None`
 - 内部代码路径逐步迁移
@@ -422,6 +424,28 @@ This enables:
 | 集成 | Skills XML 正确渲染为 fragment | `agent-core/tests/skills_integration_tests.rs` |
 | 集成 | Extension hook 修改 prompt 后 render 正确 | `extensions/tests/integration_agent_loop.rs` |
 | 集成 | TenantManager 创建 session 时 builder 初始化正确 | `tenant/tests/manager.rs` |
+
+---
+
+## 10. Known Limitations
+
+### L1: Session 持久化丢失 fragment 结构
+
+`SessionInfo.system_prompt: Option<String>` 仅存储渲染后的字符串。Session 恢复时，只能重建 `BasePersona` fragment，丢失所有 `TenantContext`、`Extension`、`SafetyGuard` 等片段。
+
+**缓解**：当前不阻断 Phase 1 实施。Phase 3 考虑引入 `prompt_fragments: Vec<PromptFragment>` 持久化字段。
+
+### L2: Phase 1 中 Hook raw-string override 覆盖整个 prompt
+
+在 Phase 1（当前计划）中，AgentLoop 内部仍使用 `Option<String>` 传递 system prompt。Extension 返回 `BeforeAgentStartMutation { system_prompt: Some("override") }` 时，会覆盖整个 prompt，包括 skills XML。
+
+这与旧行为一致，但意味着 Extension 在 Phase 1 仍无法"保留 skills 的同时修改 base persona"。
+
+**缓解**：Phase 2 引入 `PromptBuilder` 到 Hook context 后，Extension 可通过 fragment 级操作实现精准修改。
+
+### L3: `PromptBuilder` clone 成本
+
+每次外层循环 clone `PromptBuilder`（含所有 fragments）。当前 fragment 数量通常 < 10，clone 成本可忽略。若未来 fragment 数量激增，需考虑 `Arc<[PromptFragment]>` 优化。
 
 ---
 

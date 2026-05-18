@@ -77,6 +77,7 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
         | AgentEvent::CompactionEnd { .. }
         | AgentEvent::AutoRetryStart { .. }
         | AgentEvent::AutoRetryEnd { .. } => None,
+        _ => None,
     }
 }
 

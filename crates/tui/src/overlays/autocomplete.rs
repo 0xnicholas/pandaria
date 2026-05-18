@@ -55,13 +55,16 @@ impl Component for AutocompleteOverlay {
         List::new(items).block(block).render(overlay_area, buf);
     }
 
+    fn is_capturing(&self) -> bool { false }
+
     fn handle_input(&mut self, key: KeyEvent) -> InputResult {
         match key.code {
             KeyCode::Up => { if self.selected > 0 { self.selected -= 1; } InputResult::Consumed }
             KeyCode::Down => { if self.selected + 1 < self.suggestions.len() { self.selected += 1; } InputResult::Consumed }
             KeyCode::Enter => { self.confirmed = self.suggestions.get(self.selected).map(|s| s.value.clone()); InputResult::Consumed }
             KeyCode::Esc => { self.dismissed = true; InputResult::Consumed }
-            _ => InputResult::Consumed,
+            // Any other key dismisses the overlay so it continues to the editor.
+            _ => { self.dismissed = true; InputResult::Consumed }
         }
     }
 

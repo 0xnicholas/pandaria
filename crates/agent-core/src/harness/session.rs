@@ -16,6 +16,7 @@ use crate::hook::dispatcher::HookDispatcher;
 use crate::harness::agent_loop::{AgentLoop, AgentLoopConfig};
 use crate::persistence::entry::{SessionContextBuilder, SessionEntry};
 use crate::persistence::store::SessionStore;
+use crate::prompt::{FragmentKind, FragmentSource, PromptBuilder, PromptFragment};
 use crate::types::{AgentMessage, AgentToolRef};
 
 struct QueuedEvent {
@@ -30,7 +31,7 @@ pub struct SessionActor {
     tenant_id: String,
     session_id: String,
     model: String,
-    system_prompt: String,
+    prompt_builder: PromptBuilder,
     stream_options: ai_provider::StreamOptions,
     max_retries: u32,
     provider: Arc<dyn ai_provider::LlmProvider>,
@@ -59,8 +60,42 @@ pub struct SessionActor {
     is_streaming: bool,
 }
 
+/// Configuration for creating a new [`SessionActor`].
+///
+/// Using this struct makes the constructor forward-compatible: new optional
+/// fields can be added here without changing [`SessionActor::new`] signature.
+pub struct SessionConfig {
+    pub tenant_id: String,
+    pub session_id: String,
+    pub system_prompt: String,
+    pub model: String,
+    pub provider: Arc<dyn ai_provider::LlmProvider>,
+    pub hook_dispatcher: Arc<dyn HookDispatcher>,
+    pub compaction_actor: Arc<CompactionActor>,
+    pub tools: Vec<AgentToolRef>,
+    pub store: Option<Arc<dyn SessionStore>>,
+    pub skills: Vec<crate::skills::Skill>,
+}
+
+impl std::fmt::Debug for SessionConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionConfig")
+            .field("tenant_id", &self.tenant_id)
+            .field("session_id", &self.session_id)
+            .field("system_prompt", &self.system_prompt)
+            .field("model", &self.model)
+            .field("provider", &"<dyn LlmProvider>")
+            .field("hook_dispatcher", &"<dyn HookDispatcher>")
+            .field("compaction_actor", &"<CompactionActor>")
+            .field("tools", &format!("{} tools", self.tools.len()))
+            .field("store", &self.store.is_some())
+            .field("skills", &format!("{} skills", self.skills.len()))
+            .finish()
+    }
+}
+
 impl SessionActor {
-    /// Create a new session.
+    /// Create a new session from a [`SessionConfig`].
     ///
     /// Emits `on_session_start` hook (fire-and-forget, per ADR-003) on construction.
     /// This hook is observational only — it must not perform setup work that
@@ -69,21 +104,9 @@ impl SessionActor {
     ///
     /// If a `store` is provided, call [`restore`](Self::restore) after construction
     /// to load message history before the first prompt.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        tenant_id: String,
-        session_id: String,
-        system_prompt: String,
-        model: String,
-        provider: Arc<dyn ai_provider::LlmProvider>,
-        hook_dispatcher: Arc<dyn HookDispatcher>,
-        compaction_actor: Arc<CompactionActor>,
-        tools: Vec<AgentToolRef>,
-        store: Option<Arc<dyn SessionStore>>,
-        skills: Vec<crate::skills::Skill>,
-    ) -> Self {
+    pub fn new(config: SessionConfig) -> Self {
         // Emit session_start (fire-and-forget, per ADR-003)
-        let tool_defs: Vec<serde_json::Value> = tools
+        let tool_defs: Vec<serde_json::Value> = config.tools
             .iter()
             .map(|t| {
                 serde_json::json!({
@@ -93,13 +116,25 @@ impl SessionActor {
                 })
             })
             .collect();
+        let mut prompt_builder = PromptBuilder::from_base(config.system_prompt.clone());
+        if !config.skills.is_empty() {
+            let skills_xml = crate::skills::format_skills_for_prompt(&config.skills);
+            prompt_builder.upsert_fragment(PromptFragment {
+                id: "skills-directory".into(),
+                kind: FragmentKind::SkillsDirectory,
+                source: FragmentSource::SkillsInjector,
+                content: skills_xml,
+                priority: 50,
+            });
+        }
+
         let session_ctx = SessionCtx {
-            tenant_id: tenant_id.clone(),
-            session_id: session_id.clone(),
-            system_prompt: system_prompt.clone(),
+            tenant_id: config.tenant_id.clone(),
+            session_id: config.session_id.clone(),
+            system_prompt: prompt_builder.render(),
             tools: tool_defs,
         };
-        let dispatcher = hook_dispatcher.clone();
+        let dispatcher = config.hook_dispatcher.clone();
         tokio::spawn(async move {
             let _ = crate::hook::timeout::with_timeout(
                 dispatcher.on_session_start(&session_ctx),
@@ -110,29 +145,29 @@ impl SessionActor {
         });
 
         info!(
-            tenant_id = %tenant_id,
-            session_id = %session_id,
-            tools_count = tools.len(),
-            has_store = store.is_some(),
+            tenant_id = %config.tenant_id,
+            session_id = %config.session_id,
+            tools_count = config.tools.len(),
+            has_store = config.store.is_some(),
             "session started",
         );
 
         let mut actor = Self {
-            tenant_id,
-            session_id,
-            model,
-            system_prompt,
+            tenant_id: config.tenant_id,
+            session_id: config.session_id,
+            model: config.model,
+            prompt_builder,
             stream_options: ai_provider::StreamOptions::default(),
             max_retries: 3,
-            provider,
-            hook_dispatcher,
-            compaction_actor,
-            tools,
-            skills,
+            provider: config.provider,
+            hook_dispatcher: config.hook_dispatcher,
+            compaction_actor: config.compaction_actor,
+            tools: config.tools,
+            skills: config.skills,
             entries: Vec::new(),
             steer_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
-            store,
+            store: config.store,
             last_save: None,
             abort_token: CancellationToken::new(),
             recovery: RecoveryStateMachine::new(3),
@@ -264,7 +299,20 @@ impl SessionActor {
         self.event_listeners.lock().unwrap_or_else(|e| e.into_inner()).push(listener);
     }
 
-    pub fn set_system_prompt(&mut self, prompt: String) { self.system_prompt = prompt; }
+    pub fn set_system_prompt(&mut self, prompt: String) {
+        let mut builder = PromptBuilder::from_base(prompt);
+        if !self.skills.is_empty() {
+            let skills_xml = crate::skills::format_skills_for_prompt(&self.skills);
+            builder.upsert_fragment(PromptFragment {
+                id: "skills-directory".into(),
+                kind: FragmentKind::SkillsDirectory,
+                source: FragmentSource::SkillsInjector,
+                content: skills_xml,
+                priority: 50,
+            });
+        }
+        self.prompt_builder = builder;
+    }
     pub fn set_model(&mut self, model: String) { self.model = model; }
     pub fn set_tools(&mut self, tools: Vec<AgentToolRef>) { self.tools = tools; }
     pub fn set_stream_options(&mut self, options: ai_provider::StreamOptions) { self.stream_options = options; }
@@ -272,7 +320,7 @@ impl SessionActor {
         self.max_retries = max_retries;
         self.stream_options.max_retries = max_retries;
     }
-    pub fn system_prompt(&self) -> &str { &self.system_prompt }
+    pub fn system_prompt(&self) -> String { self.prompt_builder.render() }
 
     #[instrument(
         skip(self),
@@ -306,13 +354,12 @@ impl SessionActor {
                 tenant_id: self.tenant_id.clone(), session_id: self.session_id.clone(),
                 model: self.model.clone(), provider: self.provider.clone(),
                 hook_dispatcher: self.hook_dispatcher.clone(), tools: self.tools.clone(),
-                system_prompt: Some(self.system_prompt.clone()),
+                system_prompt: Some(self.system_prompt()),
                 stream_options: self.stream_options.clone(),
                 event_sink,
                 steer_queue: self.steer_queue.clone(),
                 follow_up_queue: self.follow_up_queue.clone(),
                 circuit_breaker: None,
-                skills: self.skills.clone(),
             };
 
             match AgentLoop::new(config).run(messages, self.abort_token.child_token()).await {
@@ -871,18 +918,18 @@ mod tests {
         let _ = tracing_subscriber::fmt().try_init();
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "prompt".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         let restored = session.restore().await.unwrap();
         assert_eq!(restored, 0);
@@ -893,18 +940,18 @@ mod tests {
         let _ = tracing_subscriber::fmt().try_init();
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         // Queue a steer message
         session.steer(AgentMessage::User(ai_provider::UserMessage {
@@ -937,18 +984,18 @@ mod tests {
         let _ = tracing_subscriber::fmt().try_init();
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         // Queue a follow_up message
         session.follow_up(AgentMessage::User(ai_provider::UserMessage {
@@ -970,18 +1017,18 @@ mod tests {
 
         let provider = TestProvider::cancel();
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "prompt".to_string(),
-            "cancellable".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "cancellable".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         // Test that abort() works by verifying the token propagates cancellation.
         // We can't easily test concurrent abort during prompt() because prompt()
@@ -1011,18 +1058,18 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "prompt".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            Some(store.clone()),
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: Some(store.clone()),
+        skills: vec![],
+        });
 
         // No messages yet, flush should save empty
         session.flush().await.unwrap();
@@ -1041,35 +1088,35 @@ mod tests {
 
         // Create session and add some messages
         {
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "prompt".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher.clone(),
-            Arc::new(make_compaction_actor(provider.clone())),
-            vec![],
-            Some(store.clone()),
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher.clone(),
+        compaction_actor: Arc::new(make_compaction_actor(provider.clone())),
+        tools: vec![],
+        store: Some(store.clone()),
+        skills: vec![],
+        });
             session.prompt("hello".to_string()).await.unwrap();
             session.flush().await.unwrap();
         }
 
         // Create new session with same store, restore should get messages back
-        let mut session2 = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "prompt".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            Some(store.clone()),
-            vec![],
-        );
+        let mut session2 = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: Some(store.clone()),
+        skills: vec![],
+        });
 
         let restored = session2.restore().await.unwrap();
         assert!(restored > 0);
@@ -1084,18 +1131,18 @@ mod tests {
         let store = Arc::new(MemoryStore::new());
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "prompt".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            Some(store.clone()),
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: Some(store.clone()),
+        skills: vec![],
+        });
 
         // Two consecutive prompts — each triggers a fire-and-forget save.
         // With the fix, the second save awaits the first, guaranteeing
@@ -1117,18 +1164,18 @@ mod tests {
         let _ = tracing_subscriber::fmt().try_init();
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "prompt".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         // Add a compaction entry manually
         session.entries.push(SessionEntry::Compaction {
@@ -1156,18 +1203,18 @@ mod tests {
         let _ = tracing_subscriber::fmt().try_init();
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         // Queue both steer and follow-up
         session.steer(AgentMessage::User(ai_provider::UserMessage {
@@ -1239,18 +1286,18 @@ mod tests {
         });
         let provider = TestProvider::text("response");
 
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "prompt".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         session.prompt("hello".to_string()).await.unwrap();
 
@@ -1274,18 +1321,18 @@ mod tests {
         let _ = tracing_subscriber::fmt().try_init();
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            dispatcher,
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "echo".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         let result1 = session.prompt("hello".to_string()).await.unwrap();
         assert_eq!(result1.len(), 1); // 1 assistant message
@@ -1310,31 +1357,31 @@ mod tests {
         let _ = tracing_subscriber::fmt().try_init();
         let provider = TestProvider::text("response");
 
-        let mut s1 = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            Arc::new(AllowAllDispatcher),
-            Arc::new(make_compaction_actor(provider.clone())),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut s1 = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: Arc::new(AllowAllDispatcher),
+            compaction_actor: Arc::new(make_compaction_actor(provider.clone())),
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        });
 
-        let mut s2 = SessionActor::new(
-            "t2".to_string(),
-            "s2".to_string(),
-            "You are helpful.".to_string(),
-            "echo".to_string(),
-            provider.clone(),
-            Arc::new(AllowAllDispatcher),
-            Arc::new(make_compaction_actor(provider)),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut s2 = SessionActor::new(SessionConfig {
+            tenant_id: "t2".to_string(),
+            session_id: "s2".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: Arc::new(AllowAllDispatcher),
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        });
 
         let (r1, r2) = tokio::join!(
             s1.prompt("hello".to_string()),
@@ -1374,18 +1421,18 @@ mod tests {
     async fn test_router_provider_model_context_window() {
         let router = Arc::new(ai_provider::RouterProvider::new());
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".into(),
-            "openai/gpt-5.2".to_string(),
-            router.clone(),
-            dispatcher.clone(),
-            Arc::new(make_compaction_actor(router.clone())),
-            vec![],
-            None,
-            vec![],
-        );
+        let session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "openai/gpt-5.2".to_string(),
+        provider: router.clone(),
+        hook_dispatcher: dispatcher.clone(),
+        compaction_actor: Arc::new(make_compaction_actor(router.clone())),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         let cw = session.model_context_window();
         assert!(cw > 0, "model_context_window should be > 0 for openai/gpt-5.2");
@@ -1395,18 +1442,18 @@ mod tests {
     async fn test_cross_provider_model_context_window_switch() {
         let router = Arc::new(ai_provider::RouterProvider::new());
         let dispatcher = Arc::new(AllowAllDispatcher);
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".into(),
-            "openai/gpt-5.2".to_string(),
-            router.clone(),
-            dispatcher.clone(),
-            Arc::new(make_compaction_actor(router.clone())),
-            vec![],
-            None,
-            vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "openai/gpt-5.2".to_string(),
+        provider: router.clone(),
+        hook_dispatcher: dispatcher.clone(),
+        compaction_actor: Arc::new(make_compaction_actor(router.clone())),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+        });
 
         let cw_openai = session.model_context_window();
         assert!(cw_openai > 0);
@@ -1416,5 +1463,66 @@ mod tests {
         assert!(cw_anthropic > 0);
 
         assert_ne!(cw_openai, cw_anthropic);
+    }
+
+    #[tokio::test]
+    async fn test_system_prompt_with_skills_contains_available_skills() {
+        let provider = TestProvider::text("response");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let skills = vec![crate::skills::Skill {
+            name: "test-skill".to_string(),
+            description: "A test skill".to_string(),
+            file_path: "/skills/test/SKILL.md".to_string(),
+            base_dir: "/skills".to_string(),
+            source: crate::skills::SkillSource::Project,
+            disable_model_invocation: false,
+        }];
+        let session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "echo".to_string(),
+        provider: provider,
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
+        tools: vec![],
+        store: None,
+        skills: skills,
+        });
+
+        let prompt = session.system_prompt();
+        assert!(prompt.contains("<available_skills>"), "expected skills XML in system prompt, got: {}", prompt);
+        assert!(prompt.contains("test-skill"), "expected skill name in system prompt");
+    }
+
+    #[tokio::test]
+    async fn test_set_system_prompt_preserves_skills() {
+        let provider = TestProvider::text("response");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let skills = vec![crate::skills::Skill {
+            name: "test-skill".to_string(),
+            description: "A test skill".to_string(),
+            file_path: "/skills/test/SKILL.md".to_string(),
+            base_dir: "/skills".to_string(),
+            source: crate::skills::SkillSource::Project,
+            disable_model_invocation: false,
+        }];
+        let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "echo".to_string(),
+        provider: provider,
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
+        tools: vec![],
+        store: None,
+        skills: skills,
+        });
+
+        session.set_system_prompt("New persona.".to_string());
+        let prompt = session.system_prompt();
+        assert!(prompt.starts_with("New persona."), "expected new base persona, got: {}", prompt);
+        assert!(prompt.contains("<available_skills>"), "expected skills XML preserved after set_system_prompt, got: {}", prompt);
     }
 }

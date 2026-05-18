@@ -1,6 +1,9 @@
+pub mod bash_execution;
 pub mod chat_view;
+pub mod compaction_summary;
 pub mod editor;
 pub mod header;
+pub mod pending_messages;
 pub mod session_tabs;
 pub mod spinner;
 pub mod status_bar;

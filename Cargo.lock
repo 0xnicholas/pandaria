@@ -12,6 +12,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "agent-core"
 version = "0.1.0"
 dependencies = [
+ "agent-core",
  "ai-provider",
  "async-trait",
  "futures",
@@ -154,10 +155,13 @@ name = "api-gateway"
 version = "0.1.0"
 dependencies = [
  "agent-core",
+ "ai-provider",
  "async-trait",
  "axum",
  "base64",
  "dashmap",
+ "dotenvy",
+ "extensions",
  "futures",
  "hmac",
  "secrecy 0.8.0",
@@ -171,6 +175,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -5019,16 +5024,19 @@ name = "tui"
 version = "0.1.0"
 dependencies = [
  "arboard",
+ "base64",
  "clap",
  "crossterm",
  "directories",
  "eventsource-stream",
  "futures-util",
+ "hmac",
  "pulldown-cmark",
  "ratatui",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "syntect",
  "thiserror 2.0.18",
  "tokio",

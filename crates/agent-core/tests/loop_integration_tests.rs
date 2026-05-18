@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
+use std::sync::{Arc, Mutex};
 
-use agent_core::{AgentLoop, AgentLoopConfig, AgentEvent, SessionActor, HookDispatcher};
+use agent_core::{AgentLoop, AgentLoopConfig, AgentEvent, SessionActor, SessionConfig, HookDispatcher};
 use agent_core::harness::agent_loop::resolve_orphan_tool_calls;
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
 use async_trait::async_trait;
@@ -17,7 +17,6 @@ fn make_loop_config(provider: Arc<dyn LlmProvider>, dispatcher: Arc<dyn HookDisp
         follow_up_queue: Arc::new(Mutex::new(vec![])),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
         circuit_breaker: None,
-        skills: Vec::new(),
     }
 }
 
@@ -42,7 +41,6 @@ async fn test_follow_up_triggers_second_turn() {
         follow_up_queue: follow_up_queue.clone(),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
         circuit_breaker: None,
-        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
@@ -139,7 +137,6 @@ async fn test_steer_injection() {
         follow_up_queue: Arc::new(Mutex::new(vec![])),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
         circuit_breaker: None,
-        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
@@ -175,7 +172,6 @@ async fn test_event_sequence() {
             events_clone.lock().unwrap().push(event);
         }),
         circuit_breaker: None,
-        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
@@ -271,23 +267,23 @@ async fn test_complete_returns_text_only() {
 
     let provider = TestProvider::text("hello world");
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        Arc::new(agent_core::harness::compaction::CompactionActor::new(
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(agent_core::harness::compaction::CompactionActor::new(
             agent_core::harness::compaction::CompactionConfig::default(),
             provider,
             "test".to_string(),
             Arc::new(agent_core::DefaultFileOperationExtractor::default()),
         )),
-        vec![],
-        None,
-        vec![],
-    );
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     let result: String = session.complete("hello".to_string()).await.unwrap();
     assert_eq!(result, "hello world");

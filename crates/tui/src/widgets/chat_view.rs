@@ -1,13 +1,18 @@
 use crate::state::{MessageBlock, MessageRole, MessageStatus, SessionState};
 use crate::ui::theme::Theme;
+use crate::widgets::bash_execution::BashExecutionWidget;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 /// Render the chat view with full session data.
 /// Called directly from app.rs since session data isn't stored on the component.
 pub fn render_chat(f: &mut ratatui::Frame, area: Rect, theme: &Theme, state: &SessionState) {
+    if state.messages.is_empty() && state.error.is_none() {
+        render_empty_state(f, area, theme);
+        return;
+    }
     let mut all_lines: Vec<Line> = Vec::new();
     for msg in &state.messages {
         match msg.role {
@@ -70,6 +75,59 @@ pub fn render_chat(f: &mut ratatui::Frame, area: Rect, theme: &Theme, state: &Se
                                 all_lines.push(Line::from(Span::styled("  💭 Thinking...", style)));
                             }
                         }
+                        MessageBlock::BashExecution(be) => {
+                            let _widget = BashExecutionWidget::new(be, theme);
+                            let icon = match be.exit_code {
+                                Some(0) => "✓",
+                                Some(_) => "✗",
+                                None if be.stderr.is_empty() => "✓",
+                                None => "⚠",
+                            };
+                            let header = if be.expanded {
+                                format!("  {} $ {} ▼", icon, be.command)
+                            } else {
+                                format!("  {} $ {} ▶", icon, be.command)
+                            };
+                            let color = match be.exit_code {
+                                Some(0) => theme.success,
+                                Some(_) => theme.error,
+                                None if be.stderr.is_empty() => theme.success,
+                                None => theme.warning,
+                            };
+                            all_lines.push(Line::from(Span::styled(header, Style::default().fg(color).add_modifier(Modifier::BOLD))));
+                            if be.expanded {
+                                if !be.stdout.is_empty() {
+                                    for l in be.stdout.lines() {
+                                        all_lines.push(Line::from(Span::styled(format!("    {}", l), Style::default().fg(theme.text))));
+                                    }
+                                }
+                                if !be.stderr.is_empty() {
+                                    all_lines.push(Line::from(Span::styled("    ── stderr ──", Style::default().fg(theme.error).add_modifier(Modifier::BOLD))));
+                                    for l in be.stderr.lines() {
+                                        all_lines.push(Line::from(Span::styled(format!("    {}", l), Style::default().fg(theme.error))));
+                                    }
+                                }
+                                if let Some(code) = be.exit_code {
+                                    all_lines.push(Line::from(Span::styled(format!("    [exit code: {}]", code), Style::default().fg(if code == 0 { theme.success } else { theme.error }))));
+                                }
+                            }
+                        }
+                        MessageBlock::CompactionSummary(cs) => {
+                            let header = if cs.expanded {
+                                "  📦 Compaction Summary ▼"
+                            } else {
+                                "  📦 Compaction Summary ▶"
+                            };
+                            all_lines.push(Line::from(Span::styled(header, Style::default().fg(theme.warning).add_modifier(Modifier::BOLD))));
+                            if cs.expanded {
+                                for l in cs.summary.lines() {
+                                    all_lines.push(Line::from(Span::styled(format!("    {}", l), Style::default().fg(theme.text))));
+                                }
+                                if let (Some(before), Some(after)) = (cs.tokens_before, cs.tokens_after) {
+                                    all_lines.push(Line::from(Span::styled(format!("    ({} → {} tokens)", before, after), Style::default().fg(theme.muted))));
+                                }
+                            }
+                        }
                     }
                 }
                 if msg.blocks.iter().any(|b| matches!(b, MessageBlock::ToolCall(_))) {
@@ -83,4 +141,64 @@ pub fn render_chat(f: &mut ratatui::Frame, area: Rect, theme: &Theme, state: &Se
         all_lines.push(Line::from(Span::styled(format!("  ⚠ {}: {}", err.code, err.message), Style::default().fg(theme.error).add_modifier(Modifier::BOLD))));
     }
     f.render_widget(Paragraph::new(all_lines).wrap(Wrap { trim: false }), area);
+}
+
+
+fn render_empty_state(f: &mut ratatui::Frame, area: Rect, theme: &Theme) {
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Welcome to Pandaria",
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "Multi-tenant Agent Runtime & Harness",
+            Style::default().fg(theme.muted).add_modifier(Modifier::ITALIC),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Type a message and press Enter to chat",
+            Style::default().fg(theme.muted),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "/new      new session     /model   switch model",
+            Style::default().fg(theme.dim),
+        )),
+        Line::from(Span::styled(
+            "/help     show help       Ctrl+P   cycle model",
+            Style::default().fg(theme.dim),
+        )),
+        Line::from(Span::styled(
+            "/compact  compact ctx     Ctrl+O   toggle tools",
+            Style::default().fg(theme.dim),
+        )),
+        Line::from(Span::styled(
+            "/clear    clear view      Ctrl+T   toggle thinking",
+            Style::default().fg(theme.dim),
+        )),
+    ];
+
+    let height = lines.len() as u16 + 4;
+    let width = 52u16;
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let block_area = Rect::new(x, y, width.min(area.width), height.min(area.height));
+
+    let inner = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.border))
+        .inner(block_area);
+
+    f.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.border)),
+        block_area,
+    );
+
+    f.render_widget(
+        Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
+        inner,
+    );
 }

@@ -5,7 +5,19 @@ use testcontainers_modules::redis::Redis;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
 /// Start a Redis container and return a multiplexed connection.
-async fn start_redis() -> (MultiplexedConnection, testcontainers_modules::testcontainers::ContainerAsync<Redis>) {
+///
+/// If `PANDARIA_TEST_REDIS_URL` is set, connects to the local Redis instance
+/// instead of starting a Docker container via testcontainers.
+async fn start_redis() -> (MultiplexedConnection, Option<testcontainers_modules::testcontainers::ContainerAsync<Redis>>) {
+    if let Ok(url) = std::env::var("PANDARIA_TEST_REDIS_URL") {
+        let client = redis::Client::open(url).expect("invalid redis url");
+        let conn = client
+            .get_multiplexed_async_connection()
+            .await
+            .expect("failed to connect to local redis (check PANDARIA_TEST_REDIS_URL)");
+        return (conn, None);
+    }
+
     let container = Redis::default().start().await.expect("failed to start redis container");
     let host = container.get_host().await.expect("failed to get container host");
     let port = container.get_host_port_ipv4(6379).await.expect("failed to get container port");
@@ -17,7 +29,7 @@ async fn start_redis() -> (MultiplexedConnection, testcontainers_modules::testco
         .await
         .expect("failed to connect to testcontainers redis");
 
-    (conn, container)
+    (conn, Some(container))
 }
 
 

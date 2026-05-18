@@ -14,6 +14,10 @@ pub enum Keybinding {
     AppListSessions,
     AppNewSession,
     AppOpenCommandPalette,
+    AppExternalEditor,
+    AppRestoreQueue,
+    AppCycleModelForward,
+    AppCycleModelBackward,
     EditorCursorUp,
     EditorCursorDown,
     EditorCursorLeft,
@@ -33,8 +37,10 @@ pub enum Keybinding {
     EditorNewLine,
     EditorSubmit,
     EditorUndo,
+    EditorRedo,
     EditorYank,
     EditorYankPop,
+    EditorCharJump,
     AutocompleteTrigger,
 }
 
@@ -95,10 +101,13 @@ pub fn default_keybindings() -> HashMap<Keybinding, Vec<KeyId>> {
     m.insert(Keybinding::AppSelectModel, vec!["ctrl+l".into()]);
     m.insert(Keybinding::AppListSessions, vec!["ctrl+s".into()]);
     m.insert(Keybinding::AppNewSession, vec!["ctrl+n".into()]);
-    m.insert(Keybinding::EditorSubmit, vec!["enter".into()]);
+    m.insert(
+        Keybinding::EditorSubmit,
+        vec!["enter".into(), "alt+enter".into()],
+    );
     m.insert(
         Keybinding::EditorNewLine,
-        vec!["shift+enter".into(), "alt+enter".into()],
+        vec!["shift+enter".into()],
     );
     m.insert(Keybinding::EditorCursorUp, vec!["up".into()]);
     m.insert(Keybinding::EditorCursorDown, vec!["down".into()]);
@@ -154,11 +163,17 @@ pub fn default_keybindings() -> HashMap<Keybinding, Vec<KeyId>> {
     );
     m.insert(Keybinding::EditorYank, vec!["ctrl+y".into()]);
     m.insert(Keybinding::EditorYankPop, vec!["alt+y".into()]);
+    m.insert(Keybinding::EditorCharJump, vec!["ctrl+]".into()]);
     m.insert(Keybinding::EditorUndo, vec!["ctrl+-".into()]);
+    m.insert(Keybinding::EditorRedo, vec!["ctrl+shift+-".into()]);
     m.insert(Keybinding::AutocompleteTrigger, vec!["tab".into()]);
 
     // AppOpenCommandPalette has no default binding
-    m.insert(Keybinding::AppOpenCommandPalette, vec![]);
+    m.insert(Keybinding::AppOpenCommandPalette, vec!["ctrl+shift+p".into()]);
+    m.insert(Keybinding::AppExternalEditor, vec!["ctrl+x".into()]);
+    m.insert(Keybinding::AppRestoreQueue, vec!["ctrl+u".into()]);
+    m.insert(Keybinding::AppCycleModelForward, vec!["ctrl+shift+n".into()]);
+    m.insert(Keybinding::AppCycleModelBackward, vec!["ctrl+p".into()]);
 
     m
 }
@@ -230,6 +245,10 @@ impl KeybindingsManager {
             "app.list_sessions" => Some(Keybinding::AppListSessions),
             "app.new_session" => Some(Keybinding::AppNewSession),
             "app.open_command_palette" => Some(Keybinding::AppOpenCommandPalette),
+            "app.external_editor" => Some(Keybinding::AppExternalEditor),
+            "app.restore_queue" => Some(Keybinding::AppRestoreQueue),
+            "app.cycle_model_forward" => Some(Keybinding::AppCycleModelForward),
+            "app.cycle_model_backward" => Some(Keybinding::AppCycleModelBackward),
             "editor.cursor_up" => Some(Keybinding::EditorCursorUp),
             "editor.cursor_down" => Some(Keybinding::EditorCursorDown),
             "editor.cursor_left" => Some(Keybinding::EditorCursorLeft),
@@ -249,8 +268,10 @@ impl KeybindingsManager {
             "editor.new_line" => Some(Keybinding::EditorNewLine),
             "editor.submit" => Some(Keybinding::EditorSubmit),
             "editor.undo" => Some(Keybinding::EditorUndo),
+            "editor.redo" => Some(Keybinding::EditorRedo),
             "editor.yank" => Some(Keybinding::EditorYank),
             "editor.yank_pop" => Some(Keybinding::EditorYankPop),
+            "editor.char_jump" => Some(Keybinding::EditorCharJump),
             "autocomplete.trigger" => Some(Keybinding::AutocompleteTrigger),
             _ => None,
         }

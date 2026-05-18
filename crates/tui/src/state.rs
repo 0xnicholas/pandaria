@@ -60,6 +60,8 @@ pub enum MessageBlock {
     Text(Vec<Line<'static>>),
     ToolCall(ToolCallWidget),
     Thinking(ThinkingBlock),
+    BashExecution(BashExecutionBlock),
+    CompactionSummary(CompactionSummaryBlock),
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +81,23 @@ pub struct ThinkingBlock {
     pub thinking_text: String,
     pub is_expanded: bool,
     pub is_redacted: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct BashExecutionBlock {
+    pub command: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: Option<i32>,
+    pub expanded: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompactionSummaryBlock {
+    pub summary: String,
+    pub tokens_before: Option<u64>,
+    pub tokens_after: Option<u64>,
+    pub expanded: bool,
 }
 
 #[derive(Debug)]

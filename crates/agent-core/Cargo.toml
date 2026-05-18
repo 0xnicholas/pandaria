@@ -18,7 +18,11 @@ futures = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
 
+[features]
+testing = []
+
 [dev-dependencies]
+agent-core = { path = ".", features = ["testing"] }
 ai-provider = { path = "../ai-provider", features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true }

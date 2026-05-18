@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use agent_core::context::{ToolCallCtx, TurnEndCtx, AgentEndCtx};
 use agent_core::mutations::{HookDecision, ToolCallMutation};
-use agent_core::SessionActor;
+use agent_core::{SessionActor, SessionConfig};
 use agent_core::SessionEntry;
 use agent_core::SessionStore;
 use agent_core::error::AgentError;
@@ -208,18 +208,18 @@ async fn test_multi_extension_collaboration() {
     ]);
 
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "test".to_string(),
-        provider,
-        Arc::new(hook_router),
-        compaction_actor,
-        tools,
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "test".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(hook_router),
+        compaction_actor: compaction_actor,
+        tools: tools,
+        store: None,
+        skills: vec![],
+    });
 
     let results = session.prompt("call tools".to_string()).await.unwrap();
 
@@ -333,18 +333,18 @@ async fn test_multi_extension_with_persistence() {
     // First session: create, prompt, flush
     {
         let compaction_actor = make_compaction_actor(provider.clone());
-        let mut session = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".into(),
-            "test".to_string(),
-            provider.clone(),
-            Arc::new(hook_router),
-            compaction_actor,
-            tools,
-            Some(store.clone()),
-        vec![],
-        );
+        let mut session = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".into(),
+            model: "test".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: Arc::new(hook_router),
+            compaction_actor: compaction_actor,
+            tools: tools,
+            store: Some(store.clone()),
+            skills: vec![],
+        });
 
         let results = session.prompt("call tool".to_string()).await.unwrap();
         assert!(!results.is_empty());
@@ -358,18 +358,18 @@ async fn test_multi_extension_with_persistence() {
         let tools2 = manager2.collect_agent_tools(&handles2);
 
         let compaction_actor2 = make_compaction_actor(provider.clone());
-        let mut session2 = SessionActor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            "You are helpful.".into(),
-            "test".to_string(),
-            provider,
-            Arc::new(hook_router2),
-            compaction_actor2,
-            tools2,
-            Some(store.clone()),
-        vec![],
-        );
+        let mut session2 = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".into(),
+            model: "test".to_string(),
+            provider: provider,
+            hook_dispatcher: Arc::new(hook_router2),
+            compaction_actor: compaction_actor2,
+            tools: tools2,
+            store: Some(store.clone()),
+            skills: vec![],
+        });
 
         let restored = session2.restore().await.unwrap();
         assert!(restored > 0, "expected some entries to be restored");

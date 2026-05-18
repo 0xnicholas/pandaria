@@ -28,6 +28,7 @@ pub mod events;
 pub mod file_ops;
 pub mod prompt;
 pub mod skills;
+#[cfg(any(test, feature = "testing"))]
 pub mod test_utils;
 pub mod types;
 
@@ -37,9 +38,7 @@ pub mod types;
 pub use harness::{
     compaction,
     compaction::{CompactionActor, CompactionConfig, CompactionPreparation, CompactionResult},
-    error_recovery,
-    session::SessionActor,
-    tool::ToolExecutor,
+    session::{SessionActor, SessionConfig},
 };
 
 pub use harness::agent_loop::{AgentLoop, AgentLoopConfig, TurnResult};
@@ -66,7 +65,6 @@ pub use skills::{
 };
 
 pub use error::{AgentError, CompactionError};
-pub use error_recovery::{RecoveryAction, RecoveryStateMachine};
 pub use events::{AgentEvent, AgentEventListener};
 pub use file_ops::{DefaultFileOperationExtractor, FileOperationExtractor, FileOperations};
 pub use types::*;

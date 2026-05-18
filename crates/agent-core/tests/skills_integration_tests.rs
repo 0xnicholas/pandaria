@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use agent_core::{AgentLoopConfig, SessionActor};
+use agent_core::{AgentLoopConfig, SessionActor, SessionConfig};
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
 use ai_provider::{Content, LlmContext, LlmProvider, StopReason, StreamOptions};
 use async_trait::async_trait;
@@ -41,18 +41,18 @@ async fn test_skill_invocation_expands_to_steer_message() {
 
     let provider = TestProvider::text("acknowledged");
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        make_compaction_actor(provider),
-        vec![],
-        None,
-        vec![skill],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: make_compaction_actor(provider),
+        tools: vec![],
+        store: None,
+        skills: vec![skill],
+    });
 
     let result = session.prompt("/skill:test-skill".to_string()).await.unwrap();
     // result contains steer message + assistant message
@@ -80,18 +80,18 @@ async fn test_skill_invocation_not_found_returns_error() {
 
     let provider = TestProvider::text("acknowledged");
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        make_compaction_actor(provider),
-        vec![],
-        None,
-        vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: make_compaction_actor(provider),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     let result = session.prompt("/skill:nonexistent".to_string()).await;
     assert!(result.is_err());
@@ -185,18 +185,18 @@ async fn test_skills_xml_injected_into_system_prompt() {
 
     let provider = Arc::new(VerifyingProvider);
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        make_compaction_actor(provider),
-        vec![],
-        None,
-        vec![skill],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: make_compaction_actor(provider),
+        tools: vec![],
+        store: None,
+        skills: vec![skill],
+    });
 
     let result = session.prompt("hello".to_string()).await;
     assert!(result.is_ok());
@@ -287,18 +287,18 @@ async fn test_disabled_skill_not_in_system_prompt() {
 
     let provider = Arc::new(VerifyingProvider { hidden_name: "hidden-skill".to_string() });
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        make_compaction_actor(provider),
-        vec![],
-        None,
-        vec![visible, hidden],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: make_compaction_actor(provider),
+        tools: vec![],
+        store: None,
+        skills: vec![visible, hidden],
+    });
 
     let result = session.prompt("hello".to_string()).await;
     assert!(result.is_ok());

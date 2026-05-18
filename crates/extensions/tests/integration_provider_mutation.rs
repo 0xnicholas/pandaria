@@ -4,7 +4,7 @@ use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::context::{ProviderRequestCtx, ProviderResponseCtx};
 use agent_core::file_ops::DefaultFileOperationExtractor;
 use agent_core::mutations::{ProviderRequestMutation, ProviderResponseMutation};
-use agent_core::SessionActor;
+use agent_core::{SessionActor, SessionConfig};
 use agent_core::test_utils::TestProvider;
 use agent_core::types::AgentMessage;
 use async_trait::async_trait;
@@ -174,18 +174,18 @@ async fn test_provider_request_mutation() {
     let provider = Arc::new(VerifyProvider {
         expected_system_prompt: Some("mutated_prompt".to_string()),
     });
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "original_prompt".to_string(),
-        "verify".to_string(),
-        provider.clone(),
-        Arc::new(router),
-        make_compaction_actor(provider),
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "original_prompt".to_string(),
+        model: "verify".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: make_compaction_actor(provider),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     let results = session.prompt("hello".to_string()).await.unwrap();
     assert!(!results.is_empty());
@@ -201,18 +201,18 @@ async fn test_provider_response_mutation() {
     let router = HookRouter::new(vec![handle], bus);
 
     let provider = TestProvider::text("original");
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "prompt".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        Arc::new(router),
-        make_compaction_actor(provider),
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "prompt".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: make_compaction_actor(provider),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     let results = session.prompt("hello".to_string()).await.unwrap();
     assert!(!results.is_empty());

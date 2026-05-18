@@ -65,12 +65,23 @@ pub struct UiConfig {
     pub syntax_theme: String,
     #[serde(default = "default_scrollback")]
     pub scrollback: usize,
+    #[serde(default = "default_models")]
+    pub models: Vec<String>,
 }
 
 fn default_max_history() -> usize { 500 }
 fn default_true() -> bool { true }
 fn default_syntax_theme() -> String { "base16-ocean.dark".to_string() }
 fn default_scrollback() -> usize { 1000 }
+pub fn default_models() -> Vec<String> {
+    vec![
+        "deepseek/deepseek-v4-flash".to_string(),
+        "deepseek/deepseek-v4-pro".to_string(),
+        "gpt-4o".to_string(),
+        "claude-sonnet-4".to_string(),
+        "claude-opus-4".to_string(),
+    ]
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct KeysConfig {
@@ -98,6 +109,7 @@ impl Config {
                 show_tool_calls: true,
                 syntax_theme: default_syntax_theme(),
                 scrollback: default_scrollback(),
+                models: default_models(),
             },
             keys: None,
         });

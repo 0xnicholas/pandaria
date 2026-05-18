@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use agent_core::harness::compaction::{CompactionActor, CompactionConfig};
 use agent_core::{
-    SessionActor,
+    SessionActor, SessionConfig,
 };
 use agent_core::file_ops::DefaultFileOperationExtractor;
 use agent_core::persistence::entry::SessionEntry;
@@ -69,18 +69,18 @@ async fn test_recovery_overflow_then_compact_and_retry() {
         _ => TestResponse::Text("Success after compaction".into()),
     });
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        Arc::new(make_compaction_actor(provider.clone())),
-        vec![],
-        None,
-        vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider.clone())),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     // Fill with enough entries to trigger compaction
     let entries = build_entries(12);
@@ -157,18 +157,18 @@ async fn test_recovery_double_overflow_aborts() {
     });
 
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        Arc::new(make_compaction_actor(provider)),
-        vec![],
-        None,
-        vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     // Fill with enough entries
     let entries = build_entries(12);

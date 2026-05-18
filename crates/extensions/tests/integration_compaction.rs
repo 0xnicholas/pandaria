@@ -6,7 +6,7 @@ use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::context::CompactCtx;
 use agent_core::file_ops::DefaultFileOperationExtractor;
 use agent_core::mutations::CompactDecision;
-use agent_core::SessionActor;
+use agent_core::{SessionActor, SessionConfig};
 use agent_core::SessionEntry;
 use agent_core::test_utils::{TestProvider, TestResponse};
 use extensions::host::event_bus::EventBus;
@@ -74,18 +74,18 @@ async fn test_overflow_triggers_compaction_with_extension_hook() {
         TestResponse::Text("compacted".into()),
     ]);
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "test".to_string(),
-        provider,
-        Arc::new(router),
-        compaction_actor,
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "test".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: compaction_actor,
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     let result = session.prompt("trigger overflow".to_string()).await;
     assert!(result.is_ok(), "expected Ok, got {:?}", result);
@@ -130,18 +130,18 @@ async fn test_extension_blocks_compaction() {
 
     let provider = TestProvider::overflow();
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "test".to_string(),
-        provider,
-        Arc::new(router),
-        compaction_actor,
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "test".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: compaction_actor,
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     let result = session.prompt("trigger overflow".to_string()).await;
 

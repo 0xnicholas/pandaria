@@ -36,7 +36,6 @@ fn make_loop_config(
             tracing::debug!("event: {:?}", event);
         }),
         circuit_breaker: None,
-        skills: Vec::new(),
     }
 }
 

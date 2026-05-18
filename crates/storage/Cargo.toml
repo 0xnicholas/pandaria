@@ -21,6 +21,7 @@ sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "json"], opti
 redis = { version = "0.27", features = ["tokio-comp", "aio"], optional = true }
 
 [dev-dependencies]
+agent-core = { path = "../agent-core", features = ["testing"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true }
 ai-provider = { path = "../ai-provider" }

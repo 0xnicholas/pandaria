@@ -47,6 +47,8 @@ impl SlashCommandProvider {
             SlashCommand { name: "dump".into(), description: "Export session to a Markdown file".into() },
             SlashCommand { name: "compact".into(), description: "Trigger context compaction".into() },
             SlashCommand { name: "rename".into(), description: "Rename the current session".into() },
+            SlashCommand { name: "delete".into(), description: "Delete the current session".into() },
+            SlashCommand { name: "system".into(), description: "Update system prompt for current session".into() },
         ];
         Self { commands }
     }
@@ -382,6 +384,7 @@ mod tests {
             "quit", "new", "switch", "list", "model", "clear",
             "connect", "auth", "tokens", "help",
             "retry", "copy", "dump", "compact", "rename",
+            "delete", "system",
         ];
         for cmd in &expected {
             let ctx = make_context(&format!("/{}", cmd), cmd.len() + 1);

@@ -11,7 +11,7 @@ use agent_core::context::{
 use agent_core::mutations::{
     BeforeAgentStartMutation, ProviderRequestMutation, ProviderResponseMutation,
 };
-use agent_core::SessionActor;
+use agent_core::{SessionActor, SessionConfig};
 use agent_core::HookDispatcher;
 use agent_core::compaction::{CompactionActor, CompactionConfig};
 use agent_core::file_ops::DefaultFileOperationExtractor;
@@ -120,18 +120,18 @@ async fn test_complete_lifecycle_hooks() {
 
     let provider = TestProvider::text("response");
     let compaction_actor = make_compaction_actor(provider.clone());
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".into(),
-        "test".to_string(),
-        provider,
-        Arc::new(router),
-        compaction_actor,
-        vec![],
-        None,
-    vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".into(),
+        model: "test".to_string(),
+        provider: provider,
+        hook_dispatcher: Arc::new(router),
+        compaction_actor: compaction_actor,
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     // Wait for session_start observational hook (fire-and-forget)
     tokio::time::sleep(Duration::from_millis(50)).await;

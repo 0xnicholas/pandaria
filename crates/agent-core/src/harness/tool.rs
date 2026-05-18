@@ -14,7 +14,7 @@ use ai_provider::ToolResultMessage as ToolResultMsg;
 
 /// Executes a tool call through the full pipeline:
 /// prepare → on_tool_call (blocking) → execute → on_tool_result (chain) → finalize.
-pub struct ToolExecutor {
+pub(crate) struct ToolExecutor {
     tenant_id: String,
     session_id: String,
     hook_dispatcher: Arc<dyn HookDispatcher>,
@@ -22,7 +22,7 @@ pub struct ToolExecutor {
 }
 
 impl ToolExecutor {
-    pub fn new(
+    pub(crate) fn new(
         tenant_id: String,
         session_id: String,
         hook_dispatcher: Arc<dyn HookDispatcher>,
@@ -40,7 +40,7 @@ impl ToolExecutor {
     ///
     /// `on_progress`: optional callback forwarded to the tool for streaming
     /// progress updates.
-    pub async fn execute_tool_call(
+    pub(crate) async fn execute_tool_call(
         &self,
         tool_call: &ToolCall,
         on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,

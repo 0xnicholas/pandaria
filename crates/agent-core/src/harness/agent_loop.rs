@@ -16,6 +16,11 @@ use crate::hook::dispatcher::HookDispatcher;
 use crate::harness::tool::ToolExecutor;
 use crate::types::{AgentMessage, AgentToolRef, ToolExecutionMode};
 
+/// Configuration for [`AgentLoop`].
+///
+/// The fields `steer_queue`, `follow_up_queue`, `event_sink`, and
+/// `circuit_breaker` are internal implementation details. They remain `pub`
+/// for test convenience but are not part of the stable public API.
 pub struct AgentLoopConfig {
     pub tenant_id: String,
     pub session_id: String,
@@ -25,13 +30,42 @@ pub struct AgentLoopConfig {
     pub tools: Vec<AgentToolRef>,
     pub system_prompt: Option<String>,
     pub stream_options: StreamOptions,
+    #[doc(hidden)]
     pub steer_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    #[doc(hidden)]
     pub follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
+    #[doc(hidden)]
     pub event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static>,
     /// Optional circuit breaker for the provider.
+    #[doc(hidden)]
     pub circuit_breaker: Option<Arc<crate::circuit_breaker::CircuitBreaker>>,
-    /// Skills available for this session.
-    pub skills: Vec<crate::skills::Skill>,
+}
+
+impl AgentLoopConfig {
+    /// Create a new `AgentLoopConfig` with sensible defaults for internal fields.
+    pub fn new(
+        tenant_id: String,
+        session_id: String,
+        model: String,
+        provider: Arc<dyn LlmProvider>,
+        hook_dispatcher: Arc<dyn HookDispatcher>,
+        tools: Vec<AgentToolRef>,
+    ) -> Self {
+        Self {
+            tenant_id,
+            session_id,
+            model,
+            provider,
+            hook_dispatcher,
+            tools,
+            system_prompt: None,
+            stream_options: StreamOptions::default(),
+            steer_queue: Arc::new(Mutex::new(Vec::new())),
+            follow_up_queue: Arc::new(Mutex::new(Vec::new())),
+            event_sink: Arc::new(|_| {}),
+            circuit_breaker: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -230,15 +264,8 @@ impl AgentLoop {
         let mut transformed = ctx_mutation.messages.unwrap_or_else(|| messages.clone());
         resolve_orphan_tool_calls(&mut transformed);
 
-        let skills_xml = crate::skills::format_skills_for_prompt(&self.config.skills);
-        let effective_system_prompt = system_prompt.as_ref().map(|sp| {
-            if skills_xml.is_empty() { sp.clone() } else { format!("{}\n{}", sp, skills_xml) }
-        }).or_else(|| {
-            if skills_xml.is_empty() { None } else { Some(skills_xml) }
-        });
-
         let mut stream_opts = self.config.stream_options.clone();
-        let mut ctx = LlmContext { system_prompt: effective_system_prompt, messages: transformed, tools: build_tool_defs(&self.config.tools) };
+        let mut ctx = LlmContext { system_prompt: system_prompt.clone(), messages: transformed, tools: build_tool_defs(&self.config.tools) };
 
         let provider_req_ctx = ProviderRequestCtx {
             tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), model: self.config.model.clone(),
@@ -615,7 +642,6 @@ mod tests {
             follow_up_queue: Arc::new(Mutex::new(vec![])),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
             circuit_breaker: None,
-            skills: Vec::new(),
         }
     }
 
@@ -1323,7 +1349,6 @@ mod tests {
             follow_up_queue: Arc::new(Mutex::new(vec![])),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
             circuit_breaker: None,
-            skills: Vec::new(),
         };
         let loop_ = AgentLoop::new(config);
 
@@ -1360,7 +1385,6 @@ mod tests {
             follow_up_queue: follow_up_queue.clone(),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
             circuit_breaker: None,
-            skills: Vec::new(),
         };
         let loop_ = AgentLoop::new(config);
 

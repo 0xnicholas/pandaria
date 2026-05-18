@@ -1,21 +1,21 @@
 use ai_provider::{AssistantMessage, StopReason};
 
 #[derive(Debug, Clone)]
-pub enum RecoveryAction {
+pub(crate) enum RecoveryAction {
     Continue,
     RetryAfterBackoff { delay_ms: u64 },
     RetryAfterCompaction { reason: crate::hook::context::CompactReason },
     Abort { reason: String },
 }
 
-pub struct RecoveryStateMachine {
+pub(crate) struct RecoveryStateMachine {
     pub overflow_attempted: bool,
     pub retry_count: u32,
     pub max_retries: u32,
 }
 
 impl RecoveryStateMachine {
-    pub fn new(max_retries: u32) -> Self {
+    pub(crate) fn new(max_retries: u32) -> Self {
         Self {
             overflow_attempted: false,
             retry_count: 0,
@@ -23,7 +23,7 @@ impl RecoveryStateMachine {
         }
     }
 
-    pub fn evaluate(&mut self, msg: &AssistantMessage) -> RecoveryAction {
+    pub(crate) fn evaluate(&mut self, msg: &AssistantMessage) -> RecoveryAction {
         if is_context_overflow(msg) {
             if self.overflow_attempted {
                 return RecoveryAction::Abort {
@@ -51,7 +51,7 @@ impl RecoveryStateMachine {
         RecoveryAction::Continue
     }
 
-    pub fn evaluate_overflow(&mut self, error_msg: &str) -> RecoveryAction {
+    pub(crate) fn evaluate_overflow(&mut self, error_msg: &str) -> RecoveryAction {
         let lower = error_msg.to_lowercase();
         if lower.contains("context length") || lower.contains("token limit") {
             if self.overflow_attempted {
@@ -76,11 +76,12 @@ impl RecoveryStateMachine {
         RecoveryAction::RetryAfterBackoff { delay_ms }
     }
 
-    pub fn mark_success(&mut self) {
+    pub(crate) fn mark_success(&mut self) {
         self.retry_count = 0;
     }
 
-    pub fn reset(&mut self) {
+    #[allow(dead_code)]
+    pub(crate) fn reset(&mut self) {
         self.retry_count = 0;
         self.overflow_attempted = false;
     }

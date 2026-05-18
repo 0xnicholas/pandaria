@@ -4,7 +4,7 @@ use agent_core::file_ops::DefaultFileOperationExtractor;
 use agent_core::hook::dispatcher::HookDispatcher;
 use agent_core::persistence::entry::{CompactionDetails, SessionEntry};
 use agent_core::types::AgentMessage;
-use agent_core::SessionActor;
+use agent_core::{SessionActor, SessionConfig};
 use ai_provider::{
     Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, LlmContext,
     LlmError, LlmProvider, StopReason, StreamOptions, ToolCall, Usage, UserMessage,
@@ -611,18 +611,18 @@ async fn test_compact_via_session_actor_writes_entry() {
     let _ = tracing_subscriber::fmt().try_init();
     let provider = mock_provider_with_summary("Session compaction summary");
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        Arc::new(make_compaction_actor(provider)),
-        vec![],
-        None,
-        vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     // Fill entries with sufficient text to trigger summarization
     let entries = build_many_entries(10);
@@ -667,18 +667,18 @@ async fn test_compact_truncates_old_entries() {
     let _ = tracing_subscriber::fmt().try_init();
     let provider = mock_provider_with_summary("Truncation test summary");
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        Arc::new(make_compaction_actor(provider)),
-        vec![],
-        None,
-        vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     let entries = build_many_entries(10);
     let _kept_id = entries[8].id(); // Keep reference to an entry near the end
@@ -723,18 +723,18 @@ async fn test_multiple_compactions_truncate_incrementally() {
     let _ = tracing_subscriber::fmt().try_init();
     let provider = mock_provider_with_summary("Multi compaction summary");
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let mut session = SessionActor::new(
-        "t1".to_string(),
-        "s1".to_string(),
-        "You are helpful.".to_string(),
-        "test".to_string(),
-        provider.clone(),
-        dispatcher,
-        Arc::new(make_compaction_actor(provider)),
-        vec![],
-        None,
-        vec![],
-    );
+    let mut session = SessionActor::new(SessionConfig {
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        system_prompt: "You are helpful.".to_string(),
+        model: "test".to_string(),
+        provider: provider.clone(),
+        hook_dispatcher: dispatcher,
+        compaction_actor: Arc::new(make_compaction_actor(provider)),
+        tools: vec![],
+        store: None,
+        skills: vec![],
+    });
 
     // First batch
     let entries1 = build_many_entries(10);

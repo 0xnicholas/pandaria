@@ -5,7 +5,13 @@ use crate::hook::context::CompactReason;
 use crate::error::AgentError;
 use crate::types::AgentMessage;
 
+/// Events emitted during an agent session lifecycle.
+///
+/// **Stability note:** This enum is `#[non_exhaustive]`. Consumers must always
+/// include a wildcard arm (`_ => {}`) when matching on `AgentEvent` to remain
+/// forward-compatible as new variants are added.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AgentEvent {
     AgentStart,
     AgentEnd {

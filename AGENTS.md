@@ -190,6 +190,12 @@ api-gateway → tenant → extensions → agent-core → ai-provider
 - 所有公开 API 必须有文档注释（`///`）。
 - 新 crate 必须包含 `README.md`，描述该 crate 的职责、公开接口和边界。
 - 集成测试放在 `tests/`，使用 `testcontainers` 启动 Redis/PG 依赖，禁止测试依赖外部网络。
+  - **本地 PostgreSQL 备用**：`crates/storage/tests/integration_postgres.rs` 支持通过 `PANDARIA_TEST_PG_URL` 环境变量连接本地 PostgreSQL（无需 Docker）。使用本地 DB 时必须加 `--test-threads=1`，因为所有测试共享同一个数据库。示例：
+    ```bash
+    pg_ctl -D "$HOME/Library/Application Support/Postgres/var-18" start
+    PANDARIA_TEST_PG_URL="postgres://postgres@localhost:5432/postgres" \
+      cargo test -p storage --test integration_postgres -- --test-threads=1
+    ```
 
 ---
 
@@ -235,8 +241,8 @@ api-gateway → tenant → extensions → agent-core → ai-provider
 | api-gateway | 🟡 核心功能已实现（REST API + SSE + HMAC 认证 + 限流），待与 observability 深度集成 |
 | storage 集成测试 | ✅ 已实现（testcontainers 启动 PostgreSQL + Redis，并行测试 tenant/session ID 隔离） |
 | 代码质量 | ✅ 修复（6 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复） |
-| TUI 客户端 | 🟡 已实现（ratatui + REST client + SSE 订阅），持续迭代中 |
-| PromptBuilder 设计 | ✅ 已实现（`agent-core/src/prompt/` 核心类型、Hook mutation/context 迁移、SessionActor/AgentLoop 集成、Skills fragment 注入、向后兼容） |
+| TUI 客户端 | 🟡 核心功能已重构（ratatui + REST client + SSE 订阅），新增：输入队列（steer/followUp）、Bash 模式（`!command`/`!!command`）、外部编辑器（Ctrl+X）、命令面板解耦（Ctrl+Shift+P 任意状态）、模型循环切换（Ctrl+P/N）、Redo（Ctrl+Shift+-）、字符跳转（Ctrl+]）、CompactionSummary 消息类型。持续迭代中 |
+| PromptBuilder 设计 | ✅ 核心类型 + SessionActor/AgentLoop 集成已完成（Phase 1）。Skills 以 `SkillsDirectory` fragment 注入，`render()` 产出完整 prompt。Hook 系统 `PromptMutation` 支持待 Phase 2 |
 
 ---
 

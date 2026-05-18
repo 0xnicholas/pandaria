@@ -4,6 +4,9 @@ pub enum Command {
     SelectModel { id: Option<String> }, Clear, Help, Connect { url: String },
     Auth { token: String }, Tokens, Retry, Copy,
     Dump { filename: Option<String> }, Compact, Rename { title: String },
+    Tree, Fork { message_id: Option<String> }, Settings,
+    Export { filename: Option<String> }, Import { filename: String },
+    DeleteSession, SystemPrompt { prompt: String },
 }
 
 impl Command {
@@ -30,6 +33,13 @@ impl Command {
             "dump" => Some(Command::Dump { filename: if args.is_empty() { None } else { Some(args.to_string()) } }),
             "compact" => Some(Command::Compact),
             "rename" if !args.is_empty() => Some(Command::Rename { title: args.to_string() }),
+            "tree" => Some(Command::Tree),
+            "fork" => Some(Command::Fork { message_id: if args.is_empty() { None } else { Some(args.to_string()) } }),
+            "settings" => Some(Command::Settings),
+            "export" => Some(Command::Export { filename: if args.is_empty() { None } else { Some(args.to_string()) } }),
+            "import" if !args.is_empty() => Some(Command::Import { filename: args.to_string() }),
+            "delete" => Some(Command::DeleteSession),
+            "system" if !args.is_empty() => Some(Command::SystemPrompt { prompt: args.to_string() }),
             _ => None,
         }
     }

@@ -94,4 +94,32 @@ impl RestClient {
         Self::check_status(resp).await?;
         Ok(())
     }
+
+    pub async fn delete_session(&self, session_id: &str, token: &str) -> Result<(), TuiError> {
+        let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
+        let resp = self.client.delete(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send().await?;
+        Self::check_status(resp).await?;
+        Ok(())
+    }
+
+    pub async fn get_session_messages(&self, session_id: &str, token: &str) -> Result<Vec<crate::client::model::HistoricalMessage>, TuiError> {
+        let url = format!("{}/api/v1/sessions/{}/messages", self.base_url, session_id);
+        let resp = self.client.get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send().await?;
+        let resp = Self::check_status(resp).await?;
+        Ok(resp.json::<Vec<crate::client::model::HistoricalMessage>>().await?)
+    }
+
+    pub async fn update_system_prompt(&self, session_id: &str, prompt: &str, token: &str) -> Result<SessionInfo, TuiError> {
+        let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
+        let resp = self.client.patch(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&serde_json::json!({ "system_prompt": prompt }))
+            .send().await?;
+        let resp = Self::check_status(resp).await?;
+        Ok(resp.json::<SessionInfo>().await?)
+    }
 }
