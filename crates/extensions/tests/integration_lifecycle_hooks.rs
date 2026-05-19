@@ -168,20 +168,10 @@ async fn test_tool_execution_hooks_via_eventbus() {
     tokio::time::sleep(Duration::from_millis(10)).await;
 
     // Emit tool execution events directly via router
-    let start_ctx = ToolExecutionStartCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
-    let end_ctx = ToolExecutionEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        success: true,
-    };
+    let mut start_ctx = ToolExecutionStartCtx::new("t1", "s1", "test_tool", "call_1");
+    start_ctx.input = serde_json::json!({});
+    let mut end_ctx = ToolExecutionEndCtx::new("t1", "s1", "test_tool", "call_1");
+    end_ctx.success = true;
 
     router.on_tool_execution_start(&start_ctx).await;
     router.on_tool_execution_end(&end_ctx).await;

@@ -146,13 +146,8 @@ async fn test_router_first_block_wins_ordering() {
 
     let router = HookRouter::new(vec![h1, h2, h3], bus);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "dangerous_tool".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "dangerous_tool", "c1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = router.on_tool_call(&ctx).await;
     match decision {
@@ -175,13 +170,8 @@ async fn test_router_all_continue_allows_tool() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "safe_tool".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "safe_tool", "c1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = router.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
@@ -203,16 +193,9 @@ async fn test_router_chain_merge_tool_result() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
+    ctx.content = vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }];
 
     let mutation = router.on_tool_result(&ctx).await;
 
@@ -241,14 +224,11 @@ async fn test_router_chain_merge_context() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
+    let mut ctx = ContextCtx::new("t1", "s1");
+    ctx.messages = vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
             content: vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
-        })],
-    };
+        })];
 
     let mutation = router.on_context(&ctx).await;
 
@@ -268,14 +248,11 @@ async fn test_router_context_no_change_returns_default() {
     let (h1, _) = ExtensionActor::spawn(ext1, bus.clone(), 8);
     let router = HookRouter::new(vec![h1], bus);
 
-    let ctx = ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
+    let mut ctx = ContextCtx::new("t1", "s1");
+    ctx.messages = vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
             content: vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
-        })],
-    };
+        })];
 
     let mutation = router.on_context(&ctx).await;
     assert!(mutation.messages.is_none());
@@ -302,34 +279,20 @@ async fn test_router_observational_hooks_fire() {
 
     let router = HookRouter::new(vec![handle], bus.clone());
 
-    let turn_ctx = TurnEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        turn_index: 0,
-        messages: vec![],
-        usage: ai_provider::Usage {
+    let turn_ctx = TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
             input_tokens: 0,
             output_tokens: 0,
             total_tokens: 0,
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
-        },
-    };
+        });
     router.on_turn_end(&turn_ctx).await;
 
-    let agent_ctx = AgentEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let agent_ctx = AgentEndCtx::new("t1", "s1");
     router.on_agent_end(&agent_ctx).await;
 
-    let session_ctx = SessionCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "test".to_string(),
-        tools: vec![],
-    };
+    let mut session_ctx = SessionCtx::new("t1", "s1");
+    session_ctx.system_prompt = "test".to_string();
     router.on_session_start(&session_ctx).await;
 
     // Give EventBus handlers time to process
@@ -352,13 +315,8 @@ async fn test_router_timeout_returns_default() {
     let (handle, _) = ExtensionActor::spawn(ext, bus.clone(), 8);
     let router = HookRouter::new(vec![handle], bus);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     // Should not hang; should return Continue due to timeout
     let result = tokio::time::timeout(
@@ -387,13 +345,8 @@ async fn test_router_panic_isolation_tool_call() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "dangerous".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "dangerous", "c1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = router.on_tool_call(&ctx).await;
     // Panic ext returns Continue (default), then normal ext blocks
@@ -412,16 +365,8 @@ async fn test_router_panic_isolation_tool_result() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     let mutation = router.on_tool_result(&ctx).await;
     // Panic ext returns default, then mutate ext applies
@@ -444,11 +389,7 @@ async fn test_router_panic_isolation_context() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let ctx = ContextCtx::new("t1", "s1");
 
     let mutation = router.on_context(&ctx).await;
     // Panic ext returns default, then mutate ext applies

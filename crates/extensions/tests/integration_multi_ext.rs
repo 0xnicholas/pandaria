@@ -204,39 +204,24 @@ async fn test_multi_extension_first_block_wins_order() {
     let router = HookRouter::new(vec![h1, h2], bus);
 
     // Test 1: "slow_tool" - rate_limit blocks first (first-block-wins)
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "slow_tool".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "slow_tool", "c1");
+    ctx.input = serde_json::json!({});
     let (decision, _mutation) = router.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Block { .. }));
     assert_eq!(rate_limit.blocked_count.load(Ordering::SeqCst), 1);
     assert_eq!(tool_guard.blocked_count.load(Ordering::SeqCst), 0);
 
     // Test 2: "dangerous_tool" - rate_limit passes, tool_guard blocks
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "dangerous_tool".to_string(),
-        tool_call_id: "c2".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "dangerous_tool", "c2");
+    ctx.input = serde_json::json!({});
     let (decision, _mutation) = router.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Block { .. }));
     assert_eq!(rate_limit.blocked_count.load(Ordering::SeqCst), 1);
     assert_eq!(tool_guard.blocked_count.load(Ordering::SeqCst), 1);
 
     // Test 3: "fast_tool" - both pass
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "fast_tool".to_string(),
-        tool_call_id: "c3".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "fast_tool", "c3");
+    ctx.input = serde_json::json!({});
     let (decision, _mutation) = router.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
 }
@@ -253,14 +238,11 @@ async fn test_multi_extension_chain_merge_context() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
+    let mut ctx = ContextCtx::new("t1", "s1");
+    ctx.messages = vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
             content: vec![ai_provider::Content::Text { text: "original".to_string(), text_signature: None }],
             timestamp: std::time::SystemTime::now(),
-        })],
-    };
+        })];
 
     let mutation = router.on_context(&ctx).await;
     let messages = mutation.messages.unwrap();
@@ -281,16 +263,9 @@ async fn test_multi_extension_chain_merge_tool_result() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![ai_provider::Content::Text { text: "base".to_string(), text_signature: None }],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
+    ctx.content = vec![ai_provider::Content::Text { text: "base".to_string(), text_signature: None }];
 
     let mutation = router.on_tool_result(&ctx).await;
     let content = mutation.content.unwrap();
@@ -326,34 +301,20 @@ async fn test_multi_extension_observational_hooks() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let session_ctx = SessionCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "test".to_string(),
-        tools: vec![],
-    };
+    let mut session_ctx = SessionCtx::new("t1", "s1");
+    session_ctx.system_prompt = "test".to_string();
     router.on_session_start(&session_ctx).await;
 
-    let turn_ctx = TurnEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        turn_index: 0,
-        messages: vec![],
-        usage: ai_provider::Usage {
+    let turn_ctx = TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
             input_tokens: 0,
             output_tokens: 0,
             total_tokens: 0,
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
-        },
-    };
+        });
     router.on_turn_end(&turn_ctx).await;
 
-    let agent_ctx = AgentEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let agent_ctx = AgentEndCtx::new("t1", "s1");
     router.on_agent_end(&agent_ctx).await;
 
     // Give EventBus handlers time
@@ -383,34 +344,17 @@ async fn test_multi_extension_audit_trail() {
     let router = HookRouter::new(vec![h1], bus);
 
     // Dispatch a tool call
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test_tool", "c1");
+    ctx.input = serde_json::json!({});
     let _ = router.on_tool_call(&ctx).await;
 
     // Dispatch a tool result
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "test_tool", "c1");
+    ctx.input = serde_json::json!({});
     let _ = router.on_tool_result(&ctx).await;
 
     // Dispatch a context mutation
-    let ctx = ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let ctx = ContextCtx::new("t1", "s1");
     let _ = router.on_context(&ctx).await;
 
     assert_eq!(audit.tool_calls.load(Ordering::SeqCst), 1);
@@ -443,13 +387,8 @@ async fn test_multi_extension_panic_isolation_preserves_others() {
     let router = HookRouter::new(vec![h1, h2, h3], bus);
 
     // Tool call: panic ext returns Continue (default), then normal ext blocks "bad"
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "bad".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "bad", "c1");
+    ctx.input = serde_json::json!({});
     let (decision, _mutation) = router.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Block { .. }));
     assert_eq!(normal_ext.blocked_count.load(Ordering::SeqCst), 1);
@@ -469,16 +408,8 @@ async fn test_multi_extension_panic_isolation_preserves_others() {
 
     let router2 = HookRouter::new(vec![h1, h2], bus2);
 
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
     let mutation = router2.on_tool_result(&ctx).await;
     // Panic ext returns default, audit ext also returns default
     assert!(mutation.content.is_none());
@@ -494,11 +425,7 @@ async fn test_multi_extension_panic_isolation_preserves_others() {
 
     let router3 = HookRouter::new(vec![h1, h2], bus3);
 
-    let ctx = ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let ctx = ContextCtx::new("t1", "s1");
     let mutation = router3.on_context(&ctx).await;
     // Panic ext returns default, mutate ext appends
     assert!(mutation.messages.is_some());

@@ -28,10 +28,10 @@ impl Extension for CompactContinueExt {
 }
 
 fn dummy_compact_ctx() -> CompactCtx {
-    CompactCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        preparation: CompactionPreparation {
+    CompactCtx::new(
+        "t1",
+        "s1",
+        CompactionPreparation {
             first_kept_entry_id: uuid::Uuid::nil(),
             messages_to_summarize: vec![],
             turn_prefix_messages: vec![],
@@ -40,9 +40,8 @@ fn dummy_compact_ctx() -> CompactCtx {
             previous_summary: None,
             file_ops: agent_core::file_ops::FileOperations::default(),
         },
-        entries: vec![],
-        reason: CompactReason::Manual,
-    }
+        CompactReason::Manual,
+    )
 }
 
 #[tokio::test]

@@ -52,13 +52,8 @@ async fn test_tool_call_mutation_chain() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({"original": true}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({"original": true});
 
     let (decision, mutation) = router.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
@@ -82,13 +77,8 @@ async fn test_tool_call_mutation_block_retained() {
 
     let router = HookRouter::new(vec![h1, h2], bus);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     let (decision, mutation) = router.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Block { .. }));

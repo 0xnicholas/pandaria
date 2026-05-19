@@ -46,22 +46,12 @@ async fn test_tool_execution_hooks_fire() {
 
     let router = HookRouter::new(vec![handle], bus.clone());
 
-    let start_ctx = ToolExecutionStartCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut start_ctx = ToolExecutionStartCtx::new("t1", "s1", "t", "c1");
+    start_ctx.input = serde_json::json!({});
     router.on_tool_execution_start(&start_ctx).await;
 
-    let end_ctx = ToolExecutionEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        success: true,
-    };
+    let mut end_ctx = ToolExecutionEndCtx::new("t1", "s1", "t", "c1");
+    end_ctx.success = true;
     router.on_tool_execution_end(&end_ctx).await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -87,22 +77,11 @@ async fn test_tool_execution_hooks_on_error() {
 
     let router = HookRouter::new(vec![handle], bus.clone());
 
-    let start_ctx = ToolExecutionStartCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut start_ctx = ToolExecutionStartCtx::new("t1", "s1", "t", "c1");
+    start_ctx.input = serde_json::json!({});
     router.on_tool_execution_start(&start_ctx).await;
 
-    let end_ctx = ToolExecutionEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        success: false,
-    };
+    let end_ctx = ToolExecutionEndCtx::new("t1", "s1", "t", "c1");
     router.on_tool_execution_end(&end_ctx).await;
 
     tokio::time::sleep(Duration::from_millis(100)).await;
