@@ -25,6 +25,14 @@ pub struct CliArgs {
 }
 
 fn default_config_path() -> PathBuf {
+    // 1. 优先检查当前工作目录下的 tui-config.toml
+    if let Ok(cwd) = std::env::current_dir() {
+        let local = cwd.join("tui-config.toml");
+        if local.exists() {
+            return local;
+        }
+    }
+    // 2. 回退到系统标准路径
     directories::ProjectDirs::from("", "", "pandaria")
         .map(|d| d.config_dir().join("tui").join("config.toml"))
         .unwrap_or_else(|| PathBuf::from("config.toml"))

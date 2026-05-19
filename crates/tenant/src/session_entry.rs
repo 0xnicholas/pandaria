@@ -15,7 +15,5 @@ pub struct ActiveSession {
     pub _guard: SessionGuard,
     pub info: SessionInfo,
     pub bridge: Arc<SessionEventBridge>,
-    pub ext_handles: Vec<extensions::host::extension_actor::ExtensionHandle>,
-    pub ext_joins: Vec<tokio::task::JoinHandle<()>>,
     pub turn_counter: AtomicU64,
 }

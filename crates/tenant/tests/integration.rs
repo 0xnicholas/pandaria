@@ -9,8 +9,6 @@ use ai_provider::{
 };
 use tokio_util::sync::CancellationToken;
 
-use tenant::extensions::quota::TenantQuotaExtension;
-use tenant::extensions::token_meter::TenantTokenMeterExtension;
 use tenant::manager::{CreateSessionParams, TenantManager, TenantManagerImpl};
 use tenant::{Tenant, TenantQuota, TenantRegistry};
 
@@ -118,9 +116,6 @@ async fn test_end_to_end_tenant_isolation() {
     registry.register(t1).unwrap();
     registry.register(t2).unwrap();
 
-    let quota_ext = Arc::new(TenantQuotaExtension::new(registry.clone()));
-    let meter_ext = Arc::new(TenantTokenMeterExtension::new(registry.clone()));
-
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
 
     let manager = TenantManagerImpl::new(
@@ -130,7 +125,6 @@ async fn test_end_to_end_tenant_isolation() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![quota_ext, meter_ext],
     );
 
     // Tenant 1
@@ -146,10 +140,6 @@ async fn test_end_to_end_tenant_isolation() {
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let t1_sv = registry.get("t1").unwrap();
-    let t1_status = t1_sv.quota_status();
-    assert_eq!(t1_status.tokens_consumed, 10);
-
     // Tenant 2
     let info2 = manager
         .create_session("t2", CreateSessionParams { title: None, system_prompt: None })
@@ -162,13 +152,6 @@ async fn test_end_to_end_tenant_isolation() {
         .unwrap();
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    let t2_sv = registry.get("t2").unwrap();
-    let t2_status = t2_sv.quota_status();
-    assert_eq!(t2_status.tokens_consumed, 10);
-
-    let t1_status = t1_sv.quota_status();
-    assert_eq!(t1_status.tokens_consumed, 10);
 
     // Clean up
     manager.delete_session("t1", &info1.id).await.unwrap();
@@ -194,7 +177,6 @@ async fn test_tenant_session_limit_enforced() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let info1 = manager
@@ -223,7 +205,6 @@ async fn test_delete_session_not_found() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let fake_id = uuid::Uuid::new_v4();
@@ -247,7 +228,6 @@ async fn test_shutdown_cleans_all_sessions() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let info1 = manager

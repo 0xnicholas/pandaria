@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 agent-core = { path = "../agent-core" }
 ai-provider = { path = "../ai-provider" }
-extensions = { path = "../extensions" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 async-trait = { workspace = true }

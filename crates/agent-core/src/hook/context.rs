@@ -1,3 +1,4 @@
+use crate::prompt::PromptBuilder;
 use crate::types::AgentMessage;
 
 #[non_exhaustive]
@@ -184,7 +185,10 @@ impl ContextCtx {
 pub struct BeforeAgentStartCtx {
     pub tenant_id: String,
     pub session_id: String,
+    /// Rendered system prompt (legacy convenience field).
     pub system_prompt: Option<String>,
+    /// The prompt builder that Extension may inspect or clone-and-modify.
+    pub prompt_builder: PromptBuilder,
     pub messages: Vec<AgentMessage>,
     pub tools: Vec<serde_json::Value>,
     pub model: String,
@@ -193,7 +197,8 @@ pub struct BeforeAgentStartCtx {
 impl BeforeAgentStartCtx {
     /// Create a new `BeforeAgentStartCtx` with the given identifiers and model.
     ///
-    /// `system_prompt` defaults to `None`, `messages` and `tools` to empty.
+    /// `system_prompt` defaults to `None`, `prompt_builder` to default,
+    /// `messages` and `tools` to empty.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -203,6 +208,7 @@ impl BeforeAgentStartCtx {
             tenant_id: tenant_id.into(),
             session_id: session_id.into(),
             system_prompt: None,
+            prompt_builder: PromptBuilder::default(),
             messages: vec![],
             tools: vec![],
             model: model.into(),
@@ -217,7 +223,10 @@ pub struct ProviderRequestCtx {
     pub tenant_id: String,
     pub session_id: String,
     pub model: String,
+    /// Rendered system prompt (legacy convenience field).
     pub system_prompt: Option<String>,
+    /// The prompt builder that Extension may inspect or clone-and-modify.
+    pub prompt_builder: PromptBuilder,
     pub messages: Vec<AgentMessage>,
     pub turn_index: u64,
     pub tools: Option<Vec<ai_provider::ToolDef>>,
@@ -227,7 +236,8 @@ pub struct ProviderRequestCtx {
 impl ProviderRequestCtx {
     /// Create a new `ProviderRequestCtx` with the given identifiers, model and turn index.
     ///
-    /// `system_prompt` defaults to `None`, `messages` to empty, `tools` to `None`,
+    /// `system_prompt` defaults to `None`, `prompt_builder` to default,
+    /// `messages` to empty, `tools` to `None`,
     /// `options` to `ProviderStreamOptions::default()`.
     pub fn new(
         tenant_id: impl Into<String>,
@@ -240,6 +250,7 @@ impl ProviderRequestCtx {
             session_id: session_id.into(),
             model: model.into(),
             system_prompt: None,
+            prompt_builder: PromptBuilder::default(),
             messages: vec![],
             turn_index,
             tools: None,

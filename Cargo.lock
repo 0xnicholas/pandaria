@@ -15,6 +15,7 @@ dependencies = [
  "agent-core",
  "ai-provider",
  "async-trait",
+ "dashmap",
  "futures",
  "observability",
  "regex",
@@ -161,7 +162,6 @@ dependencies = [
  "base64",
  "dashmap",
  "dotenvy",
- "extensions",
  "futures",
  "hmac",
  "secrecy 0.8.0",
@@ -1501,24 +1501,6 @@ dependencies = [
  "futures-core",
  "nom",
  "pin-project-lite",
-]
-
-[[package]]
-name = "extensions"
-version = "0.1.0"
-dependencies = [
- "agent-core",
- "ai-provider",
- "async-trait",
- "dashmap",
- "regex",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -4544,7 +4526,6 @@ dependencies = [
  "ai-provider",
  "async-trait",
  "dashmap",
- "extensions",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

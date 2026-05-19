@@ -17,6 +17,7 @@ regex = { workspace = true }
 futures = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
+dashmap = { workspace = true }
 
 [features]
 testing = []

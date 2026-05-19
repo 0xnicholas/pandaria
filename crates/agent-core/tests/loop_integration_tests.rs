@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use agent_core::{AgentLoop, AgentLoopConfig, AgentEvent, SessionActor, SessionConfig, HookDispatcher};
 use agent_core::harness::agent_loop::resolve_orphan_tool_calls;
+use agent_core::prompt::PromptBuilder;
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
 use async_trait::async_trait;
 use ai_provider::{Content, LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall};
@@ -11,12 +12,13 @@ fn make_loop_config(provider: Arc<dyn LlmProvider>, dispatcher: Arc<dyn HookDisp
     AgentLoopConfig {
         tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
         provider, hook_dispatcher: dispatcher, tools,
-        system_prompt: Some("You are helpful.".to_string()),
+        prompt_builder: PromptBuilder::from("You are helpful."),
         stream_options: StreamOptions::default(),
         steer_queue: Arc::new(Mutex::new(vec![])),
         follow_up_queue: Arc::new(Mutex::new(vec![])),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
         circuit_breaker: None,
+        skills: Vec::new(),
     }
 }
 
@@ -35,12 +37,13 @@ async fn test_follow_up_triggers_second_turn() {
     let config = AgentLoopConfig {
         tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
         provider, hook_dispatcher: dispatcher, tools: vec![],
-        system_prompt: Some("You are helpful.".to_string()),
+        prompt_builder: PromptBuilder::from("You are helpful."),
         stream_options: StreamOptions::default(),
         steer_queue: Arc::new(Mutex::new(vec![])),
         follow_up_queue: follow_up_queue.clone(),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
         circuit_breaker: None,
+        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
@@ -131,12 +134,13 @@ async fn test_steer_injection() {
     let config = AgentLoopConfig {
         tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
         provider, hook_dispatcher: dispatcher, tools: vec![],
-        system_prompt: Some("You are helpful.".to_string()),
+        prompt_builder: PromptBuilder::from("You are helpful."),
         stream_options: StreamOptions::default(),
         steer_queue: steer_queue.clone(),
         follow_up_queue: Arc::new(Mutex::new(vec![])),
         event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
         circuit_breaker: None,
+        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
@@ -164,7 +168,7 @@ async fn test_event_sequence() {
     let config = AgentLoopConfig {
         tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
         provider, hook_dispatcher: dispatcher, tools: vec![],
-        system_prompt: Some("You are helpful.".to_string()),
+        prompt_builder: PromptBuilder::from("You are helpful."),
         stream_options: StreamOptions::default(),
         steer_queue: Arc::new(Mutex::new(vec![])),
         follow_up_queue: Arc::new(Mutex::new(vec![])),
@@ -172,6 +176,7 @@ async fn test_event_sequence() {
             events_clone.lock().unwrap().push(event);
         }),
         circuit_breaker: None,
+        skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 

@@ -45,6 +45,7 @@ pub use harness::agent_loop::{AgentLoop, AgentLoopConfig, TurnResult};
 
 pub use hook::{
     context,
+    default_dispatcher::DefaultHookDispatcher,
     dispatcher::HookDispatcher,
     mutations,
     timeout::with_timeout,

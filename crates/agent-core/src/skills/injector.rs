@@ -1,4 +1,5 @@
 use super::types::Skill;
+use crate::prompt::{FragmentKind, FragmentSource, PromptBuilder, PromptFragment};
 
 /// Format a slice of skills as an XML block to be appended to the system
 /// prompt.  Compatible with pi.dev's `<available_skills>` format.
@@ -32,6 +33,27 @@ pub fn format_skills_for_prompt(skills: &[Skill]) -> String {
 
     lines.push("</available_skills>".to_string());
     lines.join("\n")
+}
+
+/// Inject the `<available_skills>` fragment into a [`PromptBuilder`].
+///
+/// Idempotent — upserts a fragment with id `"skills-directory"`, replacing any
+/// existing one. No-op when `skills` is empty.
+pub fn inject_skills_into_builder(builder: &mut PromptBuilder, skills: &[Skill]) {
+    if skills.is_empty() {
+        return;
+    }
+    let xml = format_skills_for_prompt(skills);
+    if xml.is_empty() {
+        return;
+    }
+    builder.upsert_fragment(PromptFragment {
+        id: "skills-directory".into(),
+        kind: FragmentKind::SkillsDirectory,
+        source: FragmentSource::SkillsInjector,
+        content: xml,
+        priority: 50,
+    });
 }
 
 fn escape_xml(s: &str) -> String {

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use api_gateway::config::ServerConfig;
@@ -60,23 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     registry.register(test_tenant)?;
     info!("registered test tenant: test-tenant");
 
-    // --- 3. Extensions ---
-    let extensions: Vec<Arc<dyn extensions::Extension>> = vec![
-        Arc::new(extensions::builtins::audit::AuditExtension),
-        Arc::new(extensions::builtins::token_budget::TokenBudgetExtension::new(
-            500_000, // max_tokens_per_day
-        )),
-        Arc::new(extensions::builtins::path_guard::PathGuardExtension::new(
-            HashMap::new(),
-            false,
-        )),
-        Arc::new(extensions::builtins::tool_guard::ToolGuardExtension::new(
-            vec![], // allowed_tools: empty = allow all
-            vec![], // denied_tools: empty = deny none
-        )),
-    ];
-
-    // --- 4. Tenant Manager ---
+    // --- 3. Tenant Manager ---
     let tenant_manager: Arc<dyn tenant::TenantManager> = Arc::new(
         tenant::manager::TenantManagerImpl::new(
             registry,
@@ -85,7 +68,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "deepseek/deepseek-v4-pro",  // default model (RouterProvider needs provider/model format)
             "You are a helpful assistant.", // default system prompt
             128_000,                     // default context window
-            extensions,
         ),
     );
 

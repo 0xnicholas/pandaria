@@ -287,24 +287,24 @@ TenantManager::create_session(tenant_id, params)
         └─→ SessionActor::run_with_messages() outer loop:
               │
               ├─→ AgentLoopConfig created fresh each iteration
-              │     system_prompt = SessionActor.prompt_builder.render()
+              │     prompt_builder = SessionActor.prompt_builder.clone()
               │
               ├─→ AgentLoop::run():
               │       │
               │       ├─→ on_before_agent_start hook
-              │       │     Extension sees render result, returns raw string mutation
-              │       │     → replaces system_prompt for this run
+              │       │     Extension sees ctx.prompt_builder clone + render result
+              │       │     → returns PromptBuilder mutation (or raw string via .into())
+              │       │     → replaces prompt_builder for this run
               │       │
               │       └─→ on each AgentLoop::run_turn():
               │             │
               │             ├─→ skills_xml = format_skills_for_prompt(&skills)
-              │             │     // Phase 1: still string concatenation in AgentLoop
-              │             │     // Phase 2: upsert SkillsDirectory fragment into builder
+              │             │     // SkillsDirectory fragment already in SessionActor.builder
               │             │
               │             ├─→ on_before_provider_request hook
-              │             │     // Phase 2: Extension sees turn_builder clone
+              │             │     Extension sees ctx.prompt_builder clone
               │             │
-              │             └─→ llm_ctx.system_prompt = effective_system_prompt
+              │             └─→ llm_ctx.system_prompt = prompt_builder.render_option()
               │
               └─→ [outer loop continues → fresh AgentLoopConfig next iteration]
                     // Hook mutations do NOT persist to SessionActor state

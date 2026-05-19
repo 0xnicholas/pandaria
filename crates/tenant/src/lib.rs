@@ -1,7 +1,6 @@
 //! Tenant management: per-tenant registry, quota enforcement, and resource metering.
 
 pub mod error;
-pub mod extensions;
 pub mod manager;
 pub mod meter;
 pub mod registry;

@@ -9,6 +9,7 @@ use tracing::instrument;
 use crate::hook::context::{BeforeAgentStartCtx, ProviderRequestCtx, ProviderResponseCtx, ContextCtx, TurnEndCtx, AgentEndCtx};
 use crate::hook::mutations::{BeforeAgentStartMutation, ProviderRequestMutation, ProviderResponseMutation};
 use crate::events::AgentEvent;
+use crate::prompt::PromptBuilder;
 use crate::utils::provider_opts::ProviderStreamOptions;
 use crate::hook::timeout::with_timeout;
 use crate::error::AgentError;
@@ -28,7 +29,7 @@ pub struct AgentLoopConfig {
     pub provider: Arc<dyn LlmProvider>,
     pub hook_dispatcher: Arc<dyn HookDispatcher>,
     pub tools: Vec<AgentToolRef>,
-    pub system_prompt: Option<String>,
+    pub prompt_builder: PromptBuilder,
     pub stream_options: StreamOptions,
     #[doc(hidden)]
     pub steer_queue: Arc<Mutex<Vec<AgentMessage>>>,
@@ -39,6 +40,9 @@ pub struct AgentLoopConfig {
     /// Optional circuit breaker for the provider.
     #[doc(hidden)]
     pub circuit_breaker: Option<Arc<crate::circuit_breaker::CircuitBreaker>>,
+    /// Skills available for this session. Used to re-inject the
+    /// `<available_skills>` fragment after legacy prompt replacements.
+    pub skills: Vec<crate::skills::Skill>,
 }
 
 impl AgentLoopConfig {
@@ -58,12 +62,13 @@ impl AgentLoopConfig {
             provider,
             hook_dispatcher,
             tools,
-            system_prompt: None,
+            prompt_builder: PromptBuilder::default(),
             stream_options: StreamOptions::default(),
             steer_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
             event_sink: Arc::new(|_| {}),
             circuit_breaker: None,
+            skills: Vec::new(),
         }
     }
 }
@@ -84,8 +89,21 @@ fn build_tool_value_defs(tools: &[AgentToolRef]) -> Vec<serde_json::Value> {
     tools.iter().map(|t| serde_json::json!({"name": t.name(), "description": t.description(), "parameters": t.parameters()})).collect()
 }
 
-fn apply_provider_request_mutation(ctx: &mut LlmContext, opts: &mut StreamOptions, mutation: ProviderRequestMutation) {
-    if let Some(sp) = mutation.system_prompt { ctx.system_prompt = sp; }
+fn apply_provider_request_mutation(
+    prompt_builder: &mut PromptBuilder,
+    ctx: &mut LlmContext,
+    opts: &mut StreamOptions,
+    mutation: ProviderRequestMutation,
+    skills: &[crate::skills::Skill],
+) {
+    if let Some(mutation) = mutation.prompt_mutation {
+        prompt_builder.apply_mutation(mutation);
+    }
+    if let Some(builder) = mutation.system_prompt {
+        *prompt_builder = builder;
+        crate::skills::inject_skills_into_builder(prompt_builder, skills);
+    }
+    ctx.system_prompt = prompt_builder.render_option();
     if let Some(msgs) = mutation.messages { ctx.messages = msgs; }
     if let Some(tools) = mutation.tools { ctx.tools = tools; }
     if let Some(options) = mutation.options {
@@ -166,7 +184,8 @@ impl AgentLoop {
     ) -> Result<Vec<AgentMessage>, AgentError> {
         let agent_start_ctx = BeforeAgentStartCtx {
             tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(),
-            system_prompt: self.config.system_prompt.clone(), messages: initial_messages.clone(),
+            system_prompt: self.config.prompt_builder.render_option(), messages: initial_messages.clone(),
+            prompt_builder: self.config.prompt_builder.clone(),
             tools: build_tool_value_defs(&self.config.tools), model: self.config.model.clone(),
         };
         let agent_start_mutation = crate::hook::timeout::with_timeout(
@@ -175,7 +194,14 @@ impl AgentLoop {
             BeforeAgentStartMutation::default(),
             "on_before_agent_start",
         ).await;
-        let system_prompt = agent_start_mutation.system_prompt.or_else(|| self.config.system_prompt.clone());
+        let mut prompt_builder = self.config.prompt_builder.clone();
+        if let Some(mutation) = agent_start_mutation.prompt_mutation {
+            prompt_builder.apply_mutation(mutation);
+        }
+        if let Some(builder) = agent_start_mutation.system_prompt {
+            prompt_builder = builder;
+            crate::skills::inject_skills_into_builder(&mut prompt_builder, &self.config.skills);
+        }
         let mut messages = agent_start_mutation.messages.unwrap_or(initial_messages);
         let mut new_messages: Vec<AgentMessage> = Vec::new();
         let mut turn_index: u64 = 0;
@@ -206,7 +232,7 @@ impl AgentLoop {
                 }
 
                 let result = self.run_turn(&mut messages, &mut new_messages, &mut turn_index, &mut message_index,
-                    &system_prompt, &signal).await;
+                    &mut prompt_builder, &signal).await;
                 match result {
                     TurnResult::ToolUse => continue,
                     TurnResult::Stop => break,
@@ -248,7 +274,7 @@ impl AgentLoop {
     }
 
     async fn run_turn(&self, messages: &mut Vec<AgentMessage>, new_messages: &mut Vec<AgentMessage>,
-        turn_index: &mut u64, message_index: &mut u64, system_prompt: &Option<String>, signal: &CancellationToken,
+        turn_index: &mut u64, message_index: &mut u64, prompt_builder: &mut PromptBuilder, signal: &CancellationToken,
     ) -> TurnResult {
         *turn_index += 1;
         (self.config.event_sink)(AgentEvent::TurnStart { turn_index: *turn_index });
@@ -265,12 +291,12 @@ impl AgentLoop {
         resolve_orphan_tool_calls(&mut transformed);
 
         let mut stream_opts = self.config.stream_options.clone();
-        let mut ctx = LlmContext { system_prompt: system_prompt.clone(), messages: transformed, tools: build_tool_defs(&self.config.tools) };
+        let mut ctx = LlmContext { system_prompt: prompt_builder.render_option(), messages: transformed, tools: build_tool_defs(&self.config.tools) };
 
         let provider_req_ctx = ProviderRequestCtx {
             tenant_id: self.config.tenant_id.clone(), session_id: self.config.session_id.clone(), model: self.config.model.clone(),
-            turn_index: *turn_index, system_prompt: ctx.system_prompt.clone(), messages: ctx.messages.clone(),
-            tools: ctx.tools.clone(), options: ProviderStreamOptions::from_options(&self.config.stream_options),
+            turn_index: *turn_index, system_prompt: ctx.system_prompt.clone(), prompt_builder: prompt_builder.clone(),
+            messages: ctx.messages.clone(), tools: ctx.tools.clone(), options: ProviderStreamOptions::from_options(&self.config.stream_options),
         };
         let provider_req_mutation = with_timeout(
             self.config.hook_dispatcher.on_before_provider_request(&provider_req_ctx),
@@ -278,7 +304,7 @@ impl AgentLoop {
             ProviderRequestMutation::default(),
             "on_before_provider_request",
         ).await;
-        apply_provider_request_mutation(&mut ctx, &mut stream_opts, provider_req_mutation);
+        apply_provider_request_mutation(prompt_builder, &mut ctx, &mut stream_opts, provider_req_mutation, &self.config.skills);
 
         // Cross-provider message normalization (spec §2.2 step 2.6)
         let model_meta = self.config.provider.model_metadata(&self.config.model);
@@ -636,12 +662,13 @@ mod tests {
         AgentLoopConfig {
             tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
             provider, hook_dispatcher: dispatcher, tools,
-            system_prompt: Some("You are helpful.".to_string()),
+            prompt_builder: PromptBuilder::from("You are helpful."),
             stream_options: StreamOptions::default(),
             steer_queue: Arc::new(Mutex::new(vec![])),
             follow_up_queue: Arc::new(Mutex::new(vec![])),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
             circuit_breaker: None,
+            skills: Vec::new(),
         }
     }
 
@@ -1343,12 +1370,13 @@ mod tests {
         let config = AgentLoopConfig {
             tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
             provider, hook_dispatcher: dispatcher, tools: vec![],
-            system_prompt: Some("You are helpful.".to_string()),
+            prompt_builder: PromptBuilder::from("You are helpful."),
             stream_options: StreamOptions::default(),
             steer_queue: steer_queue.clone(),
             follow_up_queue: Arc::new(Mutex::new(vec![])),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
             circuit_breaker: None,
+            skills: Vec::new(),
         };
         let loop_ = AgentLoop::new(config);
 
@@ -1379,12 +1407,13 @@ mod tests {
         let config = AgentLoopConfig {
             tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
             provider, hook_dispatcher: dispatcher, tools: vec![],
-            system_prompt: Some("You are helpful.".to_string()),
+            prompt_builder: PromptBuilder::from("You are helpful."),
             stream_options: StreamOptions::default(),
             steer_queue: Arc::new(Mutex::new(vec![])),
             follow_up_queue: follow_up_queue.clone(),
             event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
             circuit_breaker: None,
+            skills: Vec::new(),
         };
         let loop_ = AgentLoop::new(config);
 

@@ -5,3 +5,4 @@
 # Added by cargo
 
 /target
+tui-config.toml

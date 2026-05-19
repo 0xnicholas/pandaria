@@ -354,12 +354,13 @@ impl SessionActor {
                 tenant_id: self.tenant_id.clone(), session_id: self.session_id.clone(),
                 model: self.model.clone(), provider: self.provider.clone(),
                 hook_dispatcher: self.hook_dispatcher.clone(), tools: self.tools.clone(),
-                system_prompt: Some(self.system_prompt()),
+                prompt_builder: self.prompt_builder.clone(),
                 stream_options: self.stream_options.clone(),
                 event_sink,
                 steer_queue: self.steer_queue.clone(),
                 follow_up_queue: self.follow_up_queue.clone(),
                 circuit_breaker: None,
+                skills: self.skills.clone(),
             };
 
             match AgentLoop::new(config).run(messages, self.abort_token.child_token()).await {

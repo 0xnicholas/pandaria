@@ -8,8 +8,6 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use agent_core::{CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig, SessionStore};
-use extensions::host::manager::ExtensionManager;
-use extensions::Extension;
 
 use crate::error::TenantError;
 use crate::events::SessionEventBridge;
@@ -136,13 +134,11 @@ pub struct TenantManagerImpl {
     default_system_prompt: String,
     #[allow(dead_code)]
     default_context_window: usize,
-    extensions: Vec<Arc<dyn Extension>>,
     sessions: DashMap<(String, Uuid), ActiveSession>,
 }
 
 impl TenantManagerImpl {
     /// Create a new `TenantManagerImpl`.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         registry: Arc<TenantRegistry>,
         provider: Arc<dyn ai_provider::LlmProvider>,
@@ -150,7 +146,6 @@ impl TenantManagerImpl {
         default_model: impl Into<String>,
         default_system_prompt: impl Into<String>,
         default_context_window: usize,
-        extensions: Vec<Arc<dyn Extension>>,
     ) -> Self {
         Self {
             registry,
@@ -159,7 +154,6 @@ impl TenantManagerImpl {
             default_model: default_model.into(),
             default_system_prompt: default_system_prompt.into(),
             default_context_window,
-            extensions,
             sessions: DashMap::new(),
         }
     }
@@ -181,13 +175,9 @@ impl TenantManager for TenantManagerImpl {
         // 2. Reserve a session slot (RAII guard). Quota check is implicit.
         let guard = supervisor.reserve_session()?;
 
-        // 3. Spawn extensions for this session
-        let ext_manager = ExtensionManager::new(self.extensions.clone());
-        let (hook_router, ext_handles, ext_joins) = ext_manager.spawn_all();
-        // Give spawned ExtensionActors a chance to subscribe to the EventBus
-        // before observational hooks are emitted.
-        tokio::task::yield_now().await;
-        let tools = ext_manager.collect_agent_tools(&ext_handles);
+        // 3. Create per-session hook dispatcher and tools
+        let hook_dispatcher = Arc::new(agent_core::DefaultHookDispatcher::new()) as Arc<dyn agent_core::HookDispatcher>;
+        let tools: Vec<Arc<dyn agent_core::types::AgentTool>> = vec![];
 
         // 4. Create compaction actor
         let compaction_config = CompactionConfig {
@@ -214,7 +204,7 @@ impl TenantManager for TenantManagerImpl {
             system_prompt: system_prompt.clone(),
             model: self.default_model.clone(),
             provider: self.provider.clone(),
-            hook_dispatcher: Arc::new(hook_router),
+            hook_dispatcher,
             compaction_actor,
             tools,
             store: self.store.clone(),
@@ -250,8 +240,6 @@ impl TenantManager for TenantManagerImpl {
                 _guard: guard,
                 info: info.clone(),
                 bridge,
-                ext_handles,
-                ext_joins,
                 turn_counter: AtomicU64::new(0),
             },
         );
@@ -383,18 +371,7 @@ impl TenantManager for TenantManagerImpl {
         // Cancel any in-flight operation.
         entry.abort_token.cancel();
 
-        // Gracefully shut down extension actors.
-        ExtensionManager::shutdown_all(&entry.ext_handles).await;
-
-        // Wait for extension actor tasks to finish (best-effort, 2s timeout).
-        let joins = entry.ext_joins;
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            for j in joins {
-                let _ = j.await;
-            }
-        })
-        .await;
-
+        // Extension lifecycle is managed by the caller (api-gateway) via factory.
         // The SessionGuard in `entry._guard` will be dropped here,
         // automatically releasing the session slot.
 

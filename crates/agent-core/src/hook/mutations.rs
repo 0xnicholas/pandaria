@@ -41,17 +41,29 @@ pub enum CompactDecision {
     Replace { result: crate::compaction::CompactionResult },
 }
 
+use crate::prompt::{PromptBuilder, PromptMutation};
+
 /// Mutation returned by on_before_agent_start hook
 #[derive(Debug, Clone, Default)]
 pub struct BeforeAgentStartMutation {
-    pub system_prompt: Option<String>,
+    /// Legacy field: wholesale replacement of the prompt builder.
+    /// When set, skills are automatically re-injected afterwards.
+    pub system_prompt: Option<PromptBuilder>,
+    /// Surgical prompt mutation applied to the current builder.
+    /// Skills are preserved by default (mutate, not replace).
+    pub prompt_mutation: Option<PromptMutation>,
     pub messages: Option<Vec<AgentMessage>>,
 }
 
 /// Mutation returned by on_before_provider_request hook
 #[derive(Debug, Clone, Default)]
 pub struct ProviderRequestMutation {
-    pub system_prompt: Option<Option<String>>,
+    /// Legacy field: wholesale replacement of the prompt builder.
+    /// When set, skills are automatically re-injected afterwards.
+    pub system_prompt: Option<PromptBuilder>,
+    /// Surgical prompt mutation applied to the current builder.
+    /// Skills are preserved by default (mutate, not replace).
+    pub prompt_mutation: Option<PromptMutation>,
     pub messages: Option<Vec<AgentMessage>>,
     pub tools: Option<Option<Vec<ai_provider::ToolDef>>>,
     pub options: Option<crate::utils::provider_opts::ProviderStreamOptions>,

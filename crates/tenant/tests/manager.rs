@@ -111,7 +111,6 @@ async fn test_manager_create_session() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let info = manager
@@ -137,7 +136,6 @@ async fn test_manager_create_session_unknown_tenant() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let err = manager
@@ -164,7 +162,6 @@ async fn test_manager_list_and_get_session() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let info = manager
@@ -200,7 +197,6 @@ async fn test_manager_send_message() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let info = manager
@@ -234,7 +230,6 @@ async fn test_manager_subscribe_events() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let info = manager
@@ -279,7 +274,6 @@ async fn test_manager_delete_session_releases_slot() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let info = manager
@@ -317,7 +311,6 @@ async fn test_manager_interrupt_does_not_deadlock() {
         "echo",
         "You are helpful.",
         128_000,
-        vec![],
     );
 
     let info = manager
