@@ -137,6 +137,8 @@ api-gateway → tenant → agent-core → ai-provider
         └── {tenant_id}/   # 租户级工作空间
 ```
 
+> `workspaces/{tenant_id}/` 是 agent 文件工具（如 read_file / write_file）的沙箱，**不存储 session 状态**。session 状态（消息历史、compaction 结果）通过 `SessionStore` 持久化到 PostgreSQL / Redis。
+
 ### 使用方式
 
 - **PathGuard**: `AgentSpace::workspace_for(tenant_id)` 作为允许的文件访问前缀
