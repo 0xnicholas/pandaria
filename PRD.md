@@ -395,10 +395,10 @@
 
 ### V2（远期）
 
-**F-22** `observability` crate — tracing 集成、per-tenant metrics
+**F-22** 可观测性（远期）
 - **验收标准**：所有 span 携带 `tenant_id` / `session_id`，per-tenant tool call 耗时、token 消耗、错误率可通过 metrics endpoint 查询。
 - **设计参照**：[ADR-005](./AGENTS.md) — 多租户基础能力
-- **优先级**：P2（依赖 api-gateway 提供 metrics endpoint，且基础 tracing 已通过 `tracing` crate 在各模块中内联使用）
+- **状态**：❌ 已删除（v0.1.3）。`observability` crate 已移除，sanitize 功能移至 `agent-core/src/utils/sanitize.rs`。metrics/tracing 若未来有需求，将重新设计更轻量的集成方案。
 
 **F-23** 分布式追踪（跨节点 propagation）
 - **验收标准**：同一 session 在节点 A 创建、节点 B 恢复后，trace 链路完整衔接。
@@ -520,7 +520,7 @@ LlmProvider                       ├── on_before_compact() → CompactDecis
 **目标**：水平扩展、可观测性深度集成、跨语言插件运行时。
 
 **交付物**：
-- `observability` crate：与 agent-core/tenant/api-gateway 深度集成，暴露 /metrics endpoint
+- 可观测性：metrics/tracing 若未来有需求，将重新设计更轻量的集成方案
 - 水平扩展：跨节点 session 迁移
 - AWS Bedrock provider 正式接入 Router
 - WASM / RPC 插件运行时

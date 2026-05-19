@@ -53,7 +53,7 @@ impl AgentError {
     ///
     /// Use this when logging or sending error messages to external systems.
     pub fn to_sanitized_string(&self) -> String {
-        observability::sanitize::sanitize_str(&self.to_string())
+        crate::utils::sanitize::sanitize_str(&self.to_string())
     }
 }
 

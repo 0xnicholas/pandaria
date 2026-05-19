@@ -19,7 +19,7 @@
 #### 多租户与接入
 
 - **tenant** — 租户注册表、并发配额（RAII SessionGuard）、token/tool call 滑动窗口计量、Session 生命周期管理
-- **observability** — tracing 初始化、Prometheus metrics 导出、敏感数据脱敏（sanitize）
+- **agent-core utils** — 敏感数据脱敏（sanitize，原 observability crate 已删除并内联至此）
 - **api-gateway** — REST API + SSE 事件流、HMAC-SHA256 Bearer Token 认证、per-tenant 令牌桶限流
 - **tui** — ratatui 终端客户端，REST client + SSE 订阅，完整 keybindings 和命令面板
 
@@ -46,7 +46,7 @@
 
 - **CPU time 预算**：tenant 中已预留字段，但无测量和执行逻辑
 - **Bedrock 未接入 Router**：`AwsBedrockProvider` 已实现，但 `ProviderFactory`/`ProviderResolver` 缺少对应变体
-- **observability 未深度集成**：metrics 记录函数（`record_tool_call`、`record_llm_tokens` 等）存在，但 agent-core/tenant/api-gateway 尚未调用
+- **observability 已删除**：v0.1.3 删除 `observability` crate，sanitize 功能内联至 `agent-core/src/utils/sanitize.rs`。metrics/tracing 暂无需求，若未来需要将重新设计更轻量的方案。
 - **Token 预算预检不完整**：`TenantManagerImpl::send_message()` 中 `check_quota(TokenUsage { input: 0, output: 0 })` 未预估本次请求消耗
 - **ADR-004 Actor 模型偏差**：AgentLoop、ToolExecutor、CompactionActor 和 DefaultHookDispatcher 均为 SessionActor 内部同步调用组件，无独立 Actor mailbox。EventProcessor 使用 tokio::mpsc，符合轻量级 Actor 模式。
 - **compaction 未使用 spawn_blocking**：大文本序列化在主线程执行
@@ -68,7 +68,7 @@
 
 #### v0.1.3 目标（短期）
 
-- [ ] observability 深度集成：agent-core/tenant/api-gateway 调用 metrics 记录函数
+- [x] observability 删除：crate 已移除，sanitize 内联至 agent-core
 - [ ] api-gateway 暴露 `/metrics` endpoint
 - [ ] Token 配额预检修复：`TenantManagerImpl::send_message()` 传入实际预估 token
 - [ ] 非测试 unwrap 清理：目标降至 50 个以下

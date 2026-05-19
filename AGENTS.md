@@ -91,7 +91,8 @@ crates/
     utils/           #   工具与选项
   tenant/            # Tenant Scheduler、配额管理、Session 注册表
   storage/          # 通用存储层（Session 状态序列化、Redis/PG 适配器）
-  observability/     # tracing 集成、metrics、per-tenant 统计
+  # observability crate 已删除（v0.1.3）。sanitize（敏感数据脱敏）移至 agent-core/src/utils/sanitize.rs。
+  # metrics/tracing 功能若未来需要，将重新设计更轻量的集成方案。
   ai-provider/        # LLM provider 抽象、流式 SSE 解析、HTTP 通信协议
   api-gateway/       # REST + SSE 接入、认证、限流
   tui/               # 终端客户端（ratatui + REST client + SSE 订阅）
@@ -109,7 +110,7 @@ crates/
 ```
 api-gateway → tenant → agent-core → ai-provider
                    ↓
-              storage / observability
+              storage
 ```
 
 ---
@@ -221,8 +222,8 @@ api-gateway → tenant → agent-core → ai-provider
 | LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral/DeepSeek + Bedrock feature-gated） |
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST） |
 | tenant crate | 🟡 核心功能已实现（并发配额、token/tool call 计量、session 生命周期），CPU time 预算待实现 |
-| observability crate | 🟡 核心功能已实现（tracing 初始化、Prometheus metrics、敏感数据脱敏），待与 agent-core/tenant/api-gateway 深度集成 |
-| api-gateway | 🟡 核心功能已实现（REST API + SSE + HMAC 认证 + 限流），待与 observability 深度集成 |
+| observability crate | ❌ 已删除（v0.1.3）。sanitize 移至 agent-core，metrics/tracing 暂无需求 |
+| api-gateway | ✅ 核心功能已实现（REST API + SSE + HMAC 认证 + 限流） |
 | storage 集成测试 | ✅ 已实现（testcontainers 启动 PostgreSQL + Redis，并行测试 tenant/session ID 隔离） |
 | 代码质量 | 🟡 部分修复（6 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复）。当前非测试 unwrap 共 190 个，待逐步清理 |
 | TUI 客户端 | 🟡 核心功能已重构（ratatui + REST client + SSE 订阅），新增：输入队列（steer/followUp）、Bash 模式（`!command`/`!!command`）、外部编辑器（Ctrl+X）、命令面板解耦（Ctrl+Shift+P 任意状态）、模型循环切换（Ctrl+P/N）、Redo（Ctrl+Shift+-）、字符跳转（Ctrl+]）、CompactionSummary 消息类型。持续迭代中 |

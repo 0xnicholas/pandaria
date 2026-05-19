@@ -5,7 +5,6 @@ edition = "2024"
 
 [dependencies]
 ai-provider = { path = "../ai-provider" }
-observability = { path = "../observability" }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }

@@ -5,7 +5,6 @@ members = [
     "crates/agent-core",
     "crates/api-gateway",
     "crates/storage",
-    "crates/observability",
     "crates/tui",
     "crates/tenant",
 ]
