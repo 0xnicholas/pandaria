@@ -119,13 +119,8 @@ async fn test_spawn_and_basic_operation() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let (handle, join_handle) = ExtensionActor::spawn(ext, bus, 8);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = handle.on_tool_call(ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
@@ -145,13 +140,8 @@ async fn test_blocking_hook_response() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = handle.on_tool_call(ctx).await;
     assert!(matches!(decision, HookDecision::Block { .. }));
@@ -177,16 +167,8 @@ async fn test_chain_hook_response_tool_result() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     let mutation = handle.on_tool_result(ctx).await;
     assert!(mutation.content.is_some());
@@ -200,11 +182,7 @@ async fn test_chain_hook_response_context() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-    let ctx = ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let ctx = ContextCtx::new("t1", "s1");
 
     let mutation = handle.on_context(ctx).await;
     assert!(mutation.messages.is_some());
@@ -221,16 +199,8 @@ async fn test_timeout_returns_default() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     // Should timeout and return default (not hang)
     let result = tokio::time::timeout(Duration::from_secs(2), handle.on_tool_result(ctx)).await;
@@ -249,26 +219,16 @@ async fn test_panic_isolation_tool_call() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     // Panic should be caught; actor should survive and return Continue
     let (decision, _mutation) = handle.on_tool_call(ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
 
     // Actor should still be alive
-    let ctx2 = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c2".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx2 = ToolCallCtx::new("t1", "s1", "t", "c2");
+    ctx2.input = serde_json::json!({});
     let (decision2, _mutation2) = handle.on_tool_call(ctx2).await;
     assert!(matches!(decision2, HookDecision::Continue));
 }
@@ -279,16 +239,8 @@ async fn test_panic_isolation_tool_result() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "t".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+    ctx.input = serde_json::json!({});
 
     let mutation = handle.on_tool_result(ctx).await;
     assert!(mutation.content.is_none());
@@ -303,11 +255,7 @@ async fn test_panic_isolation_context() {
     let bus = Arc::new(EventBus::<ObsEvent>::new(16));
     let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-    let ctx = ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let ctx = ContextCtx::new("t1", "s1");
 
     let mutation = handle.on_context(ctx).await;
     assert!(mutation.messages.is_none());

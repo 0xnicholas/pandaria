@@ -9,13 +9,8 @@ async fn test_tool_guard_denies_forbidden_tool() {
         vec!["safe_tool".to_string()],
         vec!["dangerous_tool".to_string()],
     );
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "dangerous_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "dangerous_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     let (decision, mutation) = guard.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Block { .. }));
@@ -28,13 +23,8 @@ async fn test_tool_guard_denies_tool_not_in_allowed_list() {
         vec!["safe_tool".to_string()],
         vec![],
     );
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "unknown_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "unknown_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     let (decision, mutation) = guard.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Block { .. }));
@@ -47,13 +37,8 @@ async fn test_tool_guard_allows_safe_tool() {
         vec!["safe_tool".to_string()],
         vec!["dangerous_tool".to_string()],
     );
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "safe_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "safe_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     let (decision, mutation) = guard.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
@@ -66,13 +51,8 @@ async fn test_tool_guard_allows_all_when_allowed_list_empty() {
         vec![],
         vec!["dangerous_tool".to_string()],
     );
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "any_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "any_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     // allowed_tools is empty → any tool is allowed (except denied)
     let (decision, mutation) = guard.on_tool_call(&ctx).await;

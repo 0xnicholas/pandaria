@@ -25,13 +25,8 @@ async fn test_manager_spawn_all_creates_router() {
     let (hook_router, handles, _join_handles) = manager.spawn_all();
 
     // Router should work — test with a tool call
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = hook_router.on_tool_call(&ctx).await;
     // Audit never blocks, rate-limit under budget → Continue
@@ -55,13 +50,8 @@ async fn test_manager_tool_guard_blocks() {
 
     let (hook_router, handles, _join_handles) = manager.spawn_all();
 
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "forbidden".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "forbidden", "call_1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = hook_router.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Block { .. }));

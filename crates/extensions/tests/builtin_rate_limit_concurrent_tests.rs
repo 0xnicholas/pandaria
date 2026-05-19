@@ -18,13 +18,8 @@ async fn concurrent_multi_tenant_independent_quota() {
     for tenant_idx in 0..tenant_count {
         let ext = rate_limit.clone();
         let handle = tokio::spawn(async move {
-            let ctx = ToolCallCtx {
-                tenant_id: format!("tenant-{tenant_idx}"),
-                session_id: "s1".to_string(),
-                tool_name: "test_tool".to_string(),
-                tool_call_id: "call_1".to_string(),
-                input: serde_json::json!({}),
-            };
+            let mut ctx = ToolCallCtx::new(format!("tenant-{tenant_idx}"), "s1", "test_tool", "call_1");
+            ctx.input = serde_json::json!({});
 
             let mut allowed = 0;
             let mut blocked = 0;
@@ -69,13 +64,8 @@ async fn concurrent_single_tenant_race() {
         let blocked = blocked_total.clone();
 
         let handle = tokio::spawn(async move {
-            let ctx = ToolCallCtx {
-                tenant_id: "tenant-0".to_string(),
-                session_id: "s1".to_string(),
-                tool_name: "test_tool".to_string(),
-                tool_call_id: "call_1".to_string(),
-                input: serde_json::json!({}),
-            };
+            let mut ctx = ToolCallCtx::new("tenant-0", "s1", "test_tool", "call_1");
+            ctx.input = serde_json::json!({});
 
             for _ in 0..calls_per_caller {
                 match ext.on_tool_call(&ctx).await.0 {
@@ -128,13 +118,8 @@ async fn concurrent_mixed_tenants() {
     for (tenant, total_calls, expected_allowed, expected_blocked) in configs {
         let ext = rate_limit.clone();
         let handle = tokio::spawn(async move {
-            let ctx = ToolCallCtx {
-                tenant_id: tenant.to_string(),
-                session_id: "s1".to_string(),
-                tool_name: "test_tool".to_string(),
-                tool_call_id: "call_1".to_string(),
-                input: serde_json::json!({}),
-            };
+            let mut ctx = ToolCallCtx::new(tenant, "s1", "test_tool", "call_1");
+            ctx.input = serde_json::json!({});
 
             let mut allowed = 0;
             let mut blocked = 0;
@@ -175,13 +160,8 @@ async fn max_tracked_tenants_enforced_concurrently() {
     for i in 0..10 {
         let ext = rate_limit.clone();
         let handle = tokio::spawn(async move {
-            let ctx = ToolCallCtx {
-                tenant_id: format!("tenant-{i}"),
-                session_id: "s1".to_string(),
-                tool_name: "test_tool".to_string(),
-                tool_call_id: "call_1".to_string(),
-                input: serde_json::json!({}),
-            };
+            let mut ctx = ToolCallCtx::new(format!("tenant-{i}"), "s1", "test_tool", "call_1");
+            ctx.input = serde_json::json!({});
             ext.on_tool_call(&ctx).await.0
         });
         handles.push(handle);

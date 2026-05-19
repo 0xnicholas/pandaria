@@ -6,13 +6,8 @@ use extensions::host::extension::Extension;
 #[tokio::test]
 async fn test_rate_limit_allows_under_budget() {
     let rate_limit = RateLimitExtension::new(5);
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     // First 5 calls should be allowed
     for i in 0..5 {
@@ -29,13 +24,8 @@ async fn test_rate_limit_allows_under_budget() {
 #[tokio::test]
 async fn test_rate_limit_blocks_over_budget() {
     let rate_limit = RateLimitExtension::new(2);
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     // First 2 calls allowed
     let _ = rate_limit.on_tool_call(&ctx).await;
@@ -51,13 +41,8 @@ async fn test_rate_limit_blocks_over_budget() {
 #[ignore = "slow: waits for rate-limit window (61s+)"]
 async fn test_rate_limit_resets_after_window() {
     let rate_limit = RateLimitExtension::new(2);
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     // Exhaust the budget
     let _ = rate_limit.on_tool_call(&ctx).await;

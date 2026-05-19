@@ -6,13 +6,8 @@ use extensions::host::extension::Extension;
 #[tokio::test]
 async fn test_audit_on_tool_call_returns_continue() {
     let audit = AuditExtension;
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     let (decision, mutation) = audit.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
@@ -22,16 +17,8 @@ async fn test_audit_on_tool_call_returns_continue() {
 #[tokio::test]
 async fn test_audit_on_tool_result_returns_default() {
     let audit = AuditExtension;
-    let ctx = ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![],
-        details: None,
-        is_error: false,
-    };
+    let mut ctx = ToolResultCtx::new("t1", "s1", "test_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     let mutation = audit.on_tool_result(&ctx).await;
     assert!(mutation.content.is_none());
@@ -43,19 +30,13 @@ async fn test_audit_on_tool_result_returns_default() {
 #[tokio::test]
 async fn test_audit_on_turn_end_does_not_panic() {
     let audit = AuditExtension;
-    let ctx = TurnEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        turn_index: 0,
-        messages: vec![],
-        usage: ai_provider::Usage {
+    let ctx = TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
             input_tokens: 0,
             output_tokens: 0,
             total_tokens: 0,
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
-        },
-    };
+        });
 
     // Should not panic — observational hook is fire-and-forget
     audit.on_turn_end(&ctx).await;
