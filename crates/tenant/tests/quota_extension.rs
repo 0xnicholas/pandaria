@@ -16,13 +16,8 @@ async fn test_quota_extension_allows_within_limit() {
     registry.register(tenant).unwrap();
 
     let ext = TenantQuotaExtension::new(registry);
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test", "c1");
+    ctx.input = serde_json::json!({});
 
     // First 5 calls should pass
     for _ in 0..5 {
@@ -39,13 +34,8 @@ async fn test_quota_extension_allows_within_limit() {
 async fn test_quota_extension_unknown_tenant() {
     let registry = Arc::new(TenantRegistry::new());
     let ext = TenantQuotaExtension::new(registry);
-    let ctx = ToolCallCtx {
-        tenant_id: "unknown".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("unknown", "s1", "test", "c1");
+    ctx.input = serde_json::json!({});
 
     // Unknown tenant: blocked by default
     let (decision, _) = ext.on_tool_call(&ctx).await;
@@ -56,13 +46,8 @@ async fn test_quota_extension_unknown_tenant() {
 async fn test_quota_extension_allow_unknown() {
     let registry = Arc::new(TenantRegistry::new());
     let ext = TenantQuotaExtension::new(registry).with_allow_unknown(true);
-    let ctx = ToolCallCtx {
-        tenant_id: "unknown".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test".to_string(),
-        tool_call_id: "c1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("unknown", "s1", "test", "c1");
+    ctx.input = serde_json::json!({});
 
     // Unknown tenant allowed in dev mode
     let (decision, _) = ext.on_tool_call(&ctx).await;

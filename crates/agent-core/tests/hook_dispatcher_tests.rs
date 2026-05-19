@@ -25,13 +25,8 @@ impl HookDispatcher for BlockingDispatcher {
 #[tokio::test]
 async fn test_default_dispatcher_allows_all() {
     let dispatcher = DefaultDispatcher;
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = dispatcher.on_tool_call(&ctx).await;
     assert!(matches!(decision, HookDecision::Continue));
@@ -40,13 +35,8 @@ async fn test_default_dispatcher_allows_all() {
 #[tokio::test]
 async fn test_custom_dispatcher_blocks() {
     let dispatcher = BlockingDispatcher;
-    let ctx = ToolCallCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test_tool".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-    };
+    let mut ctx = ToolCallCtx::new("t1", "s1", "test_tool", "call_1");
+    ctx.input = serde_json::json!({});
 
     let (decision, _mutation) = dispatcher.on_tool_call(&ctx).await;
     match decision {
@@ -60,60 +50,33 @@ async fn test_custom_dispatcher_blocks() {
 #[tokio::test]
 async fn test_default_hooks_return_defaults() {
     let dispatcher = DefaultDispatcher;
-    let ctx = agent_core::context::ToolResultCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        tool_name: "test".to_string(),
-        tool_call_id: "call_1".to_string(),
-        input: serde_json::json!({}),
-        content: vec![],
-        details: None,
-        is_error: false,
-    };
+    let ctx = agent_core::context::ToolResultCtx::new("t1", "s1", "test", "call_1");
 
     let mutation = dispatcher.on_tool_result(&ctx).await;
     assert!(mutation.content.is_none());
     assert!(mutation.details.is_none());
     assert!(mutation.is_error.is_none());
 
-    let ctx = agent_core::context::ContextCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let ctx = agent_core::context::ContextCtx::new("t1", "s1");
 
     let mutation = dispatcher.on_context(&ctx).await;
     assert!(mutation.messages.is_none());
 
-    let ctx = agent_core::context::TurnEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        turn_index: 0,
-        messages: vec![],
-        usage: ai_provider::Usage {
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: 0,
-            cache_creation_input_tokens: None,
-            cache_read_input_tokens: None,
-        },
-    };
+    let ctx = agent_core::context::TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+    });
 
     // Observational hooks should not panic
     dispatcher.on_turn_end(&ctx).await;
 
-    let ctx = agent_core::context::AgentEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        messages: vec![],
-    };
+    let ctx = agent_core::context::AgentEndCtx::new("t1", "s1");
     dispatcher.on_agent_end(&ctx).await;
 
-    let ctx = agent_core::context::SessionCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "test".to_string(),
-        tools: vec![],
-    };
+    let mut ctx = agent_core::context::SessionCtx::new("t1", "s1");
+    ctx.system_prompt = "test".to_string();
     dispatcher.on_session_start(&ctx).await;
 }

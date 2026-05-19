@@ -12,19 +12,13 @@ async fn test_token_meter_records_usage() {
     registry.register(tenant).unwrap();
 
     let ext = TenantTokenMeterExtension::new(registry.clone());
-    let ctx = TurnEndCtx {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        turn_index: 0,
-        messages: vec![],
-        usage: ai_provider::Usage {
+    let ctx = TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
             input_tokens: 10,
             output_tokens: 20,
             total_tokens: 30,
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
-        },
-    };
+        });
 
     ext.on_turn_end(&ctx).await;
 
@@ -37,19 +31,13 @@ async fn test_token_meter_records_usage() {
 async fn test_token_meter_unknown_tenant_ignored() {
     let registry = Arc::new(TenantRegistry::new());
     let ext = TenantTokenMeterExtension::new(registry.clone());
-    let ctx = TurnEndCtx {
-        tenant_id: "unknown".to_string(),
-        session_id: "s1".to_string(),
-        turn_index: 0,
-        messages: vec![],
-        usage: ai_provider::Usage {
+    let ctx = TurnEndCtx::new("unknown", "s1", 0, ai_provider::Usage {
             input_tokens: 10,
             output_tokens: 20,
             total_tokens: 30,
             cache_creation_input_tokens: None,
             cache_read_input_tokens: None,
-        },
-    };
+        });
 
     // Should not panic
     ext.on_turn_end(&ctx).await;
