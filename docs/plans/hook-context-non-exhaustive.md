@@ -37,6 +37,11 @@ cargo check -p agent-core
 
 **答案：不需要**。`#[non_exhaustive]` 只影响外部 crate，agent-core 内部仍然可以自由构造 struct literal。
 
+agent-core 内部存在以下构造点（均不受影响）：
+- `src/harness/tool.rs`：`ToolCallCtx`、`ToolResultCtx`
+- `src/harness/agent_loop.rs`：`BeforeAgentStartCtx`、`AgentEndCtx`、`ContextCtx`、`ProviderRequestCtx`、`ProviderResponseCtx`、`TurnEndCtx`
+- `src/harness/session.rs`：`SessionCtx`、`CompactCtx`
+
 **但需要注意**：agent-core 内部的 unit tests（`#[cfg(test)]` 模块在 `src/` 下）属于 agent-core 自身，也不受影响。
 
 ### 步骤 1.3: 编译验证
@@ -47,7 +52,7 @@ cargo check -p agent-core
 
 ---
 
-## Phase 2: extensions 迁移（~60 min）
+## Phase 2: extensions 迁移（~70 min）
 
 ### 步骤 2.1: 迁移 `extensions/src/` 中的 `#[cfg(test)]` 测试
 
@@ -58,9 +63,9 @@ cargo check -p agent-core
 | `src/builtins/path_guard.rs` | `ToolCallCtx`, `ToolResultCtx` | 4 |
 | `src/builtins/token_budget.rs` | `TurnEndCtx`, `ProviderRequestCtx` | 7 |
 | `src/host/hook_router.rs` | `ToolCallCtx`, `ContextCtx` | 3 |
-| `src/host/extension_actor.rs` | `ToolCallCtx`, `ToolResultCtx` | 6 |
+| `src/host/extension_actor.rs` | `ToolCallCtx`, `ToolResultCtx`, `ContextCtx` | 7 |
 
-**总计**: ~28 处
+**总计**: ~29 处
 
 **替换策略**: 使用 Python/sed 脚本批量替换，然后手工 review。
 
@@ -73,22 +78,22 @@ cargo test -p extensions --lib
 
 | 文件 | Struct | 数量 |
 |---|---|---|
-| `builtin_audit_tests.rs` | `ToolCallCtx`, `ToolResultCtx`, `TurnEndCtx` | 4 |
+| `builtin_audit_tests.rs` | `ToolCallCtx`, `ToolResultCtx`, `TurnEndCtx` | 3 |
 | `builtin_rate_limit_tests.rs` | `ToolCallCtx` | 3 |
 | `builtin_rate_limit_concurrent_tests.rs` | `ToolCallCtx` | 4 |
 | `builtin_tool_guard_tests.rs` | `ToolCallCtx` | 4 |
-| `extension_actor_tests.rs` | `ToolCallCtx`, `ToolResultCtx`, `ContextCtx` | 8 |
+| `extension_actor_tests.rs` | `ToolCallCtx`, `ToolResultCtx`, `ContextCtx` | 9 |
 | `extension_manager_tests.rs` | `ToolCallCtx` | 2 |
 | `hook_router_tests.rs` | `ToolCallCtx`, `ToolResultCtx`, `TurnEndCtx`, `AgentEndCtx`, `SessionCtx`, `ContextCtx` | 18 |
 | `hook_router_mutation_tests.rs` | `ToolCallCtx` | 2 |
 | `hook_router_observation_tests.rs` | `ToolExecutionStartCtx`, `ToolExecutionEndCtx`, `CompactEndCtx` | 3 |
 | `hook_router_compact_tests.rs` | `CompactCtx` | 1 |
 | `integration_router.rs` | `ToolCallCtx`, `ToolResultCtx`, `TurnEndCtx`, `AgentEndCtx`, `SessionCtx`, `ContextCtx` | 12 |
-| `integration_multi_ext.rs` | `ToolCallCtx`, `ToolResultCtx`, `TurnEndCtx`, `AgentEndCtx`, `SessionCtx`, `ContextCtx` | 12 |
+| `integration_multi_ext.rs` | `ToolCallCtx`, `ToolResultCtx`, `TurnEndCtx`, `AgentEndCtx`, `SessionCtx`, `ContextCtx` | 14 |
 | `integration_tool_execution_hooks.rs` | `ToolExecutionStartCtx`, `ToolExecutionEndCtx` | 4 |
 | `integration_lifecycle_hooks.rs` | `ToolExecutionStartCtx`, `ToolExecutionEndCtx` | 2 |
 
-**总计**: ~75 处
+**总计**: ~80 处
 
 **替换策略**: 由于 integration tests 中的 struct literal 格式更多样（有些字段引用临时变量），建议分文件逐个替换，使用 `cargo test -p extensions --test <test_name>` 逐个验证。
 
@@ -114,9 +119,9 @@ cargo test -p extensions
 
 | 文件 | Struct | 数量 |
 |---|---|---|
-| `hook_dispatcher_tests.rs` | `ToolCallCtx`, `ToolResultCtx`, `TurnEndCtx`, `AgentEndCtx`, `SessionCtx`, `ContextCtx` | 6 |
+| `hook_dispatcher_tests.rs` | `ToolCallCtx`, `ToolResultCtx`, `TurnEndCtx`, `AgentEndCtx`, `SessionCtx`, `ContextCtx` | 7 |
 
-**总计**: 6 处
+**总计**: 7 处
 
 **验证**:
 ```bash
@@ -145,9 +150,10 @@ cargo test --workspace --exclude storage
 ### 步骤 4.3: 确认无遗漏
 
 ```bash
-grep -rn "ToolCallCtx {" crates/ --include="*.rs" | grep -v "agent-core/src/hook/context.rs"
-grep -rn "TurnEndCtx {" crates/ --include="*.rs" | grep -v "agent-core/src/hook/context.rs"
-# ... 对每个 struct 重复
+for struct in ToolCallCtx ToolResultCtx TurnEndCtx AgentEndCtx SessionCtx ContextCtx ToolExecutionStartCtx ToolExecutionEndCtx CompactCtx CompactEndCtx BeforeAgentStartCtx ProviderRequestCtx ProviderResponseCtx; do
+  echo "=== $struct ==="
+  grep -rn "${struct} {" crates/ --include="*.rs" | grep -v "agent-core/src/hook/context.rs"
+done
 ```
 
 如果返回空，说明所有外部 struct literal 已清理完毕。
@@ -159,10 +165,12 @@ grep -rn "TurnEndCtx {" crates/ --include="*.rs" | grep -v "agent-core/src/hook/
 | 阶段 | 预估时间 | 依赖 |
 |---|---|---|
 | Phase 1: agent-core | ~30 min | 无 |
-| Phase 2: extensions | ~60 min | Phase 1 |
+| Phase 2: extensions | ~70 min | Phase 1 |
 | Phase 3: tenant + agent-core/tests | ~30 min | Phase 1 |
 | Phase 4: 验证 | ~10 min | Phase 2, 3 |
 | **总计** | **~2.5 h** | — |
+
+> 注：外部 struct literal 实际约 121 处（原 Plan 统计 ~114 处），增量主要来自 `integration_multi_ext.rs` 和 `extension_actor_tests.rs`。
 
 ## 执行建议
 

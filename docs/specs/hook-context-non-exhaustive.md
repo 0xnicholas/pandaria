@@ -4,7 +4,7 @@
 
 `crates/agent-core/src/hook/context.rs` 定义了 13 个 hook context struct（如 `ToolCallCtx`、`TurnEndCtx` 等），用于在 Extension trait 的 hook 方法中传递运行时上下文。这些 struct 的字段全部是 `pub`，且没有 `#[non_exhaustive]` 属性。
 
-当前问题：当 agent-core 新增 hook context 字段时（例如 `ToolCallCtx` 增加 `metadata: Option<Value>`），所有以 struct literal 方式构造这些 struct 的外部代码都会编译失败。根据代码库审计，存在 **130+ 处**外部 struct literal 构造，分布在 extensions 和 tenant 的源码与测试文件中。
+当前问题：当 agent-core 新增 hook context 字段时（例如 `ToolCallCtx` 增加 `metadata: Option<Value>`），所有以 struct literal 方式构造这些 struct 的外部代码都会编译失败。根据代码库审计，存在 **约 121 处**外部 struct literal 构造，分布在 extensions、tenant 和 agent-core/tests 的源码与测试文件中。
 
 ## 目标
 
@@ -31,6 +31,7 @@
   ```
 - 这比 builder pattern 更简洁，且与现有测试代码风格一致
 - `new()` 接收所有 mandatory 字段（框架在 hook 调用时必定已知的数据），有默认值的字段在 `new()` 中赋予默认值
+- agent-core 内部代码不受 `#[non_exhaustive]` 影响，仍可直接使用 struct literal 构造
 
 ### ADR-3: 统一使用 `impl Into<String>` 参数类型
 
@@ -40,6 +41,13 @@
   ToolCallCtx::new("t1", "s1", "tool", "call_1")
   ```
 - 对于 `u64`、`u32`、`bool` 等基础类型保持原类型
+
+### ADR-5: `CompactReason` enum 同样需要 `#[non_exhaustive]`
+
+- `CompactReason` 是 `CompactCtx` 的字段类型，外部测试中存在构造点（如 `CompactReason::Manual`）
+- 未来 compaction 机制可能新增 reason 变体（如 `Scheduled`、`Forced` 等）
+- 若不对 `CompactReason` 添加 `#[non_exhaustive]`，新增变体会导致外部代码的 exhaustive match 编译失败
+- **结论**：`CompactReason` 与 context struct 一并添加 `#[non_exhaustive]`
 
 ### ADR-4: 测试 helper 不放在 agent-core 中
 
@@ -64,6 +72,9 @@ pub struct ToolCallCtx {
 }
 
 impl ToolCallCtx {
+    /// Create a new `ToolCallCtx` with the given identifiers.
+    ///
+    /// `input` defaults to `Value::Null`; assign directly after construction if needed.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -100,6 +111,9 @@ ctx.input = json!({"path": "/tmp"});
 #### `ToolResultCtx`
 ```rust
 impl ToolResultCtx {
+    /// Create a new `ToolResultCtx` with the given identifiers.
+    ///
+    /// `content` defaults to empty, `details` to `None`, `is_error` to `false`.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -123,6 +137,9 @@ impl ToolResultCtx {
 #### `TurnEndCtx`
 ```rust
 impl TurnEndCtx {
+    /// Create a new `TurnEndCtx` with the given identifiers, turn index and usage.
+    ///
+    /// `messages` defaults to empty; assign directly after construction if needed.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -147,6 +164,9 @@ impl TurnEndCtx {
 #### `ContextCtx`
 ```rust
 impl ContextCtx {
+    /// Create a new `ContextCtx` with the given identifiers.
+    ///
+    /// `messages` defaults to empty; assign directly after construction if needed.
     pub fn new(tenant_id: impl Into<String>, session_id: impl Into<String>) -> Self {
         Self {
             tenant_id: tenant_id.into(),
@@ -160,6 +180,9 @@ impl ContextCtx {
 #### `AgentEndCtx`
 ```rust
 impl AgentEndCtx {
+    /// Create a new `AgentEndCtx` with the given identifiers.
+    ///
+    /// `messages` defaults to empty; assign directly after construction if needed.
     pub fn new(tenant_id: impl Into<String>, session_id: impl Into<String>) -> Self {
         Self {
             tenant_id: tenant_id.into(),
@@ -173,6 +196,9 @@ impl AgentEndCtx {
 #### `SessionCtx`
 ```rust
 impl SessionCtx {
+    /// Create a new `SessionCtx` with the given identifiers.
+    ///
+    /// `system_prompt` defaults to empty, `tools` to empty.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -192,6 +218,9 @@ impl SessionCtx {
 #### `ToolExecutionStartCtx`
 ```rust
 impl ToolExecutionStartCtx {
+    /// Create a new `ToolExecutionStartCtx` with the given identifiers.
+    ///
+    /// `input` defaults to `Value::Null`; assign directly after construction if needed.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -212,6 +241,9 @@ impl ToolExecutionStartCtx {
 #### `ToolExecutionEndCtx`
 ```rust
 impl ToolExecutionEndCtx {
+    /// Create a new `ToolExecutionEndCtx` with the given identifiers.
+    ///
+    /// `success` defaults to `false`; assign directly after construction if needed.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -232,6 +264,9 @@ impl ToolExecutionEndCtx {
 #### `CompactCtx`
 ```rust
 impl CompactCtx {
+    /// Create a new `CompactCtx` with the given identifiers, preparation and reason.
+    ///
+    /// `entries` defaults to empty; assign directly after construction if needed.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -252,6 +287,9 @@ impl CompactCtx {
 #### `CompactEndCtx`
 ```rust
 impl CompactEndCtx {
+    /// Create a new `CompactEndCtx` with the given identifiers.
+    ///
+    /// `compacted_messages` defaults to empty, `token_savings` to `0`.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -269,6 +307,9 @@ impl CompactEndCtx {
 #### `BeforeAgentStartCtx`
 ```rust
 impl BeforeAgentStartCtx {
+    /// Create a new `BeforeAgentStartCtx` with the given identifiers and model.
+    ///
+    /// `system_prompt` defaults to `None`, `messages` and `tools` to empty.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -289,6 +330,10 @@ impl BeforeAgentStartCtx {
 #### `ProviderRequestCtx`
 ```rust
 impl ProviderRequestCtx {
+    /// Create a new `ProviderRequestCtx` with the given identifiers, model and turn index.
+    ///
+    /// `system_prompt` defaults to `None`, `messages` to empty, `tools` to `None`,
+    /// `options` to `ProviderStreamOptions::default()`.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -312,6 +357,9 @@ impl ProviderRequestCtx {
 #### `ProviderResponseCtx`
 ```rust
 impl ProviderResponseCtx {
+    /// Create a new `ProviderResponseCtx` with the given identifiers, model, turn index and stop reason.
+    ///
+    /// `content` and `messages_before` default to empty, `attempt` to `0`.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
