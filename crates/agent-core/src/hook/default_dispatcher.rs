@@ -14,6 +14,7 @@ use crate::hook::mutations::{
     BeforeAgentStartMutation, CompactDecision, ContextMutation, HookDecision,
     ProviderRequestMutation, ProviderResponseMutation, ToolCallMutation, ToolResultMutation,
 };
+use crate::space::AgentSpace;
 
 /// Default hook dispatcher that inlines the logic previously provided by
 /// `extensions` builtins.
@@ -26,8 +27,10 @@ use crate::hook::mutations::{
 /// - **ContentFilter**: basic PII redaction in tool inputs/results
 ///
 /// Rate-limiting is handled at the `api-gateway` layer and is not included here.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DefaultHookDispatcher {
+    /// Unified agent space for path resolution.
+    pub space: AgentSpace,
     /// ToolGuard: tools that are explicitly denied.
     pub denied_tools: Vec<String>,
     /// ToolGuard: if non-empty, only these tools are allowed.
@@ -42,10 +45,29 @@ pub struct DefaultHookDispatcher {
     session_turn_counts: DashMap<String, AtomicUsize>,
 }
 
+impl Default for DefaultHookDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DefaultHookDispatcher {
-    /// Create a new dispatcher with default (permissive) settings.
+    /// Create a new dispatcher with the default agent space.
     pub fn new() -> Self {
-        Self::default()
+        Self::with_space(AgentSpace::default())
+    }
+
+    /// Create a new dispatcher with an explicit agent space.
+    pub fn with_space(space: AgentSpace) -> Self {
+        Self {
+            space,
+            denied_tools: Vec::new(),
+            allowed_tools: Vec::new(),
+            path_guard_fields: HashMap::new(),
+            path_guard_scan_unknown: false,
+            max_turns_per_session: 0,
+            session_turn_counts: DashMap::new(),
+        }
     }
 
     // ═══ PathGuard helpers ═══
@@ -75,7 +97,7 @@ impl DefaultHookDispatcher {
         Some(normalized)
     }
 
-    fn is_path_allowed(path: &str, tenant_id: &str) -> bool {
+    fn is_path_allowed(&self, path: &str, tenant_id: &str) -> bool {
         let normalized = match Self::normalize_path(path) {
             Some(p) => p,
             None => return false,
@@ -83,8 +105,15 @@ impl DefaultHookDispatcher {
         if !normalized.starts_with('/') {
             return true;
         }
-        let allowed_prefix = format!("/workspace/{}/", tenant_id);
-        normalized.starts_with(&allowed_prefix)
+        let allowed_prefix = self.space.workspace_for(tenant_id);
+        let allowed_str = allowed_prefix.to_string_lossy();
+        // Ensure the prefix ends with '/' for clean matching
+        let allowed_prefix_str = if allowed_str.ends_with('/') {
+            allowed_str.to_string()
+        } else {
+            format!("{}/", allowed_str)
+        };
+        normalized.starts_with(&allowed_prefix_str)
     }
 
     fn extract_paths(
@@ -174,7 +203,7 @@ impl HookDispatcher for DefaultHookDispatcher {
             &mut paths,
         );
         for path in &paths {
-            if !Self::is_path_allowed(path, &ctx.tenant_id) {
+            if !self.is_path_allowed(path, &ctx.tenant_id) {
                 tracing::warn!(
                     target: "pandaria.path_guard",
                     tenant_id = %ctx.tenant_id,
@@ -186,8 +215,9 @@ impl HookDispatcher for DefaultHookDispatcher {
                 return (
                     HookDecision::Block {
                         reason: format!(
-                            "path '{}' is outside of allowed workspace (/workspace/{}/)",
-                            path, ctx.tenant_id
+                            "path '{}' is outside of allowed workspace ({})",
+                            path,
+                            self.space.workspace_for(&ctx.tenant_id).display()
                         ),
                     },
                     ToolCallMutation::default(),
@@ -222,7 +252,7 @@ impl HookDispatcher for DefaultHookDispatcher {
             Self::collect_string_paths(details, &mut paths);
         }
         for path in &paths {
-            if !Self::is_path_allowed(path, &ctx.tenant_id) {
+            if !self.is_path_allowed(path, &ctx.tenant_id) {
                 tracing::warn!(
                     target: "pandaria.path_guard",
                     tenant_id = %ctx.tenant_id,

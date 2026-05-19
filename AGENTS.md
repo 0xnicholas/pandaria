@@ -83,14 +83,12 @@ TenantSupervisor
 crates/
   agent-core/        # Agent loop、Tool pipeline、Session 生命周期、Compaction、HookDispatcher trait
     harness/         #   核心运行时（AgentLoop、SessionActor、ToolExecutor、CompactionActor）
-    hook/            #   Hook 协议（HookDispatcher trait、*Ctx、*Mutation、超时边界）
-    persistence/     #   持久化边界（SessionStore trait、SessionEntry）
-    utils/           #   工具与选项
-  agent-core/
     hook/            #   HookDispatcher trait、DefaultHookDispatcher、*Ctx、*Mutation
-    guards/          #   安全策略（path_guard、tool_guard、content_filter）
-    quotas/          #   资源配额（token_budget）
-    audit.rs         #   审计日志
+    space.rs         #   AgentSpace 统一目录抽象
+    skills/          #   Skill 扫描、加载、注入
+    persistence/     #   持久化边界（SessionStore trait、SessionEntry）
+    prompt/          #   PromptBuilder、PromptMutation
+    utils/           #   工具与选项
   tenant/            # Tenant Scheduler、配额管理、Session 注册表
   storage/          # 通用存储层（Session 状态序列化、Redis/PG 适配器）
   observability/     # tracing 集成、metrics、per-tenant 统计
@@ -116,6 +114,38 @@ api-gateway → tenant → agent-core → ai-provider
 
 ---
 
+## AgentSpace 统一目录结构
+
+所有运行时数据（工作空间、配置、缓存、日志、临时文件、skills）统一在一个根目录下管理，默认路径由平台决定：
+
+- **macOS**: `~/Library/Application Support/pandaria/`
+- **Linux**: `~/.local/share/pandaria/`
+- **覆盖**: `PANDARIA_SPACE_ROOT` 环境变量
+
+### 目录布局
+
+```
+{pandaria_root}/
+  ├── config/              # 配置文件
+  │     └── tui/
+  │           └── config.toml
+  ├── cache/               # LLM 响应缓存等
+  ├── logs/                # 文件日志（tracing-appender）
+  ├── temp/                # 临时文件
+  ├── skills/              # 全局 skill 定义文件
+  └── workspaces/
+        └── {tenant_id}/   # 租户级工作空间
+```
+
+### 使用方式
+
+- **PathGuard**: `AgentSpace::workspace_for(tenant_id)` 作为允许的文件访问前缀
+- **Skills Scanner**: 默认扫描 `AgentSpace::skills_dir()`，可通过 `PANDARIA_SKILLS_DIR` 覆盖
+- **TUI**: 配置默认读取/写入 `{root}/config/tui/config.toml`，临时文件使用 `{root}/temp/`
+- **代码**: `AgentSpace::from_env_or_default()` 获取实例，调用 `ensure_dirs()` 确保目录存在
+
+---
+
 ## 关键约束
 
 ### 并发模型
@@ -134,7 +164,7 @@ api-gateway → tenant → agent-core → ai-provider
 ### 安全约束
 
 - `tenant_id` 必须在所有 tracing span 和日志中出现，禁止无 tenant 上下文的操作日志。
-- 工具执行时的文件系统访问必须经过路径校验（由 `path_guard` 在 `on_tool_call` 中拦截），禁止访问 `/workspace/{tenant_id}/` 以外的路径。
+- 工具执行时的文件系统访问必须经过路径校验（由 `path_guard` 在 `on_tool_call` 中拦截），禁止访问 `AgentSpace::workspace_for(tenant_id)` 以外的路径。
 - LLM API Key 不得出现在任何日志、tracing span、错误消息或 panic 信息中。
 
 ### 代码规范
@@ -195,6 +225,7 @@ api-gateway → tenant → agent-core → ai-provider
 | 代码质量 | ✅ 修复（6 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复） |
 | TUI 客户端 | 🟡 核心功能已重构（ratatui + REST client + SSE 订阅），新增：输入队列（steer/followUp）、Bash 模式（`!command`/`!!command`）、外部编辑器（Ctrl+X）、命令面板解耦（Ctrl+Shift+P 任意状态）、模型循环切换（Ctrl+P/N）、Redo（Ctrl+Shift+-）、字符跳转（Ctrl+]）、CompactionSummary 消息类型。持续迭代中 |
 | PromptBuilder 设计 | ✅ Phase 1 & 2 已完成。核心类型 + SessionActor/AgentLoop 集成 + Hook 系统 `PromptBuilder` 接入。`BeforeAgentStartMutation` / `ProviderRequestMutation` 新增 `prompt_mutation: Option<PromptMutation>` 字段；legacy `system_prompt: Option<PromptBuilder>` 保留向后兼容，替换后框架自动重新注入 `SkillsDirectory`。`inject_skills_into_builder` 辅助函数提取至 `skills/injector.rs`。 |
+| AgentSpace 统一目录 | ✅ 已实现（`agent-core/src/space.rs`）。统一根目录（默认 `~/.local/share/pandaria`），含 config/cache/logs/temp/skills/workspaces 子目录。PathGuard、Skills Scanner、TUI 均已接入。`PANDARIA_SPACE_ROOT` 环境变量可覆盖根目录。
 
 ---
 

@@ -18,6 +18,7 @@ futures = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
 dashmap = { workspace = true }
+directories = "5"
 
 [features]
 testing = []

@@ -16,6 +16,7 @@ dependencies = [
  "ai-provider",
  "async-trait",
  "dashmap",
+ "directories",
  "futures",
  "observability",
  "regex",

@@ -32,10 +32,34 @@ fn default_config_path() -> PathBuf {
             return local;
         }
     }
-    // 2. 回退到系统标准路径
-    directories::ProjectDirs::from("", "", "pandaria")
-        .map(|d| d.config_dir().join("tui").join("config.toml"))
-        .unwrap_or_else(|| PathBuf::from("config.toml"))
+    // 2. 检查统一 agent 空间目录
+    if let Ok(root) = std::env::var("PANDARIA_SPACE_ROOT") {
+        let space_path = PathBuf::from(root).join("config").join("tui").join("config.toml");
+        if space_path.exists() {
+            return space_path;
+        }
+    }
+    if let Some(dirs) = directories::ProjectDirs::from("", "", "pandaria") {
+        let space_path = dirs.data_dir().join("config").join("tui").join("config.toml");
+        if space_path.exists() {
+            return space_path;
+        }
+    }
+    // 3. 回退到旧版系统标准路径（向后兼容）
+    if let Some(dirs) = directories::ProjectDirs::from("", "", "pandaria") {
+        let legacy = dirs.config_dir().join("tui").join("config.toml");
+        if legacy.exists() {
+            return legacy;
+        }
+    }
+    // 4. 默认创建位置：统一 agent 空间
+    if let Ok(root) = std::env::var("PANDARIA_SPACE_ROOT") {
+        return PathBuf::from(root).join("config").join("tui").join("config.toml");
+    }
+    if let Some(dirs) = directories::ProjectDirs::from("", "", "pandaria") {
+        return dirs.data_dir().join("config").join("tui").join("config.toml");
+    }
+    PathBuf::from("config.toml")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

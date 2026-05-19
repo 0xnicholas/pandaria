@@ -30,6 +30,7 @@ pub mod prompt;
 pub mod skills;
 #[cfg(any(test, feature = "testing"))]
 pub mod test_utils;
+pub mod space;
 pub mod types;
 
 // ═══ Compatibility re-exports ═══
@@ -68,6 +69,7 @@ pub use skills::{
 pub use error::{AgentError, CompactionError};
 pub use events::{AgentEvent, AgentEventListener};
 pub use file_ops::{DefaultFileOperationExtractor, FileOperationExtractor, FileOperations};
+pub use space::AgentSpace;
 pub use types::*;
 
 // Re-export ai-provider types used in public API

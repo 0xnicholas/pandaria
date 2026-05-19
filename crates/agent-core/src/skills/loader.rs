@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
+use crate::space::AgentSpace;
 use super::scanner::scan_skill_dirs;
 use super::types::{LoadSkillsResult, SkillSource};
 
@@ -33,6 +34,27 @@ pub struct FileSystemSkillLoader {
     pub user_skills_dir: String,
     pub project_skills_dir: String,
     pub explicit_paths: Vec<String>,
+}
+
+impl Default for FileSystemSkillLoader {
+    fn default() -> Self {
+        Self::from_env()
+    }
+}
+
+impl FileSystemSkillLoader {
+    /// Create a loader using environment conventions:
+    /// - `user_skills_dir`: `PANDARIA_SKILLS_DIR` env var, or `{AgentSpace::skills_dir()}`
+    /// - `project_skills_dir`: empty (no project-level scan by default)
+    pub fn from_env() -> Self {
+        let user_skills_dir = std::env::var("PANDARIA_SKILLS_DIR")
+            .unwrap_or_else(|_| AgentSpace::default().skills_dir().display().to_string());
+        Self {
+            user_skills_dir,
+            project_skills_dir: String::new(),
+            explicit_paths: Vec::new(),
+        }
+    }
 }
 
 #[async_trait]

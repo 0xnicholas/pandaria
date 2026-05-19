@@ -29,6 +29,21 @@ use ratatui::Frame;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
+/// Return the pandaria temp directory, falling back to system temp_dir.
+fn temp_dir_for_pandaria() -> std::path::PathBuf {
+    if let Ok(root) = std::env::var("PANDARIA_SPACE_ROOT") {
+        let dir = std::path::PathBuf::from(root).join("temp");
+        let _ = std::fs::create_dir_all(&dir);
+        return dir;
+    }
+    if let Some(dirs) = directories::ProjectDirs::from("", "", "pandaria") {
+        let dir = dirs.data_dir().join("temp");
+        let _ = std::fs::create_dir_all(&dir);
+        return dir;
+    }
+    std::env::temp_dir()
+}
+
 /// Action sent from background tasks back to the main event loop.
 pub enum TaskAction {
     SessionCreated(SessionInfo),
@@ -1230,7 +1245,7 @@ impl App {
             .unwrap_or_else(|_| "vi".to_string());
 
         let current_text = self.editor.lines.join("\n");
-        let temp_file = std::env::temp_dir().join(format!("pandaria_edit_{}.md", std::process::id()));
+        let temp_file = temp_dir_for_pandaria().join(format!("pandaria_edit_{}.md", std::process::id()));
 
         if let Err(e) = std::fs::write(&temp_file, &current_text) {
             self.data.last_error = Some(format!("Failed to write temp file: {}", e));
