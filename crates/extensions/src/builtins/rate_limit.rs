@@ -152,13 +152,8 @@ mod tests {
     #[tokio::test]
     async fn test_vecdeque_prunes_correctly() {
         let ext = RateLimitExtension::with_config(3, Duration::from_millis(100), 10);
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "test".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "test", "c1");
+        ctx.input = serde_json::json!({});
 
         // 3 calls within budget
         assert!(matches!(ext.on_tool_call(&ctx).await.0, HookDecision::Continue));
@@ -181,24 +176,14 @@ mod tests {
 
         // Fill up the tenant cap
         for i in 0..2 {
-            let ctx = ToolCallCtx {
-                tenant_id: format!("tenant-{i}"),
-                session_id: "s1".to_string(),
-                tool_name: "test".to_string(),
-                tool_call_id: "c1".to_string(),
-                input: serde_json::json!({}),
-            };
+            let mut ctx = ToolCallCtx::new(format!("tenant-{i}"), "s1", "test", "c1");
+            ctx.input = serde_json::json!({});
             assert!(matches!(ext.on_tool_call(&ctx).await.0, HookDecision::Continue));
         }
 
         // 3rd new tenant should be blocked by the cap
-        let ctx3 = ToolCallCtx {
-            tenant_id: "tenant-2".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "test".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx3 = ToolCallCtx::new("tenant-2", "s1", "test", "c1");
+        ctx3.input = serde_json::json!({});
         let (decision, _) = ext.on_tool_call(&ctx3).await;
         assert!(
             matches!(decision, HookDecision::Block { reason } if reason.contains("tenant quota exceeded"))
@@ -209,26 +194,16 @@ mod tests {
     async fn test_idle_tenants_get_evicted() {
         let ext = RateLimitExtension::with_config(10, Duration::from_millis(100), 1);
 
-        let ctx_a = ToolCallCtx {
-            tenant_id: "tenant-a".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "test".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx_a = ToolCallCtx::new("tenant-a", "s1", "test", "c1");
+        ctx_a.input = serde_json::json!({});
         // tenant-a takes the single slot
         assert!(matches!(ext.on_tool_call(&ctx_a).await.0, HookDecision::Continue));
 
         // Wait for the window to expire so tenant-a's VecDeque becomes empty
         tokio::time::sleep(Duration::from_millis(150)).await;
 
-        let ctx_b = ToolCallCtx {
-            tenant_id: "tenant-b".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "test".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx_b = ToolCallCtx::new("tenant-b", "s1", "test", "c1");
+        ctx_b.input = serde_json::json!({});
         // tenant-b should now succeed because tenant-a was evicted
         assert!(matches!(ext.on_tool_call(&ctx_b).await.0, HookDecision::Continue));
     }

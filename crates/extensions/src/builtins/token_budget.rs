@@ -116,19 +116,13 @@ mod tests {
     async fn test_turn_counting() {
         let ext = TokenBudgetExtension::new(5);
 
-        let ctx = TurnEndCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            turn_index: 0,
-            messages: vec![],
-            usage: ai_provider::Usage {
+        let ctx = TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
                 input_tokens: 0,
                 output_tokens: 0,
                 total_tokens: 0,
                 cache_creation_input_tokens: None,
                 cache_read_input_tokens: None,
-            },
-        };
+            });
 
         ext.on_turn_end(&ctx).await;
         ext.on_turn_end(&ctx).await;
@@ -141,46 +135,28 @@ mod tests {
     async fn test_multi_session_isolation() {
         let ext = TokenBudgetExtension::new(10);
 
-        ext.on_turn_end(&TurnEndCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            turn_index: 0,
-            messages: vec![],
-            usage: ai_provider::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-                total_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-            },
-        }).await;
+        ext.on_turn_end(&TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        })).await;
 
-        ext.on_turn_end(&TurnEndCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s2".to_string(),
-            turn_index: 0,
-            messages: vec![],
-            usage: ai_provider::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-                total_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-            },
-        }).await;
-        ext.on_turn_end(&TurnEndCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s2".to_string(),
-            turn_index: 1,
-            messages: vec![],
-            usage: ai_provider::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-                total_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-            },
-        }).await;
+        ext.on_turn_end(&TurnEndCtx::new("t1", "s2", 0, ai_provider::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        })).await;
+        ext.on_turn_end(&TurnEndCtx::new("t1", "s2", 1, ai_provider::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        })).await;
 
         assert_eq!(ext.current_turn_count("s1"), 1);
         assert_eq!(ext.current_turn_count("s2"), 2);
@@ -191,46 +167,26 @@ mod tests {
         let ext = TokenBudgetExtension::new(2);
 
         // 记录 2 个 turns，达到阈值
-        ext.on_turn_end(&TurnEndCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            turn_index: 0,
-            messages: vec![],
-            usage: ai_provider::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-                total_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-            },
-        }).await;
-        ext.on_turn_end(&TurnEndCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            turn_index: 1,
-            messages: vec![],
-            usage: ai_provider::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-                total_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-            },
-        }).await;
+        ext.on_turn_end(&TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        })).await;
+        ext.on_turn_end(&TurnEndCtx::new("t1", "s1", 1, ai_provider::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        })).await;
 
         assert_eq!(ext.current_turn_count("s1"), 2);
 
         // 下次 provider request 时检查，应触发 budget_exceeded 日志（不阻断）
-        let provider_ctx = ProviderRequestCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            model: "test".to_string(),
-            system_prompt: None,
-            messages: vec![],
-            turn_index: 2,
-            tools: None,
-            options: agent_core::ProviderStreamOptions::default(),
-        };
+        let mut provider_ctx = ProviderRequestCtx::new("t1", "s1", "test", 2);
+        provider_ctx.options = agent_core::ProviderStreamOptions::default();
 
         let mutation = ext.on_before_provider_request(&provider_ctx).await;
         // 由于 on_before_provider_request 是 chain hook，只能返回 mutation，不能 Block

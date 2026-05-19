@@ -349,13 +349,8 @@ mod tests {
             (FilterRule::Keyword("password".to_string()), FilterAction::Block),
         ]);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "echo".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({"text": "my password is 123"}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "echo", "c1");
+        ctx.input = serde_json::json!({"text": "my password is 123"});
 
         let (decision, _) = ext.on_tool_call(&ctx).await;
         assert!(matches!(decision, HookDecision::Block { .. }));
@@ -367,13 +362,8 @@ mod tests {
             (FilterRule::Keyword("test".to_string()), FilterAction::Log),
         ]);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "echo".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({"text": "this is a test"}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "echo", "c1");
+        ctx.input = serde_json::json!({"text": "this is a test"});
 
         let (decision, _) = ext.on_tool_call(&ctx).await;
         assert!(matches!(decision, HookDecision::Continue));
@@ -385,19 +375,12 @@ mod tests {
             (FilterRule::PII(PIIType::Email), FilterAction::Redact),
         ]);
 
-        let ctx = ToolResultCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "echo".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-            content: vec![ai_provider::Content::Text {
+        let mut ctx = ToolResultCtx::new("t1", "s1", "echo", "c1");
+        ctx.content = vec![ai_provider::Content::Text {
                 text: "Email: user@example.com".to_string(),
                 text_signature: None,
-            }],
-            details: None,
-            is_error: false,
-        };
+            }];
+        ctx.input = serde_json::json!({});
 
         let mutation = ext.on_tool_result(&ctx).await;
         assert!(mutation.content.is_some());

@@ -119,11 +119,8 @@ impl agent_core::HookDispatcher for HookRouter {
 
         for handle in &self.handles {
             tracing::debug!(extension = %handle.name, hook = "on_context", "dispatching hook");
-            let ctx = ContextCtx {
-                tenant_id: ctx.tenant_id.clone(),
-                session_id: ctx.session_id.clone(),
-                messages: current_messages.clone(),
-            };
+            let mut ctx = ContextCtx::new(ctx.tenant_id.clone(), ctx.session_id.clone());
+            ctx.messages = current_messages.clone();
             let mutation = handle.on_context(ctx).await;
             if let Some(msgs) = mutation.messages {
                 current_messages = msgs;
@@ -279,13 +276,8 @@ mod tests {
 
         let router = HookRouter::new(vec![h1, h2, h3], bus);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "t".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+        ctx.input = serde_json::json!({});
 
         let (decision, _mutation) = router.on_tool_call(&ctx).await;
         assert!(matches!(decision, HookDecision::Block { .. }));
@@ -303,13 +295,8 @@ mod tests {
 
         let router = HookRouter::new(vec![h1, h2], bus);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "t".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+        ctx.input = serde_json::json!({});
 
         let (decision, _mutation) = router.on_tool_call(&ctx).await;
         assert!(matches!(decision, HookDecision::Continue));

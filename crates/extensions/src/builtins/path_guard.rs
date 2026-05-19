@@ -227,13 +227,8 @@ mod tests {
         fields.insert("read_file".to_string(), vec!["path".to_string()]);
         let guard = PathGuardExtension::new(fields, false);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "read_file".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({"path": "/etc/passwd"}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "read_file", "c1");
+        ctx.input = serde_json::json!({"path": "/etc/passwd"});
 
         let (decision, _) = guard.on_tool_call(&ctx).await;
         assert!(matches!(decision, HookDecision::Block { .. }));
@@ -245,13 +240,8 @@ mod tests {
         fields.insert("read_file".to_string(), vec!["path".to_string()]);
         let guard = PathGuardExtension::new(fields, false);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "read_file".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({"path": "/workspace/t1/project/main.rs"}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "read_file", "c1");
+        ctx.input = serde_json::json!({"path": "/workspace/t1/project/main.rs"});
 
         let (decision, _) = guard.on_tool_call(&ctx).await;
         assert!(matches!(decision, HookDecision::Continue));
@@ -261,13 +251,8 @@ mod tests {
     async fn test_path_guard_scan_unknown_tools() {
         let guard = PathGuardExtension::new(HashMap::new(), true);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "custom_tool".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({"some_field": "/etc/shadow"}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "custom_tool", "c1");
+        ctx.input = serde_json::json!({"some_field": "/etc/shadow"});
 
         let (decision, _) = guard.on_tool_call(&ctx).await;
         assert!(matches!(decision, HookDecision::Block { .. }));
@@ -277,16 +262,9 @@ mod tests {
     async fn test_path_guard_leak_in_result() {
         let guard = PathGuardExtension::new(HashMap::new(), false);
 
-        let ctx = ToolResultCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "read_file".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-            content: vec![],
-            details: Some(serde_json::json!({"path": "/etc/passwd"})),
-            is_error: false,
-        };
+        let mut ctx = ToolResultCtx::new("t1", "s1", "read_file", "c1");
+        ctx.input = serde_json::json!({});
+        ctx.details = Some(serde_json::json!({"path": "/etc/passwd"}));
 
         let mutation = guard.on_tool_result(&ctx).await;
         assert!(mutation.is_error.unwrap_or(false));

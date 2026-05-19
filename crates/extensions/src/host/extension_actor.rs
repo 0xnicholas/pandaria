@@ -464,13 +464,8 @@ mod tests {
         let bus = Arc::new(EventBus::<ObsEvent>::new(16));
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "blocked_tool".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "blocked_tool", "c1");
+        ctx.input = serde_json::json!({});
 
         let (decision, _mutation) = handle.on_tool_call(ctx).await;
         match decision {
@@ -485,13 +480,8 @@ mod tests {
         let bus = Arc::new(EventBus::<ObsEvent>::new(16));
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "allowed_tool".to_string(),
-            tool_call_id: "c2".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "allowed_tool", "c2");
+        ctx.input = serde_json::json!({});
 
         let (decision, _mutation) = handle.on_tool_call(ctx).await;
         assert!(matches!(decision, HookDecision::Continue));
@@ -513,16 +503,8 @@ mod tests {
         let bus = Arc::new(EventBus::<ObsEvent>::new(16));
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-        let ctx = ToolResultCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "t".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-            content: vec![],
-            details: None,
-            is_error: false,
-        };
+        let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+        ctx.input = serde_json::json!({});
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle.on_tool_result(ctx)).await;
         assert!(result.is_ok());
@@ -543,24 +525,14 @@ mod tests {
         let bus = Arc::new(EventBus::<ObsEvent>::new(16));
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-        let ctx = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "t".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx = ToolCallCtx::new("t1", "s1", "t", "c1");
+        ctx.input = serde_json::json!({});
 
         let (decision, _mutation) = handle.on_tool_call(ctx).await;
         assert!(matches!(decision, HookDecision::Continue));
 
-        let ctx2 = ToolCallCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "t".to_string(),
-            tool_call_id: "c2".to_string(),
-            input: serde_json::json!({}),
-        };
+        let mut ctx2 = ToolCallCtx::new("t1", "s1", "t", "c2");
+        ctx2.input = serde_json::json!({});
         let (decision2, _mutation2) = handle.on_tool_call(ctx2).await;
         assert!(matches!(decision2, HookDecision::Continue));
     }
@@ -580,16 +552,8 @@ mod tests {
         let bus = Arc::new(EventBus::<ObsEvent>::new(16));
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-        let ctx = ToolResultCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            tool_name: "t".to_string(),
-            tool_call_id: "c1".to_string(),
-            input: serde_json::json!({}),
-            content: vec![],
-            details: None,
-            is_error: false,
-        };
+        let mut ctx = ToolResultCtx::new("t1", "s1", "t", "c1");
+        ctx.input = serde_json::json!({});
 
         let mutation = handle.on_tool_result(ctx).await;
         assert!(mutation.content.is_none());
@@ -613,11 +577,7 @@ mod tests {
         let bus = Arc::new(EventBus::<ObsEvent>::new(16));
         let (handle, _jh) = ExtensionActor::spawn(ext, bus, 8);
 
-        let ctx = ContextCtx {
-            tenant_id: "t1".to_string(),
-            session_id: "s1".to_string(),
-            messages: vec![],
-        };
+        let ctx = ContextCtx::new("t1", "s1");
 
         let mutation = handle.on_context(ctx).await;
         assert!(mutation.messages.is_none());
