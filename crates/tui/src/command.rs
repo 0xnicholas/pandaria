@@ -7,6 +7,7 @@ pub enum Command {
     Tree, Fork { message_id: Option<String> }, Settings,
     Export { filename: Option<String> }, Import { filename: String },
     DeleteSession, SystemPrompt { prompt: String },
+    Skill { name: String },
 }
 
 impl Command {
@@ -40,7 +41,15 @@ impl Command {
             "import" if !args.is_empty() => Some(Command::Import { filename: args.to_string() }),
             "delete" => Some(Command::DeleteSession),
             "system" if !args.is_empty() => Some(Command::SystemPrompt { prompt: args.to_string() }),
-            _ => None,
+            "skill" if !args.is_empty() => Some(Command::Skill { name: args.to_string() }),
+            _ => {
+                // Support /skill:name format (no space between skill and name)
+                if cmd.starts_with("skill:") {
+                    Some(Command::Skill { name: cmd[6..].to_string() })
+                } else {
+                    None
+                }
+            }
         }
     }
 }

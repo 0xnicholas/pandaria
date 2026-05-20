@@ -8,6 +8,8 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use agent_core::{CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig, SessionStore};
+use agent_core::space::AgentSpace;
+use agent_core::skills::SkillLoader;
 
 use crate::error::TenantError;
 use crate::events::SessionEventBridge;
@@ -192,7 +194,26 @@ impl TenantManager for TenantManagerImpl {
             Arc::new(DefaultFileOperationExtractor::default()),
         ));
 
-        // 5. Create session actor
+        // 5. Load skills for this tenant
+        let agent_space = AgentSpace::from_env_or_default();
+        let user_skills_dir = agent_space.skills_dir().display().to_string();
+        let project_skills_dir = agent_space.workspace_for(tenant_id).join("skills");
+        let _ = std::fs::create_dir_all(&project_skills_dir);
+
+        let loader = agent_core::skills::FileSystemSkillLoader {
+            user_skills_dir,
+            project_skills_dir: project_skills_dir.display().to_string(),
+            explicit_paths: vec![],
+        };
+        let load_result = loader.load_skills().await;
+        if !load_result.diagnostics.is_empty() {
+            for diag in &load_result.diagnostics {
+                tracing::warn!(path = %diag.path, kind = ?diag.kind, "skill diagnostic: {}", diag.message);
+            }
+        }
+        let skills = load_result.skills;
+
+        // 6. Create session actor
         let session_id = Uuid::new_v4();
         let system_prompt = params
             .system_prompt
@@ -208,7 +229,7 @@ impl TenantManager for TenantManagerImpl {
             compaction_actor,
             tools,
             store: self.store.clone(),
-            skills: vec![],
+            skills,
         });
 
         // 6. Set up event bridge and abort token
@@ -307,7 +328,7 @@ impl TenantManager for TenantManagerImpl {
 
         {
             let mut actor = entry.actor.lock().await;
-            actor.prompt(content).await.map_err(map_agent_error)?;
+            actor.prompt(content).await.map_err(|e| map_agent_error(e, tenant_id))?;
         }
 
         Ok(turn_index)
@@ -430,7 +451,7 @@ impl TenantManager for TenantManagerImpl {
             })?;
 
         let mut actor = entry.actor.lock().await;
-        actor.compact(None).await.map_err(map_agent_error)?;
+        actor.compact(None).await.map_err(|e| map_agent_error(e, tenant_id))?;
 
         info!(
             tenant_id = %tenant_id,
@@ -471,17 +492,28 @@ impl TenantManager for TenantManagerImpl {
 }
 
 /// Map `AgentError` to `TenantError` preserving semantic meaning where possible.
-fn map_agent_error(e: agent_core::AgentError) -> TenantError {
+fn map_agent_error(e: agent_core::AgentError, tenant_id: &str) -> TenantError {
     use agent_core::AgentError;
     match &e {
-        AgentError::ContextOverflow(_) => {
-            TenantError::Internal(format!("context overflow: {}", e))
-        }
-        AgentError::LlmError(_) => TenantError::Internal(format!("LLM error: {}", e)),
-        AgentError::LlmResponseError(_) => {
-            TenantError::Internal(format!("LLM response error: {}", e))
-        }
-        AgentError::Cancelled => TenantError::Internal("session cancelled".to_string()),
-        _ => TenantError::Internal(format!("agent error: {}", e)),
+        AgentError::ContextOverflow(_) => TenantError::Internal {
+            tenant_id: tenant_id.into(),
+            message: format!("context overflow: {}", e),
+        },
+        AgentError::LlmError(_) => TenantError::Internal {
+            tenant_id: tenant_id.into(),
+            message: format!("LLM error: {}", e),
+        },
+        AgentError::LlmResponseError(_) => TenantError::Internal {
+            tenant_id: tenant_id.into(),
+            message: format!("LLM response error: {}", e),
+        },
+        AgentError::Cancelled => TenantError::Internal {
+            tenant_id: tenant_id.into(),
+            message: "session cancelled".to_string(),
+        },
+        _ => TenantError::Internal {
+            tenant_id: tenant_id.into(),
+            message: format!("agent error: {}", e),
+        },
     }
 }

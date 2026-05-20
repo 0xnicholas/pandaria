@@ -13,6 +13,8 @@ use crate::{
 };
 use crate::server::AppState;
 
+/// 发送消息并阻塞直到当前 turn 完成。
+/// 客户端应在调用此端点**之前**先订阅 `/events` SSE，否则可能错过事件。
 pub async fn send(
     State(state): State<Arc<AppState>>,
     Extension(tenant_id): Extension<TenantId>,
@@ -25,7 +27,7 @@ pub async fn send(
         .await?;
 
     Ok((
-        StatusCode::ACCEPTED,
+        StatusCode::OK,
         Json(SendMessageResponse { turn_index }),
     ))
 }

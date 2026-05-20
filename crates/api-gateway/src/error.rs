@@ -18,10 +18,13 @@ pub enum GatewayError {
     SessionNotFound,
 
     #[error("rate limit exceeded")]
-    RateLimited,
+    RateLimited { retry_after: u64 },
 
     #[error("unauthorized")]
     Unauthorized,
+
+    #[error("not acceptable")]
+    NotAcceptable,
 }
 
 impl IntoResponse for GatewayError {
@@ -39,21 +42,21 @@ impl IntoResponse for GatewayError {
                 }
                 tenant::TenantError::SessionLimitExceeded { .. } => (
                     StatusCode::TOO_MANY_REQUESTS,
-                    "limit_exceeded",
+                    "quota.session_limit",
                     tenant_err.to_string(),
                 ),
                 tenant::TenantError::TokenBudgetExceeded { .. } => (
                     StatusCode::TOO_MANY_REQUESTS,
-                    "limit_exceeded",
+                    "quota.token_budget",
                     tenant_err.to_string(),
                 ),
                 tenant::TenantError::ToolCallRateLimitExceeded { .. } => (
                     StatusCode::TOO_MANY_REQUESTS,
-                    "rate_limited",
+                    "quota.tool_rate_limit",
                     tenant_err.to_string(),
                 ),
-                tenant::TenantError::Internal(msg) => {
-                    tracing::error!(error = %msg, "tenant internal error");
+                tenant::TenantError::Internal { tenant_id, message } => {
+                    tracing::error!(tenant_id = %tenant_id, error = %message, "tenant internal error");
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "internal",
@@ -67,15 +70,20 @@ impl IntoResponse for GatewayError {
                 self.to_string(),
             ),
             Self::SessionNotFound => (StatusCode::NOT_FOUND, "not_found", "session not found".into()),
-            Self::RateLimited => (
+            Self::RateLimited { retry_after: _ } => (
                 StatusCode::TOO_MANY_REQUESTS,
-                "rate_limited",
+                "rate_limit.http",
                 "rate limit exceeded".into(),
             ),
             Self::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 "unauthorized",
                 "invalid or missing token".into(),
+            ),
+            Self::NotAcceptable => (
+                StatusCode::NOT_ACCEPTABLE,
+                "not_acceptable",
+                "requested content type is not supported".into(),
             ),
         };
 
@@ -88,10 +96,11 @@ impl IntoResponse for GatewayError {
 
         let mut response = (status, body).into_response();
 
-        if status == StatusCode::TOO_MANY_REQUESTS && matches!(self, Self::RateLimited) {
-            response
-                .headers_mut()
-                .insert("Retry-After", "1".parse().expect("literal '1' is valid header value"));
+        if let Self::RateLimited { retry_after } = self {
+            response.headers_mut().insert(
+                "Retry-After",
+                retry_after.to_string().parse().expect("u64 to string is valid header value"),
+            );
         }
 
         response
@@ -110,11 +119,11 @@ mod tests {
 
     #[test]
     fn test_rate_limited_response() {
-        let response = GatewayError::RateLimited.into_response();
+        let response = GatewayError::RateLimited { retry_after: 3 }.into_response();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(
             response.headers().get("Retry-After").unwrap(),
-            "1"
+            "3"
         );
     }
 
@@ -127,7 +136,10 @@ mod tests {
 
     #[test]
     fn test_tenant_internal_hides_details() {
-        let err = GatewayError::Tenant(tenant::TenantError::Internal("secret".into()));
+        let err = GatewayError::Tenant(tenant::TenantError::Internal {
+            tenant_id: "t1".into(),
+            message: "secret".into(),
+        });
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }

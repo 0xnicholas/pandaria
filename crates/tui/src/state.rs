@@ -17,7 +17,7 @@ impl State {
     pub fn new(session_id: SessionId, info: SessionInfo) -> Self {
         let mut sessions = HashMap::new();
         sessions.insert(session_id.clone(), SessionState::new(info));
-        Self { sessions, active_session: session_id, connection_status: ConnectionStatus::Disconnected, last_error: None }
+        Self { sessions, active_session: session_id, connection_status: ConnectionStatus::Connected, last_error: None }
     }
     pub fn active_session(&self) -> &SessionState {
         self.sessions.get(&self.active_session).expect("active session must exist")

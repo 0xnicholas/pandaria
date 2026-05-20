@@ -20,7 +20,7 @@ dashmap = { workspace = true }
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
-secrecy = { version = "0.8", features = ["serde"] }
+secrecy = { version = "0.10", features = ["serde"] }
 dotenvy = "0.15"
 tenant = { path = "../tenant" }
 agent-core = { path = "../agent-core" }
@@ -33,3 +33,23 @@ path = "src/main.rs"
 [dev-dependencies]
 tokio-test = "0.4"
 tower = { version = "0.5", features = ["util"] }
+wiremock = "0.6"
+tracing-subscriber = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+ai-provider = { path = "../ai-provider", features = ["test-utils"] }
+
+[[test]]
+name = "e2e_session_lifecycle"
+path = "tests/e2e/e2e_session_lifecycle.rs"
+
+[[test]]
+name = "e2e_sse_events"
+path = "tests/e2e/e2e_sse_events.rs"
+
+[[test]]
+name = "e2e_tool_use_http"
+path = "tests/e2e/e2e_tool_use_http.rs"
+
+[[test]]
+name = "e2e_tenant_isolation"
+path = "tests/e2e/e2e_tenant_isolation.rs"

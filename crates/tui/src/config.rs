@@ -39,8 +39,8 @@ fn default_config_path() -> PathBuf {
             return space_path;
         }
     }
-    if let Some(dirs) = directories::ProjectDirs::from("", "", "pandaria") {
-        let space_path = dirs.data_dir().join("config").join("tui").join("config.toml");
+    if let Ok(home) = std::env::var("HOME") {
+        let space_path = PathBuf::from(&home).join(".pandaria").join("config").join("tui").join("config.toml");
         if space_path.exists() {
             return space_path;
         }
@@ -56,8 +56,8 @@ fn default_config_path() -> PathBuf {
     if let Ok(root) = std::env::var("PANDARIA_SPACE_ROOT") {
         return PathBuf::from(root).join("config").join("tui").join("config.toml");
     }
-    if let Some(dirs) = directories::ProjectDirs::from("", "", "pandaria") {
-        return dirs.data_dir().join("config").join("tui").join("config.toml");
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(&home).join(".pandaria").join("config").join("tui").join("config.toml");
     }
     PathBuf::from("config.toml")
 }

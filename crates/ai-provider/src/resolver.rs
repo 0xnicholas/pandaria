@@ -33,6 +33,7 @@ pub enum ProviderFactory {
     Google,
     DeepSeek,
     Mistral,
+    Doubao,
     /// 用于 OpenRouter / Ollama / 自定义代理等 OpenAI-compatible 端点
     OpenAiCompatible {
         provider_name: String,
@@ -268,6 +269,19 @@ impl ProviderResolver {
         );
 
         rules.insert(
+            "doubao".to_string(),
+            ProviderRule {
+                factory: ProviderFactory::Doubao,
+                default_base_url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions".to_string(),
+                env_key: "DOUBAO_API_KEY",
+                api_type: "openai-completions",
+                compat_hints: Some(ModelCompat::OpenAI(OpenAiCompat::default())),
+                fallback_context_window: 262_144,
+                fallback_max_tokens: 4096,
+            },
+        );
+
+        rules.insert(
             "openrouter".to_string(),
             ProviderRule {
                 factory: ProviderFactory::OpenAiCompatible {
@@ -376,6 +390,19 @@ mod tests {
         assert_eq!(resolved.provider_name, "mistral");
         assert_eq!(resolved.model_id, "mistral-large");
         assert_eq!(resolved.api_type, "openai-completions");
+    }
+
+    #[test]
+    fn test_resolve_standard_doubao() {
+        let resolver = ProviderResolver::new();
+        let resolved = resolver.resolve("doubao/doubao-pro-32k").unwrap();
+        assert_eq!(resolved.provider_name, "doubao");
+        assert_eq!(resolved.model_id, "doubao-pro-32k");
+        assert_eq!(resolved.api_type, "openai-completions");
+        assert!(matches!(
+            resolved.compat,
+            Some(ModelCompat::OpenAI(OpenAiCompat { .. }))
+        ));
     }
 
     #[test]

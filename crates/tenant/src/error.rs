@@ -31,6 +31,6 @@ pub enum TenantError {
     #[error("session not found: {0}")]
     SessionNotFound(String),
 
-    #[error("internal error: {0}")]
-    Internal(String),
+    #[error("internal error: {message}")]
+    Internal { tenant_id: String, message: String },
 }

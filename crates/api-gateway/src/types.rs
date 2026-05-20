@@ -89,7 +89,9 @@ pub struct SendMessageRequest {
 /// 更新 session 请求体（所有字段可选）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UpdateSessionRequest {
+    #[serde(default)]
     pub title: Option<String>,
+    #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
     pub system_prompt: Option<String>,

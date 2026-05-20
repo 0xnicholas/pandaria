@@ -36,8 +36,8 @@ fn temp_dir_for_pandaria() -> std::path::PathBuf {
         let _ = std::fs::create_dir_all(&dir);
         return dir;
     }
-    if let Some(dirs) = directories::ProjectDirs::from("", "", "pandaria") {
-        let dir = dirs.data_dir().join("temp");
+    if let Ok(home) = std::env::var("HOME") {
+        let dir = std::path::PathBuf::from(home).join(".pandaria").join("temp");
         let _ = std::fs::create_dir_all(&dir);
         return dir;
     }
@@ -458,6 +458,19 @@ impl App {
                 }
                 Command::SelectModel { id } => {
                     if let Some(model_id) = id {
+                        let rest = self.rest.clone();
+                        let token = self.config.auth.token.clone().unwrap_or_default();
+                        let sid = self.data.active_session().info.id.clone();
+                        let task_tx = self.task_tx.clone();
+                        let model_id_clone = model_id.clone();
+                        tokio::spawn(async move {
+                            match rest.update_model(&sid, &model_id_clone, &token).await {
+                                Ok(info) => {
+                                    let _ = task_tx.send(TaskAction::SessionFetched(info)).await;
+                                }
+                                Err(e) => tracing::warn!("update model failed: {e}"),
+                            }
+                        });
                         let session = self.data.active_session_mut();
                         session.info.model = model_id;
                     } else {
@@ -754,7 +767,28 @@ impl App {
                         }
                     });
                 }
+                Command::Skill { name } => {
+                    if !name.is_empty() {
+                        self.send_user_message(format!("/skill:{}", name));
+                    }
+                }
             }
+        } else if self.config.ui.models.contains(&value) {
+            // ModelSelector overlay returns a raw model name (not a /command)
+            let rest = self.rest.clone();
+            let token = self.config.auth.token.clone().unwrap_or_default();
+            let sid = self.data.active_session().info.id.clone();
+            let task_tx = self.task_tx.clone();
+            let model = value.clone();
+            tokio::spawn(async move {
+                match rest.update_model(&sid, &model, &token).await {
+                    Ok(info) => {
+                        let _ = task_tx.send(TaskAction::SessionFetched(info)).await;
+                    }
+                    Err(e) => tracing::warn!("update model failed: {e}"),
+                }
+            });
+            self.data.active_session_mut().info.model = value;
         }
     }
 
@@ -961,6 +995,19 @@ impl App {
     }
 
     pub fn handle_server_event(&mut self, event: ServerEvent) {
+        // Update connection status before borrowing session mutably
+        match &event {
+            ServerEvent::MessageStart { .. } => {
+                self.data.connection_status = crate::state::ConnectionStatus::Connected;
+            }
+            ServerEvent::Error { code, .. }
+                if code == "sse_reconnecting" || code == "sse_parse_error" =>
+            {
+                self.data.connection_status = crate::state::ConnectionStatus::Reconnecting;
+            }
+            _ => {}
+        }
+
         let session = self.data.active_session_mut();
         match event {
             ServerEvent::MessageStart { .. } => {}
@@ -1299,7 +1346,23 @@ impl App {
         } else {
             pos.checked_sub(1).unwrap_or(models.len() - 1) % models.len()
         };
-        self.data.active_session_mut().info.model = models[new_pos].to_string();
+        let new_model = models[new_pos].to_string();
+
+        let rest = self.rest.clone();
+        let token = self.config.auth.token.clone().unwrap_or_default();
+        let sid = self.data.active_session().info.id.clone();
+        let task_tx = self.task_tx.clone();
+        let new_model_clone = new_model.clone();
+        tokio::spawn(async move {
+            match rest.update_model(&sid, &new_model_clone, &token).await {
+                Ok(info) => {
+                    let _ = task_tx.send(TaskAction::SessionFetched(info)).await;
+                }
+                Err(e) => tracing::warn!("update model failed: {e}"),
+            }
+        });
+
+        self.data.active_session_mut().info.model = new_model;
     }
 
     pub fn render_ui(&mut self, f: &mut Frame) {

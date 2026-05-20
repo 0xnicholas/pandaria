@@ -4,6 +4,7 @@ use axum::{
     response::Response,
 };
 use dashmap::DashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -11,6 +12,9 @@ use crate::config::RateLimitConfig;
 use crate::error::GatewayError;
 use crate::middleware::TenantId;
 use crate::server::AppState;
+
+/// 超过此时间未访问的 bucket 视为 stale，可被清理。
+const STALE_THRESHOLD_SECS: u64 = 3600; // 1 hour
 
 struct TokenBucket {
     tokens: f64,
@@ -20,30 +24,41 @@ struct TokenBucket {
 }
 
 /// 限流器：每个租户一个 TokenBucket。
+/// 定期清理长时间未访问的 stale bucket，防止无界内存增长。
 pub struct RateLimiter {
     buckets: DashMap<String, TokenBucket>,
+    check_count: AtomicU64,
 }
 
 impl RateLimiter {
     pub fn new() -> Self {
         Self {
             buckets: DashMap::new(),
+            check_count: AtomicU64::new(0),
         }
     }
 
     pub fn check(&self, tenant_id: &str, config: &RateLimitConfig) -> bool {
         let max_tokens = config.burst_size as f64;
         let refill_rate = config.requests_per_second as f64;
+        let now = Instant::now();
+
+        // 概率性清理 stale bucket（每 1024 次 check 触发一次），避免无界内存增长
+        let count = self.check_count.fetch_add(1, Ordering::Relaxed);
+        if count % 1024 == 0 {
+            self.buckets.retain(|_, bucket| {
+                now.duration_since(bucket.last_refill).as_secs() < STALE_THRESHOLD_SECS
+            });
+        }
 
         let mut entry = self.buckets.entry(tenant_id.to_string()).or_insert(TokenBucket {
             tokens: max_tokens,
             max_tokens,
             refill_rate,
-            last_refill: Instant::now(),
+            last_refill: now,
         });
 
         let bucket = entry.value_mut();
-        let now = Instant::now();
         let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
         bucket.tokens = (bucket.tokens + elapsed * bucket.refill_rate).min(bucket.max_tokens);
         bucket.last_refill = now;
@@ -76,11 +91,13 @@ pub async fn rate_limit_middleware(
         .unwrap_or_default();
 
     if tenant_id.is_empty() {
-        return Ok(next.run(req).await);
+        return Err(GatewayError::Unauthorized);
     }
 
-    if !state.rate_limiter.check(&tenant_id, &state.config.rate_limit) {
-        return Err(GatewayError::RateLimited);
+    let config = &state.config.rate_limit;
+    if !state.rate_limiter.check(&tenant_id, config) {
+        let retry_after = (1.0 / config.requests_per_second as f64).ceil().max(1.0) as u64;
+        return Err(GatewayError::RateLimited { retry_after });
     }
 
     Ok(next.run(req).await)
@@ -118,8 +135,8 @@ mod tests {
         assert!(limiter.check("t2", &config));
     }
 
-    #[test]
-    fn test_rate_limiter_refill() {
+    #[tokio::test]
+    async fn test_rate_limiter_refill() {
         let limiter = RateLimiter::new();
         let config = RateLimitConfig {
             requests_per_second: 100, // fast refill
@@ -129,7 +146,7 @@ mod tests {
         assert!(limiter.check("t1", &config));
         assert!(!limiter.check("t1", &config));
 
-        std::thread::sleep(Duration::from_millis(20)); // wait for refill
+        tokio::time::sleep(Duration::from_millis(20)).await; // wait for refill
         assert!(limiter.check("t1", &config));
     }
 }

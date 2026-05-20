@@ -17,7 +17,6 @@ futures = { workspace = true }
 tokio-util = { workspace = true }
 uuid = { workspace = true }
 dashmap = { workspace = true }
-directories = "5"
 
 [features]
 testing = []
@@ -28,3 +27,5 @@ ai-provider = { path = "../ai-provider", features = ["test-utils"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { workspace = true }
 tempfile = "3"
+wiremock = "0.6"
+secrecy = "0.10"

@@ -117,10 +117,9 @@ api-gateway → tenant → agent-core → ai-provider
 
 ## AgentSpace 统一目录结构
 
-所有运行时数据（工作空间、配置、缓存、日志、临时文件、skills）统一在一个根目录下管理，默认路径由平台决定：
+所有运行时数据（工作空间、配置、缓存、日志、临时文件、skills）统一在一个根目录下管理，默认路径为 `~/.pandaria/`：
 
-- **macOS**: `~/Library/Application Support/pandaria/`
-- **Linux**: `~/.local/share/pandaria/`
+- **默认**: `~/.pandaria/`
 - **覆盖**: `PANDARIA_SPACE_ROOT` 环境变量
 
 ### 目录布局
@@ -228,7 +227,7 @@ api-gateway → tenant → agent-core → ai-provider
 | 代码质量 | 🟡 部分修复（6 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复）。当前非测试 unwrap 共 190 个，待逐步清理 |
 | TUI 客户端 | 🟡 核心功能已重构（ratatui + REST client + SSE 订阅），新增：输入队列（steer/followUp）、Bash 模式（`!command`/`!!command`）、外部编辑器（Ctrl+X）、命令面板解耦（Ctrl+Shift+P 任意状态）、模型循环切换（Ctrl+P/N）、Redo（Ctrl+Shift+-）、字符跳转（Ctrl+]）、CompactionSummary 消息类型。持续迭代中 |
 | PromptBuilder 设计 | ✅ Phase 1 & 2 已完成。核心类型 + SessionActor/AgentLoop 集成 + Hook 系统 `PromptBuilder` 接入。`BeforeAgentStartMutation` / `ProviderRequestMutation` 新增 `prompt_mutation: Option<PromptMutation>` 字段；legacy `system_prompt: Option<PromptBuilder>` 保留向后兼容，替换后框架自动重新注入 `SkillsDirectory`。`inject_skills_into_builder` 辅助函数提取至 `skills/injector.rs`。 |
-| AgentSpace 统一目录 | ✅ 已实现（`agent-core/src/space.rs`）。统一根目录（默认 `~/.local/share/pandaria`），含 config/cache/logs/temp/skills/workspaces 子目录。PathGuard、Skills Scanner、TUI 均已接入。`PANDARIA_SPACE_ROOT` 环境变量可覆盖根目录。
+| AgentSpace 统一目录 | ✅ 已实现（`agent-core/src/space.rs`）。统一根目录（默认 `~/.pandaria/`），含 config/cache/logs/temp/skills/workspaces 子目录。PathGuard、Skills Scanner、TUI 均已接入。`PANDARIA_SPACE_ROOT` 环境变量可覆盖根目录。
 
 ---
 

@@ -149,5 +149,5 @@ async fn test_send_message() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert_eq!(response.status(), StatusCode::OK);
 }

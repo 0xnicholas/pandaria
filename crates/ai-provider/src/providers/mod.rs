@@ -3,6 +3,7 @@ pub mod shared;
 
 pub mod anthropic;
 pub mod anthropic_common;
+pub mod doubao;
 pub mod google;
 pub mod deepseek;
 pub mod mistral;

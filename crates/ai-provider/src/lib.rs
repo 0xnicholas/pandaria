@@ -20,6 +20,9 @@ pub mod types;
 pub mod util;
 pub mod validation;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
+
 pub use cache::CacheRetention;
 pub use compat::{
     AnthropicCompat, CacheControlFormat, MaxTokensField, OpenAiCompat, OpenRouterRouting,
@@ -35,6 +38,7 @@ pub use models::{
 pub use oauth::{OAuthProvider, OAuthToken, is_expired, resolve_oauth_key};
 pub use providers::anthropic::AnthropicProvider;
 pub use providers::deepseek::DeepSeekProvider;
+pub use providers::doubao::DoubaoProvider;
 pub use providers::google::GoogleProvider;
 pub use providers::mistral::MistralProvider;
 pub use providers::openai::OpenAiProvider;

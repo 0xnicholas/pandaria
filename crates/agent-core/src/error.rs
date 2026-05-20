@@ -49,6 +49,25 @@ pub enum AgentError {
 }
 
 impl AgentError {
+    /// Return a stable machine-readable error code for this variant.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::ToolNotFound(_) => "tool_not_found",
+            Self::ToolExecutionFailed(_) => "tool_execution_failed",
+            Self::HookDispatchError(_) => "hook_dispatch_error",
+            Self::LlmError(_) => "llm_error",
+            Self::LlmResponseError(_) => "llm_response_error",
+            Self::ContextOverflow(_) => "context_overflow",
+            Self::Cancelled => "cancelled",
+            Self::CompactionFailed(_) => "compaction_failed",
+            Self::RecoveryAborted(_) => "recovery_aborted",
+            Self::Persistence(_) => "persistence_error",
+            Self::QuotaExceeded(_) => "quota_exceeded",
+            Self::SkillNotFound(_) => "skill_not_found",
+            Self::SkillLoadFailed(_) => "skill_load_failed",
+        }
+    }
+
     /// Return a sanitized display string with secrets redacted.
     ///
     /// Use this when logging or sending error messages to external systems.

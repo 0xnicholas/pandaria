@@ -11,10 +11,14 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 /// Known fallback secrets used by the api-gateway server in dev mode.
+///
+/// When `PANDARIA_DEV_MODE=1` is set, the api-gateway server uses
+/// `"pandaria-dev-secret-32chars-long!"` as its auth secret.
+/// The TUI tries these secrets in order when auto-authenticating to a
+/// local development server.
 const DEV_SECRETS: &[&str] = &[
-    // New fallback secret set in api-gateway/src/main.rs when
-    // PANDARIA_AUTH_SECRET is not present.
-    "pandaria-test-secret-do-not-use-in-prod!!!",
+    // Dev-mode secret used when PANDARIA_DEV_MODE=1 is set.
+    "pandaria-dev-secret-32chars-long!",
     // Legacy test secret used in integration tests and default config.
     "test-secret-32-chars-long!!!",
 ];

@@ -3,9 +3,7 @@ use std::path::{Path, PathBuf};
 /// Unified agent space directory layout.
 ///
 /// All runtime data (workspaces, config, cache, logs, temp, skills)
-/// lives under a single root, defaulting to the platform-specific
-/// data directory (e.g. `~/.local/share/pandaria` on Linux,
-/// `~/Library/Application Support/pandaria` on macOS).
+/// lives under a single root, defaulting to `~/.pandaria`.
 ///
 /// Override the root via the `PANDARIA_SPACE_ROOT` environment variable.
 ///
@@ -32,19 +30,19 @@ impl AgentSpace {
         Self { root: root.into() }
     }
 
-    /// Resolve the agent space root from the environment or platform defaults.
+    /// Resolve the agent space root from the environment or defaults.
     ///
     /// Priority:
     /// 1. `PANDARIA_SPACE_ROOT` environment variable
-    /// 2. `directories::ProjectDirs::data_dir()` for `"pandaria"`
+    /// 2. `~/.pandaria`
     /// 3. Fallback to `./.pandaria` in the current working directory
     pub fn from_env_or_default() -> Self {
         if let Ok(root) = std::env::var("PANDARIA_SPACE_ROOT") {
             return Self::new(root);
         }
 
-        if let Some(dirs) = directories::ProjectDirs::from("", "", "pandaria") {
-            return Self::new(dirs.data_dir());
+        if let Ok(home) = std::env::var("HOME") {
+            return Self::new(PathBuf::from(home).join(".pandaria"));
         }
 
         Self::new("./.pandaria")

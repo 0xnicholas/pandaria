@@ -88,12 +88,14 @@ pub fn detect_openai_compat(provider: &str, base_url: &str, model_id: &str) -> O
         || provider == "zai"
         || provider == "opencode"
         || provider == "cloudflare-workers-ai"
+        || provider == "doubao"
         || base_url.contains("cerebras.ai")
         || base_url.contains("api.x.ai")
         || base_url.contains("deepseek.com")
         || base_url.contains("api.z.ai")
         || base_url.contains("opencode.ai")
-        || base_url.contains("api.cloudflare.com");
+        || base_url.contains("api.cloudflare.com")
+        || base_url.contains("volces.com");
 
     let is_deepseek = provider == "deepseek" || base_url.contains("deepseek.com");
     let is_grok = provider == "xai" || base_url.contains("api.x.ai");
@@ -287,6 +289,14 @@ mod tests {
     fn test_detect_grok_no_reasoning_effort() {
         let compat = detect_openai_compat("xai", "https://api.x.ai/v1", "grok-3");
         assert_eq!(compat.supports_reasoning_effort, Some(false));
+    }
+
+    #[test]
+    fn test_detect_doubao_compat() {
+        let compat = detect_openai_compat("doubao", "https://ark.cn-beijing.volces.com/api/v3/chat/completions", "doubao-pro-32k");
+        assert_eq!(compat.supports_store, Some(false));
+        assert_eq!(compat.supports_developer_role, Some(false));
+        assert_eq!(compat.thinking_format, None);
     }
 
     #[test]

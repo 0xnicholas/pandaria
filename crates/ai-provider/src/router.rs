@@ -55,6 +55,7 @@ impl RouterProvider {
             ProviderFactory::Google => Arc::new(crate::providers::google::GoogleProvider::with_base_url(None, base_url)),
             ProviderFactory::DeepSeek => Arc::new(crate::providers::deepseek::DeepSeekProvider::with_base_url(None, base_url)),
             ProviderFactory::Mistral => Arc::new(crate::providers::mistral::MistralProvider::with_base_url(None, base_url)),
+            ProviderFactory::Doubao => Arc::new(crate::providers::doubao::DoubaoProvider::with_base_url(None, base_url)),
             ProviderFactory::OpenAiCompatible { provider_name: name, env_key } => {
                 Arc::new(crate::providers::openai_compatible::OpenAiCompatibleProvider::new(
                     None, base_url, name, env_key,
@@ -266,6 +267,13 @@ mod tests {
         let router = RouterProvider::new();
         let p = router.get_or_create_provider("ollama", "http://localhost:11434/v1/chat/completions").unwrap();
         assert_eq!(p.provider_name(), "ollama");
+    }
+
+    #[test]
+    fn test_get_or_create_doubao() {
+        let router = RouterProvider::new();
+        let p = router.get_or_create_provider("doubao", "https://ark.cn-beijing.volces.com/api/v3/chat/completions").unwrap();
+        assert_eq!(p.provider_name(), "doubao");
     }
 
     #[test]

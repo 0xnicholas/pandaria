@@ -494,7 +494,13 @@ impl AgentLoop {
                         assistant_content.push(Content::ToolCall(tool_call));
                     }
                     ai_provider::AssistantMessageEvent::Done { reason, message } => {
-                        assistant_content = message.content;
+                        // Some provider implementations send a Done event whose message.content
+                        // does not include text accumulated via TextDelta/TextEnd (the partial
+                        // clone is not updated with accumulated text). Only overwrite our
+                        // accumulated content when the provider actually supplied something.
+                        if !message.content.is_empty() {
+                            assistant_content = message.content;
+                        }
                         api = message.api;
                         usage = message.usage;
                         stop_reason = reason;

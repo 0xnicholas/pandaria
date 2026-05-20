@@ -56,6 +56,14 @@ path = "tests/integration/openai_tests.rs"
 name = "provider_requests"
 path = "tests/integration/provider_requests.rs"
 
+[[test]]
+name = "mistral_tests"
+path = "tests/integration/mistral_tests.rs"
+
+[[test]]
+name = "openrouter_tests"
+path = "tests/integration/openrouter_tests.rs"
+
 [features]
 bedrock = ["aws-sdk-bedrockruntime", "aws-config"]
 test-utils = []

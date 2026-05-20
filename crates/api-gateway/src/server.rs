@@ -1,4 +1,5 @@
 use axum::{
+    extract::DefaultBodyLimit,
     middleware,
     routing::{delete, get, post},
     Router,
@@ -10,6 +11,8 @@ use tower_http::trace::TraceLayer;
 use crate::config::ServerConfig;
 use crate::middleware::{auth, rate_limit};
 use crate::routes::{events, health, messages, sessions};
+
+use crate::types::SessionInfo;
 
 /// 应用状态。
 pub struct AppState {
@@ -28,6 +31,13 @@ impl AppState {
             config,
             rate_limiter: rate_limit::RateLimiter::new(),
         }
+    }
+
+    /// Enrich tenant `SessionInfo` with gateway-level defaults.
+    pub fn enrich_session_info(&self, info: tenant::SessionInfo) -> SessionInfo {
+        let mut s: SessionInfo = info.into();
+        s.context_window = Some(self.config.default_context_window);
+        s
     }
 }
 
@@ -54,11 +64,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             auth::auth_middleware,
         ));
 
+    let cors = if state.config.cors_permissive {
+        CorsLayer::permissive()
+    } else if let Some(ref origins) = state.config.cors_origins {
+        use tower_http::cors::AllowOrigin;
+        let allowed: Vec<_> = origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        CorsLayer::new().allow_origin(AllowOrigin::list(allowed))
+    } else {
+        CorsLayer::new()
+    };
+
     Router::new()
         .route("/healthz", get(health::get))
         .nest("/api/v1", api_routes)
+        .layer(DefaultBodyLimit::max(state.config.max_request_body_size))
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state)
 }
 
@@ -73,14 +97,29 @@ pub async fn serve(
     }
 
     let listener = tokio::net::TcpListener::bind(&state.config.bind_addr).await?;
-    let router = build_router(state);
+    let router = build_router(state.clone());
 
     tracing::info!("api-gateway listening on {}", listener.local_addr()?);
 
     axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            tokio::signal::ctrl_c().await.ok();
-            tracing::info!("shutdown signal received");
+        .with_graceful_shutdown(async move {
+            let ctrl_c = async {
+                tokio::signal::ctrl_c().await.ok();
+            };
+            let sigterm = async {
+                let mut sigterm = tokio::signal::unix::signal(
+                    tokio::signal::unix::SignalKind::terminate(),
+                )
+                .expect("SIGTERM handler");
+                sigterm.recv().await;
+            };
+            tokio::select! {
+                _ = ctrl_c => {},
+                _ = sigterm => {},
+            }
+            tracing::info!("shutdown signal received, draining sessions...");
+            state.tenant_manager.shutdown().await;
+            tracing::info!("shutdown complete");
         })
         .await?;
 

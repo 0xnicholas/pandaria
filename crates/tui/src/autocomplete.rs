@@ -49,6 +49,7 @@ impl SlashCommandProvider {
             SlashCommand { name: "rename".into(), description: "Rename the current session".into() },
             SlashCommand { name: "delete".into(), description: "Delete the current session".into() },
             SlashCommand { name: "system".into(), description: "Update system prompt for current session".into() },
+            SlashCommand { name: "skill".into(), description: "Invoke a skill by name (/skill:name)".into() },
         ];
         Self { commands }
     }

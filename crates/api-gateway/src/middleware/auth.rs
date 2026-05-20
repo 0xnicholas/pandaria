@@ -7,6 +7,7 @@ use hmac::{Hmac, Mac};
 use secrecy::ExposeSecret;
 use sha2::Sha256;
 use std::sync::Arc;
+use tracing::Instrument;
 
 use crate::error::GatewayError;
 use crate::middleware::TenantId;
@@ -17,6 +18,7 @@ use crate::server::AppState;
 pub struct TokenPayload {
     pub tenant_id: String,
     pub iat: u64,
+    pub exp: u64,
 }
 
 /// 从 Authorization header 提取 tenant_id，注入 request extensions。
@@ -49,23 +51,25 @@ pub async fn auth_middleware(
         None => return Err(GatewayError::Unauthorized),
     };
 
-    // 创建带 tenant_id 的 tracing span
+    let tenant_id = payload.tenant_id;
+
+    // 注入 tenant_id
+    req.extensions_mut().insert(TenantId(tenant_id.clone()));
+
+    // 在异步 future 上挂载 tracing span，避免跨 await 边界时 span 附着到错误任务
     let span = tracing::info_span!(
         "http_request",
         http.method = %req.method(),
         http.uri = %req.uri(),
-        tenant_id = %payload.tenant_id,
+        tenant_id = %tenant_id,
     );
-    let _enter = span.enter();
-
-    // 注入 tenant_id
-    req.extensions_mut().insert(TenantId(payload.tenant_id));
-
-    Ok(next.run(req).await)
+    Ok(async move { next.run(req).await }.instrument(span).await)
 }
 
 /// HMAC-SHA256 验证 token。
 fn verify_token(token_str: &str, secret: &str) -> Option<TokenPayload> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     let parts: Vec<&str> = token_str.split('.').collect();
     if parts.len() != 2 {
         return None;
@@ -82,6 +86,20 @@ fn verify_token(token_str: &str, secret: &str) -> Option<TokenPayload> {
     mac.verify_slice(&signature).ok()?;
 
     let payload: TokenPayload = serde_json::from_slice(&payload_bytes).ok()?;
+
+    // Validate expiration and clock skew
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    if payload.exp <= now {
+        return None;
+    }
+    // iat must not be in the future by more than 5 minutes (clock skew tolerance)
+    if payload.iat > now + 300 {
+        return None;
+    }
+
     Some(payload)
 }
 
@@ -95,10 +113,11 @@ fn base64_decode_urlsafe(input: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
 
-    fn make_token(tenant_id: &str, secret: &str) -> String {
+    fn make_token(tenant_id: &str, secret: &str, exp: u64) -> String {
         let payload = TokenPayload {
             tenant_id: tenant_id.into(),
             iat: 1714608000,
+            exp,
         };
         let payload_json = serde_json::to_vec(&payload).unwrap();
         let payload_b64 = base64::Engine::encode(
@@ -120,16 +139,63 @@ mod tests {
     #[test]
     fn test_verify_valid_token() {
         let secret = "test-secret-32-chars-long!!!";
-        let token = make_token("tenant-1", secret);
+        let future_exp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let token = make_token("tenant-1", secret, future_exp);
         let payload = verify_token(&token, secret).unwrap();
         assert_eq!(payload.tenant_id, "tenant-1");
         assert_eq!(payload.iat, 1714608000);
+        assert_eq!(payload.exp, future_exp);
+    }
+
+    #[test]
+    fn test_verify_expired_token() {
+        let secret = "test-secret-32-chars-long!!!";
+        let token = make_token("tenant-1", secret, 1); // expired
+        assert!(verify_token(&token, secret).is_none());
+    }
+
+    #[test]
+    fn test_verify_future_iat_token() {
+        let secret = "test-secret-32-chars-long!!!";
+        let future = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 400; // > 5 min in the future
+        let payload = TokenPayload {
+            tenant_id: "tenant-1".into(),
+            iat: future,
+            exp: future + 3600,
+        };
+        let payload_json = serde_json::to_vec(&payload).unwrap();
+        let payload_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            &payload_json,
+        );
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(&payload_json);
+        let signature = mac.finalize().into_bytes();
+        let sig_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            &signature,
+        );
+        let token = format!("{}.{}", payload_b64, sig_b64);
+        assert!(verify_token(&token, secret).is_none());
     }
 
     #[test]
     fn test_verify_invalid_signature() {
         let secret = "test-secret-32-chars-long!!!";
-        let token = make_token("tenant-1", secret);
+        let future_exp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        let token = make_token("tenant-1", secret, future_exp);
         let result = verify_token(&token, "wrong-secret-32-chars-long!");
         assert!(result.is_none());
     }

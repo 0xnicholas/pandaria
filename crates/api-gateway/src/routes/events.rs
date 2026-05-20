@@ -1,5 +1,6 @@
 use axum::{
     extract::{Extension, Path, State},
+    http::HeaderMap,
 };
 use std::sync::Arc;
 use uuid::Uuid;
@@ -16,7 +17,14 @@ pub async fn stream(
     State(state): State<Arc<AppState>>,
     Extension(tenant_id): Extension<TenantId>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> Result<SseStream, GatewayError> {
+    // Validate Accept header
+    if let Some(accept) = headers.get("accept").and_then(|v| v.to_str().ok()) {
+        if !accept.contains("text/event-stream") && !accept.contains("*/*") {
+            return Err(GatewayError::NotAcceptable);
+        }
+    }
     let mut rx = state
         .tenant_manager
         .subscribe_events(&tenant_id.0, &id)
@@ -24,7 +32,7 @@ pub async fn stream(
 
     let (sse_tx, sse_rx) = tokio::sync::mpsc::channel::<ServerEvent>(256);
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             if let Some(server_event) = map_agent_event(event) {
                 if sse_tx.send(server_event).await.is_err() {
@@ -34,7 +42,7 @@ pub async fn stream(
         }
     });
 
-    Ok(SseStream::new(sse_rx))
+    Ok(SseStream::new(sse_rx, handle.abort_handle()))
 }
 
 fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
@@ -64,7 +72,7 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
         }
         AgentEvent::Error { error } => Some(ServerEvent::Error {
             code: error_variant_name(&error),
-            message: error.to_string(),
+            message: error.to_sanitized_string(),
         }),
         // MVP 不转发的事件
         AgentEvent::AgentStart
@@ -77,7 +85,11 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
         | AgentEvent::CompactionEnd { .. }
         | AgentEvent::AutoRetryStart { .. }
         | AgentEvent::AutoRetryEnd { .. } => None,
-        _ => None,
+        // Forward-compatibility for future AgentEvent variants
+        _ => {
+            tracing::warn!("unhandled AgentEvent variant in SSE mapper");
+            None
+        }
     }
 }
 
@@ -108,14 +120,10 @@ fn extract_turn_end_info(
     match last_assistant {
         Some(a) => {
             let stop_reason = format!("{:?}", a.stop_reason).to_lowercase();
-            let usage = if a.usage.input_tokens > 0 || a.usage.output_tokens > 0 {
-                Some(UsageInfo {
-                    input_tokens: a.usage.input_tokens,
-                    output_tokens: a.usage.output_tokens,
-                })
-            } else {
-                None
-            };
+            let usage = Some(UsageInfo {
+                input_tokens: a.usage.input_tokens,
+                output_tokens: a.usage.output_tokens,
+            });
             (stop_reason, usage)
         }
         None => ("unknown".into(), None),
@@ -123,33 +131,7 @@ fn extract_turn_end_info(
 }
 
 fn error_variant_name(error: &agent_core::AgentError) -> String {
-    let full = format!("{:?}", error);
-    full.split_once('(')
-        .map(|(name, _)| name.to_snake_case())
-        .unwrap_or_else(|| "unknown".into())
-}
-
-/// 简单的 snake_case 转换辅助函数。
-pub trait ToSnakeCase {
-    fn to_snake_case(&self) -> String;
-}
-
-impl ToSnakeCase for str {
-    fn to_snake_case(&self) -> String {
-        let mut result = String::with_capacity(self.len() + 4);
-        let chars: Vec<char> = self.chars().collect();
-        for (i, c) in chars.iter().enumerate() {
-            if c.is_uppercase() {
-                if i > 0 && chars[i - 1].is_lowercase() {
-                    result.push('_');
-                }
-                result.push(c.to_lowercase().next().expect("uppercase char has at least one lowercase counterpart"));
-            } else {
-                result.push(*c);
-            }
-        }
-        result
-    }
+    error.code().to_string()
 }
 
 #[cfg(test)]
@@ -178,8 +160,11 @@ mod tests {
     }
 
     #[test]
-    fn test_snake_case() {
-        assert_eq!("ContextOverflow".to_snake_case(), "context_overflow");
-        assert_eq!("LlmError".to_snake_case(), "llm_error");
+    fn test_error_variant_name() {
+        let err = agent_core::AgentError::ContextOverflow("test".into());
+        assert_eq!(error_variant_name(&err), "context_overflow");
+
+        let err = agent_core::AgentError::LlmError(ai_provider::LlmError::ProviderError("test".into()));
+        assert_eq!(error_variant_name(&err), "llm_error");
     }
 }

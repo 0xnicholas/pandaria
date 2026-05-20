@@ -455,6 +455,154 @@ fn build_models() -> HashMap<String, Model> {
         8192
     );
 
+    // ── Doubao ─────────────────────────────────────────────────────
+    // Seed 2.0 系列（当前主推）
+    insert!(
+        m,
+        "doubao",
+        "doubao-seed-2.0-pro",
+        "Doubao Seed 2.0 Pro",
+        "openai-completions",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 0.44,
+            output: 2.22,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        256_000,
+        16_384
+    );
+    insert!(
+        m,
+        "doubao",
+        "doubao-seed-2.0-lite",
+        "Doubao Seed 2.0 Lite",
+        "openai-completions",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 0.08,
+            output: 0.50,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        256_000,
+        16_384
+    );
+    insert!(
+        m,
+        "doubao",
+        "doubao-seed-2.0-mini",
+        "Doubao Seed 2.0 Mini",
+        "openai-completions",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 0.03,
+            output: 0.28,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        256_000,
+        16_384
+    );
+    insert!(
+        m,
+        "doubao",
+        "doubao-seed-2.0-code",
+        "Doubao Seed 2.0 Code",
+        "openai-completions",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 0.44,
+            output: 1.67,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        256_000,
+        16_384
+    );
+    // Seed 1.x 系列
+    insert!(
+        m,
+        "doubao",
+        "doubao-seed-1.8",
+        "Doubao Seed 1.8",
+        "openai-completions",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 0.11,
+            output: 1.11,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        256_000,
+        16_384
+    );
+    insert!(
+        m,
+        "doubao",
+        "doubao-seed-1.6",
+        "Doubao Seed 1.6",
+        "openai-completions",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 0.11,
+            output: 1.11,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        256_000,
+        16_384
+    );
+    insert!(
+        m,
+        "doubao",
+        "doubao-seed-1.6-flash",
+        "Doubao Seed 1.6 Flash",
+        "openai-completions",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 0.02,
+            output: 0.21,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        256_000,
+        16_384
+    );
+    insert!(
+        m,
+        "doubao",
+        "doubao-seed-1.6-vision",
+        "Doubao Seed 1.6 Vision",
+        "openai-completions",
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        true,
+        vec![Modality::Text, Modality::Image],
+        TokenCost {
+            input: 0.11,
+            output: 1.11,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        256_000,
+        16_384
+    );
+
     // ── Google ─────────────────────────────────────────────────────
     insert!(
         m,
@@ -602,6 +750,19 @@ fn build_provider_list() -> HashMap<String, Vec<String>> {
             "gemini-2.5-flash".to_string(),
             "gemini-3.0-flash".to_string(),
             "gemini-2.0-flash".to_string(),
+        ],
+    );
+    p.insert(
+        "doubao".to_string(),
+        vec![
+            "doubao-seed-2.0-pro".to_string(),
+            "doubao-seed-2.0-lite".to_string(),
+            "doubao-seed-2.0-mini".to_string(),
+            "doubao-seed-2.0-code".to_string(),
+            "doubao-seed-1.8".to_string(),
+            "doubao-seed-1.6".to_string(),
+            "doubao-seed-1.6-flash".to_string(),
+            "doubao-seed-1.6-vision".to_string(),
         ],
     );
     p

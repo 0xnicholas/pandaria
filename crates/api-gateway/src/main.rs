@@ -3,15 +3,22 @@ use std::sync::Arc;
 use api_gateway::config::ServerConfig;
 use api_gateway::server::{serve, AppState};
 use secrecy::ExposeSecret;
-use tracing::{info, warn};
+use tracing::info;
 
 fn generate_test_token(secret: &str, tenant_id: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs();
 
     let payload = serde_json::json!({
         "tenant_id": tenant_id,
-        "iat": 1714608000u64,
+        "iat": now,
+        "exp": now + 86400, // 24h expiration
     });
     let payload_json = serde_json::to_vec(&payload).expect("json encode");
     let payload_b64 = base64::Engine::encode(
@@ -36,10 +43,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
 
     tracing_subscriber::fmt()
-        .with_env_filter("info")
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .init();
 
     info!("pandaria-server starting...");
+
+    // --- 0. Ensure agent space directories exist ---
+    let agent_space = agent_core::space::AgentSpace::from_env_or_default();
+    if let Err(e) = agent_space.ensure_dirs() {
+        eprintln!("warning: failed to create agent space directories: {e}");
+    }
+    info!(root = %agent_space.root().display(), "agent space ready");
 
     // --- 1. LLM Provider (RouterProvider auto-routes by model name) ---
     let provider: Arc<dyn ai_provider::LlmProvider> =
@@ -72,28 +89,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // --- 5. Server Config ---
-    let mut config = ServerConfig::from_env();
+    let config = ServerConfig::from_env();
 
-    // Ensure non-default auth secret (serve() panics otherwise)
     if config.is_default_secret() {
-        warn!(
-            "PANDARIA_AUTH_SECRET not set — using a generated test secret. \
-             DO NOT use this in production."
+        panic!(
+            "PANDARIA_AUTH_SECRET is not set. \
+             Set it in .env or environment before starting the server."
         );
-        config.auth_secret =
-            secrecy::SecretString::new("pandaria-test-secret-do-not-use-in-prod!!!".into());
     }
 
     let state = Arc::new(AppState::new(tenant_manager, config.clone()));
 
-    // --- 6. Print test credentials ---
-    let secret = config.auth_secret.expose_secret();
-    let token = generate_test_token(secret, "test-tenant");
+    // --- 6. Print startup info ---
     println!("========================================");
     println!("  pandaria-server ready");
     println!("  bind: {}", config.bind_addr);
-    println!("  tenant: test-tenant");
-    println!("  token:  {}", token);
+    if std::env::var("PANDARIA_DEV_MODE").is_ok() {
+        let secret = config.auth_secret.expose_secret();
+        let token = generate_test_token(secret, "test-tenant");
+        println!("  tenant: test-tenant");
+        println!("  token:  {}", token);
+    }
     println!("========================================");
 
     serve(state).await

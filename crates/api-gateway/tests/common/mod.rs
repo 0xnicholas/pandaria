@@ -161,7 +161,7 @@ impl TenantManager for MockTenantManager {
 pub fn test_router() -> axum::Router {
     let manager = Arc::new(MockTenantManager::new()) as Arc<dyn TenantManager>;
     let config = ServerConfig {
-        auth_secret: secrecy::SecretString::new("test-secret-32-chars-long!!!".into()),
+        auth_secret: secrecy::SecretString::from("test-secret-32-chars-long!!!"),
         ..Default::default()
     };
     let state = Arc::new(AppState::new(manager, config));
@@ -172,8 +172,17 @@ pub fn test_router() -> axum::Router {
 pub fn test_token(tenant_id: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    let payload = serde_json::json!({"tenant_id": tenant_id, "iat": 1714608000u64});
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let payload = serde_json::json!({
+        "tenant_id": tenant_id,
+        "iat": now,
+        "exp": now + 86400,
+    });
     let payload_json = serde_json::to_vec(&payload).unwrap();
     let payload_b64 = base64::Engine::encode(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD,

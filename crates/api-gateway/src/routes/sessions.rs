@@ -30,10 +30,7 @@ pub async fn create(
         .create_session(&tenant_id.0, params)
         .await?;
 
-    let mut session_info: SessionInfo = info.into();
-    session_info.context_window = Some(state.config.default_context_window);
-
-    Ok((StatusCode::CREATED, Json(session_info)))
+    Ok((StatusCode::CREATED, Json(state.enrich_session_info(info))))
 }
 
 pub async fn list(
@@ -47,11 +44,7 @@ pub async fn list(
 
     let sessions: Vec<SessionInfo> = infos
         .into_iter()
-        .map(|info| {
-            let mut s: SessionInfo = info.into();
-            s.context_window = Some(state.config.default_context_window);
-            s
-        })
+        .map(|info| state.enrich_session_info(info))
         .collect();
 
     Ok(Json(sessions))
@@ -67,10 +60,7 @@ pub async fn get(
         .get_session(&tenant_id.0, &id)
         .await?;
 
-    let mut session_info: SessionInfo = info.into();
-    session_info.context_window = Some(state.config.default_context_window);
-
-    Ok(Json(session_info))
+    Ok(Json(state.enrich_session_info(info)))
 }
 
 pub async fn update(
@@ -80,7 +70,7 @@ pub async fn update(
     Json(req): Json<UpdateSessionRequest>,
 ) -> Result<Json<SessionInfo>, GatewayError> {
     let updates = tenant::SessionUpdates {
-        title: Some(req.title),
+        title: req.title.map(Some),
         model: req.model,
         system_prompt: req.system_prompt,
     };
@@ -90,10 +80,7 @@ pub async fn update(
         .update_session(&tenant_id.0, &id, updates)
         .await?;
 
-    let mut session_info: SessionInfo = info.into();
-    session_info.context_window = Some(state.config.default_context_window);
-
-    Ok(Json(session_info))
+    Ok(Json(state.enrich_session_info(info)))
 }
 
 pub async fn delete(
