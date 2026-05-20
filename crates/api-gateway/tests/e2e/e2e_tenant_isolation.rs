@@ -75,7 +75,7 @@ async fn test_tenant_session_isolation() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id_t1))
                 .header("Authorization", format!("Bearer {}", token_t2))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": "hi"}"#))
+                .body(Body::from(r#"{"content": [{"type":"text","text":"hi"}]}"#))
                 .unwrap(),
         )
         .await

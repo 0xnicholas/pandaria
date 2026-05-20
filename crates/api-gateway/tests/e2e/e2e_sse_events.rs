@@ -86,7 +86,7 @@ async fn test_sse_stream_receives_events() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": "hello"}"#))
+                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
                 .unwrap(),
         )
         .await
@@ -188,7 +188,7 @@ async fn test_sse_text_delta_content() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": "hello"}"#))
+                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
                 .unwrap(),
         )
         .await

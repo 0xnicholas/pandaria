@@ -35,6 +35,8 @@ impl GoogleProvider {
                     "role": "user",
                     "parts": m.content.iter().map(|c| match c {
                         crate::Content::Text { text, .. } => serde_json::json!({"text": text}),
+                        crate::Content::Video { .. } => serde_json::json!({"text": ""}),
+                        crate::Content::Audio { .. } => serde_json::json!({"text": ""}),
                         _ => serde_json::json!({"text": ""}),
                     }).collect::<Vec<_>>(),
                 }),
@@ -52,6 +54,8 @@ impl GoogleProvider {
                             }
                             part
                         },
+                        crate::Content::Video { .. } => serde_json::json!({"text": ""}),
+                        crate::Content::Audio { .. } => serde_json::json!({"text": ""}),
                         _ => serde_json::json!({"text": ""}),
                     }).collect::<Vec<_>>(),
                 }),

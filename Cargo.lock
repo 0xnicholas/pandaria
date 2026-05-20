@@ -15,6 +15,7 @@ dependencies = [
  "agent-core",
  "ai-provider",
  "async-trait",
+ "base64",
  "dashmap",
  "futures",
  "regex",

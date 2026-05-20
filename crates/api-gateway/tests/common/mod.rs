@@ -76,7 +76,7 @@ impl TenantManager for MockTenantManager {
         &self,
         _tenant_id: &str,
         _session_id: &Uuid,
-        _content: String,
+        _content: Vec<ai_provider::Content>,
     ) -> Result<u64, TenantError> {
         Ok(1)
     }

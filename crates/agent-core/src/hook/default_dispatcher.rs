@@ -27,7 +27,6 @@ use crate::space::AgentSpace;
 /// - **ContentFilter**: basic PII redaction in tool inputs/results
 ///
 /// Rate-limiting is handled at the `api-gateway` layer and is not included here.
-#[derive(Debug)]
 pub struct DefaultHookDispatcher {
     /// Unified agent space for path resolution.
     pub space: AgentSpace,
@@ -43,6 +42,23 @@ pub struct DefaultHookDispatcher {
     pub max_turns_per_session: usize,
     /// TokenBudget: session_id -> turn count.
     session_turn_counts: DashMap<String, AtomicUsize>,
+    /// Optional callback for media cost tracking: (tenant_id, cost_cny).
+    pub cost_callback: Option<std::sync::Arc<dyn Fn(&str, f64) + Send + Sync>>,
+}
+
+impl std::fmt::Debug for DefaultHookDispatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefaultHookDispatcher")
+            .field("space", &self.space)
+            .field("denied_tools", &self.denied_tools)
+            .field("allowed_tools", &self.allowed_tools)
+            .field("path_guard_fields", &self.path_guard_fields)
+            .field("path_guard_scan_unknown", &self.path_guard_scan_unknown)
+            .field("max_turns_per_session", &self.max_turns_per_session)
+            .field("session_turn_counts", &self.session_turn_counts)
+            .field("cost_callback", &self.cost_callback.is_some())
+            .finish()
+    }
 }
 
 impl Default for DefaultHookDispatcher {
@@ -67,6 +83,7 @@ impl DefaultHookDispatcher {
             path_guard_scan_unknown: false,
             max_turns_per_session: 0,
             session_turn_counts: DashMap::new(),
+            cost_callback: None,
         }
     }
 
@@ -270,6 +287,15 @@ impl HookDispatcher for DefaultHookDispatcher {
                     is_error: Some(true),
                     terminate: None,
                 };
+            }
+        }
+
+        // Media cost tracking
+        if let Some(ref cb) = self.cost_callback {
+            if let Some(ref details) = ctx.details {
+                if let Some(cost) = details.get("cost_per_call").and_then(|v| v.as_f64()) {
+                    cb(&ctx.tenant_id, cost);
+                }
             }
         }
 

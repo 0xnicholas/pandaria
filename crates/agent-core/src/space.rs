@@ -83,6 +83,11 @@ impl AgentSpace {
         self.root.join("workspaces").join(tenant_id)
     }
 
+    /// `{root}/workspaces/{tenant_id}/media/`
+    pub fn media_dir(&self, tenant_id: &str) -> PathBuf {
+        self.workspace_for(tenant_id).join("media")
+    }
+
     /// Ensure all standard sub-directories exist.
     ///
     /// Idempotent — safe to call multiple times.
@@ -123,6 +128,15 @@ mod tests {
         assert_eq!(
             space.workspace_for("tenant-42"),
             PathBuf::from("/tmp/pandaria-test/workspaces/tenant-42")
+        );
+    }
+
+    #[test]
+    fn test_media_dir() {
+        let space = AgentSpace::new("/tmp/pandaria-test");
+        assert_eq!(
+            space.media_dir("tenant-42"),
+            PathBuf::from("/tmp/pandaria-test/workspaces/tenant-42/media")
         );
     }
 

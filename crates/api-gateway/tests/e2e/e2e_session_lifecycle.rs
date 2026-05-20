@@ -46,7 +46,7 @@ async fn test_session_lifecycle() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": "hi"}"#))
+                .body(Body::from(r#"{"content": [{"type":"text","text":"hi"}]}"#))
                 .unwrap(),
         )
         .await

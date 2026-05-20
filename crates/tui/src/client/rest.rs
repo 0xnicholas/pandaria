@@ -33,7 +33,7 @@ impl RestClient {
         let url = format!("{}/api/v1/sessions/{}/messages", self.base_url, session_id);
         let resp = self.client.post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .json(&SendMessageRequest { content: content.to_string() })
+            .json(&SendMessageRequest { content: vec![MessageContentPart::Text { text: content.to_string() }] })
             .send().await?;
         Self::check_status(resp).await?;
         Ok(())

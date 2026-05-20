@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 pub enum Modality {
     Text,
     Image,
+    Video,
+    Audio,
 }
 
 /// Cost per million tokens (USD).
@@ -279,5 +281,13 @@ mod tests {
     fn test_get_model_missing_provider() {
         assert!(get_model("nonexistent", "any-model").is_none());
         assert!(models_for_provider("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn test_modality_video_audio_serde() {
+        let modalities = vec![Modality::Text, Modality::Image, Modality::Video, Modality::Audio];
+        let json = serde_json::to_string(&modalities).unwrap();
+        let back: Vec<Modality> = serde_json::from_str(&json).unwrap();
+        assert_eq!(modalities, back);
     }
 }

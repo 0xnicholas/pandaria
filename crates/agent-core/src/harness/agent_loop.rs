@@ -312,10 +312,20 @@ impl AgentLoop {
             .as_ref()
             .map(|m| m.input_modalities.iter().any(|modality| matches!(modality, ai_provider::Modality::Image)))
             .unwrap_or(false);
+        let supports_video_input = model_meta
+            .as_ref()
+            .map(|m| m.input_modalities.iter().any(|modality| matches!(modality, ai_provider::Modality::Video)))
+            .unwrap_or(false);
+        let supports_audio_input = model_meta
+            .as_ref()
+            .map(|m| m.input_modalities.iter().any(|modality| matches!(modality, ai_provider::Modality::Audio)))
+            .unwrap_or(false);
         let target_api = model_meta.map(|m| m.api);
         let transform_opts = ai_provider::TransformOptions {
             target_api,
             supports_images,
+            supports_video_input,
+            supports_audio_input,
             preserve_thinking: false, // v0.1: strip thinking for safety
         };
         ctx.messages = ai_provider::transform_messages(&ctx.messages, &transform_opts);
@@ -555,7 +565,7 @@ impl AgentLoop {
         }
     }
 
-    async fn execute_single_tool(&self, tc: &ai_provider::ToolCall) -> ai_provider::ToolResultMessage {
+    async fn execute_single_tool(&self, tc: &ai_provider::ToolCall, signal: CancellationToken) -> ai_provider::ToolResultMessage {
         (self.config.event_sink)(AgentEvent::ToolExecutionStart {
             tool_call_id: tc.id.clone(),
             tool_name: tc.name.clone(),
@@ -578,7 +588,7 @@ impl AgentLoop {
                         tool_call_id: tool_call_id.clone(),
                         content: update.content,
                     });
-                })).await;
+                }), signal.clone()).await;
                 match result {
                     Ok(msg) => msg,
                     Err(e) => ai_provider::ToolResultMessage {
@@ -629,7 +639,7 @@ impl AgentLoop {
                 if signal.is_cancelled() {
                     break;
                 }
-                results.push(self.execute_single_tool(tc).await);
+                results.push(self.execute_single_tool(tc, signal.clone()).await);
             }
             results
         } else {
@@ -639,7 +649,7 @@ impl AgentLoop {
                 let tc_name = tc.name.clone();
                 async move {
                     tokio::select! {
-                        result = self.execute_single_tool(tc) => result,
+                        result = self.execute_single_tool(tc, signal.clone()) => result,
                         _ = signal.cancelled() => {
                             ai_provider::ToolResultMessage {
                                 tool_call_id: tc_id,
@@ -728,6 +738,7 @@ mod tests {
             _tool_call_id: &str,
             _params: serde_json::Value,
             _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+            _signal: CancellationToken,
         ) -> Result<AgentToolResult, AgentError> {
             self.counter.fetch_add(1, Ordering::SeqCst);
             Ok(AgentToolResult {
@@ -918,6 +929,7 @@ mod tests {
                 _tool_call_id: &str,
                 _params: serde_json::Value,
                 _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+                _signal: CancellationToken,
             ) -> Result<crate::AgentToolResult, AgentError> {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 self.counter.fetch_add(1, Ordering::SeqCst);
@@ -1024,6 +1036,7 @@ mod tests {
                 _tool_call_id: &str,
                 _params: serde_json::Value,
                 _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+                _signal: CancellationToken,
             ) -> Result<crate::AgentToolResult, AgentError> {
                 Ok(crate::AgentToolResult {
                     content: vec![Content::Text { text: "done".to_string(), text_signature: None }],
@@ -1198,6 +1211,7 @@ mod tests {
                 _tool_call_id: &str,
                 _params: serde_json::Value,
                 _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+                _signal: CancellationToken,
             ) -> Result<crate::AgentToolResult, AgentError> {
                 Ok(crate::AgentToolResult {
                     content: vec![Content::Text { text: "result".to_string(), text_signature: None }],
@@ -1250,6 +1264,7 @@ mod tests {
                 _tool_call_id: &str,
                 _params: serde_json::Value,
                 _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+                _signal: CancellationToken,
             ) -> Result<crate::AgentToolResult, AgentError> {
                 Ok(crate::AgentToolResult {
                     content: vec![Content::Text { text: "done".to_string(), text_signature: None }],
@@ -1271,6 +1286,7 @@ mod tests {
                 _tool_call_id: &str,
                 _params: serde_json::Value,
                 _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+                _signal: CancellationToken,
             ) -> Result<crate::AgentToolResult, AgentError> {
                 Ok(crate::AgentToolResult {
                     content: vec![Content::Text { text: "result".to_string(), text_signature: None }],

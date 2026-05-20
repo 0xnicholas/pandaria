@@ -62,6 +62,7 @@ impl AgentTool for EchoTool {
         _tool_call_id: &str,
         params: serde_json::Value,
         _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+        _signal: CancellationToken,
     ) -> Result<AgentToolResult, agent_core::error::AgentError> {
         let msg = params["message"].as_str().unwrap_or("?");
         Ok(AgentToolResult {

@@ -43,6 +43,8 @@ impl MistralProvider {
                     "content": m.content.iter().map(|c| match c {
                         crate::Content::Text { text, .. } => serde_json::json!({"type": "text", "text": text}),
                         crate::Content::Image { data, mime_type } => serde_json::json!({"type": "image_url", "image_url": {"url": format!("data:{};base64,{}", mime_type, data)}}),
+                        crate::Content::Video { data, mime_type } => serde_json::json!({"type": "video_url", "video_url": {"url": format!("data:{};base64,{}", mime_type, data)}}),
+                        crate::Content::Audio { data, mime_type } => serde_json::json!({"type": "input_audio", "input_audio": {"data": data, "format": mime_type.strip_prefix("audio/").unwrap_or("wav")}}),
                         _ => serde_json::json!({"type": "text", "text": ""}),
                     }).collect::<Vec<_>>(),
                 }),
@@ -56,6 +58,7 @@ impl MistralProvider {
                                     .map_err(|e| LlmError::Serialization(format!("failed to serialize tool call arguments: {e}")))?;
                                 serde_json::json!({"type": "function", "id": truncate_tool_call_id(&tc.id), "name": tc.name, "arguments": args})
                             }
+                            crate::Content::Video { .. } | crate::Content::Audio { .. } => serde_json::json!({"type": "text", "text": ""}),
                             _ => serde_json::json!({"type": "text", "text": ""}),
                         };
                         content.push(item);

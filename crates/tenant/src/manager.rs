@@ -73,7 +73,7 @@ pub trait TenantManager: Send + Sync {
         &self,
         tenant_id: &str,
         session_id: &Uuid,
-        content: String,
+        content: Vec<ai_provider::Content>,
     ) -> Result<u64, TenantError>;
 
     /// Interrupt the current in-flight turn.
@@ -137,6 +137,12 @@ pub struct TenantManagerImpl {
     #[allow(dead_code)]
     default_context_window: usize,
     sessions: DashMap<(String, Uuid), ActiveSession>,
+    /// Optional media provider for generate_media tool.
+    media_provider: Option<Arc<dyn ai_provider::MediaProvider>>,
+    /// Optional media model registry.
+    media_registry: Option<Arc<ai_provider::MediaModelRegistry>>,
+    /// Optional per-tenant cost tracker.
+    cost_tracker: Option<Arc<crate::meter::CostTracker>>,
 }
 
 impl TenantManagerImpl {
@@ -157,7 +163,27 @@ impl TenantManagerImpl {
             default_system_prompt: default_system_prompt.into(),
             default_context_window,
             sessions: DashMap::new(),
+            media_provider: None,
+            media_registry: None,
+            cost_tracker: None,
         }
+    }
+
+    /// Set an optional media provider and registry for the `generate_media` tool.
+    pub fn with_media(
+        mut self,
+        provider: Arc<dyn ai_provider::MediaProvider>,
+        registry: Arc<ai_provider::MediaModelRegistry>,
+    ) -> Self {
+        self.media_provider = Some(provider);
+        self.media_registry = Some(registry);
+        self
+    }
+
+    /// Set an optional cost tracker for media and LLM cost accounting.
+    pub fn with_cost_tracker(mut self, tracker: Arc<crate::meter::CostTracker>) -> Self {
+        self.cost_tracker = Some(tracker);
+        self
     }
 }
 
@@ -178,8 +204,25 @@ impl TenantManager for TenantManagerImpl {
         let guard = supervisor.reserve_session()?;
 
         // 3. Create per-session hook dispatcher and tools
-        let hook_dispatcher = Arc::new(agent_core::DefaultHookDispatcher::new()) as Arc<dyn agent_core::HookDispatcher>;
-        let tools: Vec<Arc<dyn agent_core::types::AgentTool>> = vec![];
+        let mut dispatcher = agent_core::DefaultHookDispatcher::new();
+        if let Some(ref tracker) = self.cost_tracker {
+            let tracker = tracker.clone();
+            dispatcher.cost_callback = Some(Arc::new(move |tenant_id, cost| {
+                tracker.record_media_call(cost);
+                tracing::info!(tenant_id, cost, "media cost recorded");
+            }));
+        }
+        let hook_dispatcher = Arc::new(dispatcher) as Arc<dyn agent_core::HookDispatcher>;
+        let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> = vec![];
+        if let (Some(media_provider), Some(media_registry)) = (&self.media_provider, &self.media_registry) {
+            let media_tool = Arc::new(agent_core::MediaGenerationTool::new(
+                media_provider.clone(),
+                media_registry.clone(),
+                self.default_model.clone(),
+                tenant_id,
+            ));
+            tools.push(media_tool);
+        }
 
         // 4. Create compaction actor
         let compaction_config = CompactionConfig {
@@ -308,7 +351,7 @@ impl TenantManager for TenantManagerImpl {
         &self,
         tenant_id: &str,
         session_id: &Uuid,
-        content: String,
+        content: Vec<ai_provider::Content>,
     ) -> Result<u64, TenantError> {
         let entry = self
             .sessions
@@ -328,7 +371,7 @@ impl TenantManager for TenantManagerImpl {
 
         {
             let mut actor = entry.actor.lock().await;
-            actor.prompt(content).await.map_err(|e| map_agent_error(e, tenant_id))?;
+            actor.prompt_with_content(content).await.map_err(|e| map_agent_error(e, tenant_id))?;
         }
 
         Ok(turn_index)

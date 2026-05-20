@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use ai_provider::ToolCall;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::hook::context::{ToolCallCtx, ToolResultCtx};
@@ -44,6 +45,7 @@ impl ToolExecutor {
         &self,
         tool_call: &ToolCall,
         on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+        signal: CancellationToken,
     ) -> Result<ToolResultMsg, AgentError> {
         // Step 1: Dispatch on_tool_call (blocking hook)
         let tool_call_ctx = ToolCallCtx {
@@ -94,7 +96,7 @@ impl ToolExecutor {
 
         // Step 2: Execute the tool (with panic boundary per ADR constraint)
         let mut result = catch_panic(
-            self.tool.execute(&tool_call.id, tool_input, on_progress)
+            self.tool.execute(&tool_call.id, tool_input, on_progress, signal)
         ).await??;
 
         // Step 3: Dispatch on_tool_result (chaining hook)
@@ -168,6 +170,7 @@ mod tests {
             _tool_call_id: &str,
             _params: serde_json::Value,
             _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+            _signal: CancellationToken,
         ) -> Result<AgentToolResult, AgentError> {
             Ok(AgentToolResult {
                 content: vec![Content::Text {
@@ -203,7 +206,7 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None).await.unwrap();
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
         assert!(!result.is_error);
         assert_eq!(result.tool_call_id, "call_1");
     }
@@ -240,7 +243,7 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None).await.unwrap();
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
         assert!(result.is_error);
         let details = result.details.unwrap();
         assert_eq!(details["blocked"], true);
@@ -261,6 +264,7 @@ mod tests {
             _tool_call_id: &str,
             _params: serde_json::Value,
             on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+            _signal: CancellationToken,
         ) -> Result<AgentToolResult, AgentError> {
             if let Some(callback) = on_progress {
                 callback(AgentToolProgressUpdate {
@@ -306,7 +310,7 @@ mod tests {
         let result = executor
             .execute_tool_call(&tool_call, Some(&move |update: AgentToolProgressUpdate| {
                 progress_updates_clone.lock().unwrap().push(update.content);
-            }))
+            }), CancellationToken::new())
             .await
             .unwrap();
 
@@ -351,7 +355,7 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None).await.unwrap();
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
         assert!(result.is_error); // mutated to error
         assert_eq!(result.content.len(), 1);
         match &result.content[0] {
@@ -373,6 +377,7 @@ mod tests {
             _tool_call_id: &str,
             _params: serde_json::Value,
             _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+            _signal: CancellationToken,
         ) -> Result<AgentToolResult, AgentError> {
             Err(AgentError::ToolExecutionFailed("intentional failure".to_string()))
         }
@@ -396,7 +401,7 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None).await;
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await;
         assert!(result.is_err());
         match result {
             Err(AgentError::ToolExecutionFailed(msg)) => {
@@ -417,6 +422,7 @@ mod tests {
             _tool_call_id: &str,
             _params: serde_json::Value,
             _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+            _signal: CancellationToken,
         ) -> Result<AgentToolResult, AgentError> {
             Ok(AgentToolResult {
                 content: vec![Content::Text {
@@ -448,7 +454,7 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None).await.unwrap();
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
         assert!(!result.is_error);
         let details = result.details.unwrap();
         // Verify terminate flag is embedded in details
@@ -486,7 +492,7 @@ mod tests {
         };
 
         // Panic in on_tool_call is caught and defaults to Continue, so tool executes normally
-        let result = executor.execute_tool_call(&tool_call, None).await;
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await;
         assert!(result.is_ok());
         let content = result.unwrap().content;
         assert_eq!(content.len(), 1);
@@ -520,7 +526,7 @@ mod tests {
         };
 
         // Panic in on_tool_result is caught and defaults to no mutation
-        let result = executor.execute_tool_call(&tool_call, None).await;
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await;
         assert!(result.is_ok());
         let content = result.unwrap().content;
         assert_eq!(content.len(), 1);
@@ -541,6 +547,7 @@ mod tests {
             _tool_call_id: &str,
             _params: serde_json::Value,
             _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+            _signal: CancellationToken,
         ) -> Result<AgentToolResult, AgentError> {
             panic!("tool execution panic");
         }
@@ -564,7 +571,7 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None).await;
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AgentError::ToolExecutionFailed(_)));
     }
@@ -601,7 +608,7 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None).await.unwrap();
+        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
         let details = result.details.unwrap();
         // Verify terminate flag from mutation is embedded in details
         assert_eq!(details["_terminate"], true);

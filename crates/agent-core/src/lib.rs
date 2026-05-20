@@ -28,6 +28,7 @@ pub mod events;
 pub mod file_ops;
 pub mod prompt;
 pub mod skills;
+pub mod tools;
 #[cfg(any(test, feature = "testing"))]
 pub mod test_utils;
 pub mod space;
@@ -70,6 +71,7 @@ pub use error::{AgentError, CompactionError};
 pub use events::{AgentEvent, AgentEventListener};
 pub use file_ops::{DefaultFileOperationExtractor, FileOperationExtractor, FileOperations};
 pub use space::AgentSpace;
+pub use tools::MediaGenerationTool;
 pub use types::*;
 
 // Re-export ai-provider types used in public API

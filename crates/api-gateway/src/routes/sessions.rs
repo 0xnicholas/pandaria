@@ -114,10 +114,39 @@ pub async fn messages(
     Extension(tenant_id): Extension<TenantId>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<Vec<agent_core::AgentMessage>>, GatewayError> {
-    let msgs = state
+    let mut msgs = state
         .tenant_manager
         .get_session_messages(&tenant_id.0, &id)
         .await?;
-
+    // Default downgrade for backward compatibility with old TUI clients
+    for msg in &mut msgs {
+        downgrade_media_in_message(msg);
+    }
     Ok(Json(msgs))
+}
+
+/// Downgrade Image/Video/Audio in a message to Text placeholders.
+/// Only affects the response, does NOT modify SessionStore data.
+fn downgrade_media_in_message(msg: &mut agent_core::AgentMessage) {
+    let content = match msg {
+        agent_core::AgentMessage::User(u) => Some(&mut u.content),
+        agent_core::AgentMessage::Assistant(a) => Some(&mut a.content),
+        agent_core::AgentMessage::ToolResult(t) => Some(&mut t.content),
+    };
+    if let Some(content) = content {
+        for c in content.iter_mut() {
+            let replacement = match c {
+                ai_provider::Content::Image { .. } => Some("[图片内容]"),
+                ai_provider::Content::Video { .. } => Some("[视频内容]"),
+                ai_provider::Content::Audio { .. } => Some("[音频内容]"),
+                _ => None,
+            };
+            if let Some(text) = replacement {
+                *c = ai_provider::Content::Text {
+                    text: text.to_string(),
+                    text_signature: None,
+                };
+            }
+        }
+    }
 }

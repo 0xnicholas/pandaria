@@ -143,7 +143,7 @@ async fn test_send_message() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": "hello"}"#))
+                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
                 .unwrap(),
         )
         .await

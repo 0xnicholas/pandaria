@@ -7,17 +7,23 @@ pub struct TransformOptions {
     pub target_api: Option<String>,
     /// Whether the target model supports image input.
     pub supports_images: bool,
+    /// Whether the target model supports video input.
+    pub supports_video_input: bool,
+    /// Whether the target model supports audio input.
+    pub supports_audio_input: bool,
     /// Whether to preserve thinking blocks (same-model cross-turn only).
     pub preserve_thinking: bool,
 }
 
 /// Transform message list for cross-provider compatibility.
 ///
-/// Applies four transformations in order:
+/// Applies transformations in order:
 /// 1. Image downgrade (§25.4)
-/// 2. Thinking block handling (§25.5)
-/// 3. Tool call ID normalization (§25.3)
-/// 4. Orphan tool call padding (§25.6)
+/// 2. Video/Audio downgrade
+/// 3. ToolResult media downgrade
+/// 4. Thinking block handling (§25.5)
+/// 5. Tool call ID normalization (§25.3)
+/// 6. Orphan tool call padding (§25.6)
 pub fn transform_messages(messages: &[Message], options: &TransformOptions) -> Vec<Message> {
     let mut result: Vec<Message> = messages.to_vec();
 
@@ -26,15 +32,21 @@ pub fn transform_messages(messages: &[Message], options: &TransformOptions) -> V
         downgrade_images(&mut result);
     }
 
-    // 2. Thinking block handling
+    // 2. Video/Audio downgrade
+    downgrade_video_audio(&mut result, options);
+
+    // 3. ToolResult media downgrade
+    downgrade_tool_result_media(&mut result);
+
+    // 4. Thinking block handling
     if !options.preserve_thinking {
         remove_thinking_blocks(&mut result);
     }
 
-    // 3. Tool call ID normalization
+    // 5. Tool call ID normalization
     normalize_tool_call_ids(&mut result);
 
-    // 4. Orphan tool call padding
+    // 6. Orphan tool call padding
     pad_orphan_tool_results(&mut result);
 
     result
@@ -75,6 +87,66 @@ fn downgrade_images(messages: &mut [Message]) {
             }
         }
         *content = new_content;
+    }
+}
+
+/// If target provider does not support video/audio input, downgrade to text placeholders.
+pub fn downgrade_video_audio(messages: &mut [Message], options: &TransformOptions) {
+    if options.supports_video_input && options.supports_audio_input {
+        return;
+    }
+    for msg in messages.iter_mut() {
+        let content = match msg {
+            Message::User(u) => &mut u.content,
+            Message::ToolResult(t) => &mut t.content,
+            _ => continue,
+        };
+        for c in content.iter_mut() {
+            match c {
+                Content::Video { mime_type, .. } if !options.supports_video_input => {
+                    *c = Content::Text {
+                        text: format!("[video: {}]", mime_type),
+                        text_signature: None,
+                    };
+                }
+                Content::Audio { mime_type, .. } if !options.supports_audio_input => {
+                    *c = Content::Text {
+                        text: format!("[audio: {}]", mime_type),
+                        text_signature: None,
+                    };
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Downgrade Image/Video/Audio in ToolResult messages to text descriptions.
+/// OpenAI Chat Completions API's `role: "tool"` does not support multimodal arrays.
+pub fn downgrade_tool_result_media(messages: &mut [Message]) {
+    for msg in messages.iter_mut() {
+        if let Message::ToolResult(tr) = msg {
+            let mut text_parts: Vec<String> = Vec::new();
+            for c in &tr.content {
+                match c {
+                    Content::Text { text, .. } => text_parts.push(text.clone()),
+                    Content::Image { mime_type, .. } => {
+                        text_parts.push(format!("[image: {}]", mime_type));
+                    }
+                    Content::Video { mime_type, .. } => {
+                        text_parts.push(format!("[video: {}]", mime_type));
+                    }
+                    Content::Audio { mime_type, .. } => {
+                        text_parts.push(format!("[audio: {}]", mime_type));
+                    }
+                    _ => {}
+                }
+            }
+            tr.content = vec![Content::Text {
+                text: text_parts.join("\n"),
+                text_signature: None,
+            }];
+        }
     }
 }
 
@@ -569,5 +641,47 @@ mod tests {
             orphan_tr.tool_call_id, orphan_id,
             "orphan tool result ID should be preserved"
         );
+    }
+
+    #[test]
+    fn test_video_audio_downgrade() {
+        let messages = vec![Message::User(crate::UserMessage {
+            content: vec![
+                Content::Text { text: "look".into(), text_signature: None },
+                Content::Video { data: "vid".into(), mime_type: "video/mp4".into() },
+            ],
+            timestamp: std::time::SystemTime::now(),
+        })];
+        let result = transform_messages(
+            &messages,
+            &TransformOptions {
+                supports_video_input: false,
+                supports_audio_input: false,
+                preserve_thinking: true,
+                ..Default::default()
+            },
+        );
+        let user = match &result[0] { Message::User(m) => m, _ => panic!() };
+        assert!(matches!(user.content[1], Content::Text { ref text, .. } if text == "[video: video/mp4]"));
+    }
+
+    #[test]
+    fn test_tool_result_media_downgrade() {
+        let messages = vec![Message::ToolResult(crate::ToolResultMessage {
+            tool_call_id: "tc1".into(),
+            tool_name: "generate_media".into(),
+            content: vec![
+                Content::Text { text: "图片已保存".into(), text_signature: None },
+                Content::Image { data: "base64img".into(), mime_type: "image/png".into() },
+            ],
+            details: None,
+            is_error: false,
+            timestamp: std::time::SystemTime::now(),
+        })];
+        let mut result = messages.clone();
+        downgrade_tool_result_media(&mut result);
+        let tr = match &result[0] { Message::ToolResult(m) => m, _ => panic!() };
+        assert_eq!(tr.content.len(), 1);
+        assert!(matches!(tr.content[0], Content::Text { ref text, .. } if text == "图片已保存\n[image: image/png]"));
     }
 }

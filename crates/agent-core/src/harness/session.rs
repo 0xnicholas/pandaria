@@ -241,35 +241,47 @@ impl SessionActor {
         &mut self,
         text: String,
     ) -> Result<Vec<AgentMessage>, AgentError> {
-        // Handle /skill:name invocation
-        if let Some(skill_name) = crate::skills::parse_skill_invocation(&text) {
-            if let Some(skill) = self.skills.iter().find(|s| s.name == skill_name) {
-                let content = tokio::fs::read_to_string(&skill.file_path).await.map_err(|e| {
-                    AgentError::SkillLoadFailed(format!(
-                        "failed to read skill {}: {}",
-                        skill.name, e
-                    ))
-                })?;
+        self.prompt_with_content(vec![Content::Text {
+            text,
+            text_signature: None,
+        }])
+        .await
+    }
 
-                let skill_msg = AgentMessage::User(ai_provider::UserMessage {
-                    content: vec![Content::Text {
-                        text: format!("[Skill: {}]\n{}", skill.name, content),
-                        text_signature: None,
-                    }],
-                    timestamp: std::time::SystemTime::now(),
-                });
-                self.steer(skill_msg);
-                return self.run_with_messages(None).await;
-            } else {
-                return Err(AgentError::SkillNotFound(skill_name.to_string()));
+    pub async fn prompt_with_content(
+        &mut self,
+        content: Vec<Content>,
+    ) -> Result<Vec<AgentMessage>, AgentError> {
+        // Handle /skill:name invocation only when there's exactly one Text part
+        if content.len() == 1 {
+            if let Content::Text { ref text, .. } = content[0] {
+                if let Some(skill_name) = crate::skills::parse_skill_invocation(text) {
+                    if let Some(skill) = self.skills.iter().find(|s| s.name == skill_name) {
+                        let skill_content = tokio::fs::read_to_string(&skill.file_path).await.map_err(|e| {
+                            AgentError::SkillLoadFailed(format!(
+                                "failed to read skill {}: {}",
+                                skill.name, e
+                            ))
+                        })?;
+
+                        let skill_msg = AgentMessage::User(ai_provider::UserMessage {
+                            content: vec![Content::Text {
+                                text: format!("[Skill: {}]\n{}", skill.name, skill_content),
+                                text_signature: None,
+                            }],
+                            timestamp: std::time::SystemTime::now(),
+                        });
+                        self.steer(skill_msg);
+                        return self.run_with_messages(None).await;
+                    } else {
+                        return Err(AgentError::SkillNotFound(skill_name.to_string()));
+                    }
+                }
             }
         }
 
         let user_msg = AgentMessage::User(ai_provider::UserMessage {
-            content: vec![Content::Text {
-                text,
-                text_signature: None,
-            }],
+            content,
             timestamp: std::time::SystemTime::now(),
         });
         self.push_message(user_msg);

@@ -205,7 +205,7 @@ async fn test_manager_send_message() {
         .unwrap();
 
     let turn_index = manager
-        .send_message("t1", &info.id, "hello".to_string())
+        .send_message("t1", &info.id, vec![ai_provider::Content::Text { text: "hello".to_string(), text_signature: None }])
         .await
         .unwrap();
 
@@ -241,7 +241,7 @@ async fn test_manager_subscribe_events() {
 
     // Send a message to trigger events
     let _ = manager
-        .send_message("t1", &info.id, "hello".to_string())
+        .send_message("t1", &info.id, vec![ai_provider::Content::Text { text: "hello".to_string(), text_signature: None }])
         .await
         .unwrap();
 

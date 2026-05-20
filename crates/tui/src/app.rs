@@ -1258,6 +1258,11 @@ impl App {
                                         is_expanded: false,
                                     }));
                                 }
+                                HistoricalContent::Image { .. }
+                                | HistoricalContent::Video { .. }
+                                | HistoricalContent::Audio { .. } => {
+                                    // TUI does not yet support rendering multimedia content
+                                }
                             }
                         }
                         if !text_lines.is_empty() {

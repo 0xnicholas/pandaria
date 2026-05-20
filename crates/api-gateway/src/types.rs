@@ -80,10 +80,20 @@ pub struct CreateSessionRequest {
     pub system_prompt: Option<String>,
 }
 
+/// 消息内容片段，支持多模态。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessageContentPart {
+    Text { text: String },
+    Image { data: String, mime_type: String },
+    Video { data: String, mime_type: String },
+    Audio { data: String, mime_type: String },
+}
+
 /// 发送消息请求体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendMessageRequest {
-    pub content: String,
+    pub content: Vec<MessageContentPart>,
 }
 
 /// 更新 session 请求体（所有字段可选）。

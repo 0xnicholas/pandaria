@@ -56,7 +56,7 @@ static SECRET_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| 
 /// # Example
 ///
 /// ```
-/// use observability::sanitize::sanitize_str;
+/// use agent_core::utils::sanitize::sanitize_str;
 ///
 /// let raw = "key=sk-abc123def456ghi789jkl012mnop345qrst";
 /// assert_eq!(sanitize_str(raw), "key=[REDACTED_API_KEY]");

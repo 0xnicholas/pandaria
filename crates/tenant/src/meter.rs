@@ -51,3 +51,44 @@ impl SlidingWindowMeter {
         entries.retain(|(t, _)| now.duration_since(*t) < window);
     }
 }
+
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Per-tenant cumulative cost tracker.
+pub struct CostTracker {
+    media_cost_millis: AtomicU64, // 0.001 CNY precision
+    llm_cost_millis: AtomicU64,
+}
+
+impl CostTracker {
+    pub fn new() -> Self {
+        Self {
+            media_cost_millis: AtomicU64::new(0),
+            llm_cost_millis: AtomicU64::new(0),
+        }
+    }
+
+    pub fn record_media_call(&self, cost_cny: f64) {
+        let millis = (cost_cny * 1000.0) as u64;
+        self.media_cost_millis.fetch_add(millis, Ordering::Relaxed);
+    }
+
+    pub fn media_cost_cny(&self) -> f64 {
+        self.media_cost_millis.load(Ordering::Relaxed) as f64 / 1000.0
+    }
+
+    pub fn record_llm_cost(&self, cost_cny: f64) {
+        let millis = (cost_cny * 1000.0) as u64;
+        self.llm_cost_millis.fetch_add(millis, Ordering::Relaxed);
+    }
+
+    pub fn llm_cost_cny(&self) -> f64 {
+        self.llm_cost_millis.load(Ordering::Relaxed) as f64 / 1000.0
+    }
+}
+
+impl Default for CostTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}

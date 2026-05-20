@@ -134,7 +134,7 @@ async fn test_end_to_end_tenant_isolation() {
         .unwrap();
 
     manager
-        .send_message("t1", &info1.id, "hello".to_string())
+        .send_message("t1", &info1.id, vec![ai_provider::Content::Text { text: "hello".to_string(), text_signature: None }])
         .await
         .unwrap();
 
@@ -147,7 +147,7 @@ async fn test_end_to_end_tenant_isolation() {
         .unwrap();
 
     manager
-        .send_message("t2", &info2.id, "world".to_string())
+        .send_message("t2", &info2.id, vec![ai_provider::Content::Text { text: "world".to_string(), text_signature: None }])
         .await
         .unwrap();
 

@@ -94,6 +94,7 @@ crates/
   # observability crate 已删除（v0.1.3）。sanitize（敏感数据脱敏）移至 agent-core/src/utils/sanitize.rs。
   # metrics/tracing 功能若未来需要，将重新设计更轻量的集成方案。
   ai-provider/        # LLM provider 抽象、流式 SSE 解析、HTTP 通信协议
+    media/             # 生成型多模态抽象（MediaProvider trait、MediaRequest/Response）
   api-gateway/       # REST + SSE 接入、认证、限流
   tui/               # 终端客户端（ratatui + REST client + SSE 订阅）
 ```
@@ -167,6 +168,8 @@ api-gateway → tenant → agent-core → ai-provider
 
 - `tenant_id` 必须在所有 tracing span 和日志中出现，禁止无 tenant 上下文的操作日志。
 - 工具执行时的文件系统访问必须经过路径校验（由 `path_guard` 在 `on_tool_call` 中拦截），禁止访问 `AgentSpace::workspace_for(tenant_id)` 以外的路径。
+- 生成型多模态工具（generate_media）的文件输出必须经过 PathGuard 校验，禁止写入 workspace 以外的路径。
+- 媒体生成任务的 tracing span 必须携带 tenant_id 和 session_id。
 - LLM API Key 不得出现在任何日志、tracing span、错误消息或 panic 信息中。
 
 ### 代码规范
@@ -227,7 +230,9 @@ api-gateway → tenant → agent-core → ai-provider
 | 代码质量 | 🟡 部分修复（6 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复）。当前非测试 unwrap 共 190 个，待逐步清理 |
 | TUI 客户端 | 🟡 核心功能已重构（ratatui + REST client + SSE 订阅），新增：输入队列（steer/followUp）、Bash 模式（`!command`/`!!command`）、外部编辑器（Ctrl+X）、命令面板解耦（Ctrl+Shift+P 任意状态）、模型循环切换（Ctrl+P/N）、Redo（Ctrl+Shift+-）、字符跳转（Ctrl+]）、CompactionSummary 消息类型。持续迭代中 |
 | PromptBuilder 设计 | ✅ Phase 1 & 2 已完成。核心类型 + SessionActor/AgentLoop 集成 + Hook 系统 `PromptBuilder` 接入。`BeforeAgentStartMutation` / `ProviderRequestMutation` 新增 `prompt_mutation: Option<PromptMutation>` 字段；legacy `system_prompt: Option<PromptBuilder>` 保留向后兼容，替换后框架自动重新注入 `SkillsDirectory`。`inject_skills_into_builder` 辅助函数提取至 `skills/injector.rs`。 |
-| AgentSpace 统一目录 | ✅ 已实现（`agent-core/src/space.rs`）。统一根目录（默认 `~/.pandaria/`），含 config/cache/logs/temp/skills/workspaces 子目录。PathGuard、Skills Scanner、TUI 均已接入。`PANDARIA_SPACE_ROOT` 环境变量可覆盖根目录。
+| AgentSpace 统一目录 | ✅ 已实现（`agent-core/src/space.rs`）。统一根目录（默认 `~/.pandaria/`），含 config/cache/logs/temp/skills/workspaces 子目录。PathGuard、Skills Scanner、TUI 均已接入。`PANDARIA_SPACE_ROOT` 环境变量可覆盖根目录。 |
+| 理解型多模态（Image/Video/Audio 输入） | ✅ 已支持 |
+| 生成型多模态（MediaProvider + MediaGenerationTool） | ✅ 已支持 |
 
 ---
 

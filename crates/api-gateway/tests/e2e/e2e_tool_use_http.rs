@@ -112,7 +112,7 @@ data: [DONE]
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": "call the echo tool"}"#))
+                .body(Body::from(r#"{"content": [{"type":"text","text":"call the echo tool"}]}"#))
                 .unwrap(),
         )
         .await

@@ -78,6 +78,8 @@ fn estimate_tokens(message: &AgentMessage) -> usize {
                     tc.name.len() + serde_json::to_string(&tc.arguments).unwrap_or_default().len()
                 }
                 ai_provider::Content::Image { .. } => 4800,
+                ai_provider::Content::Video { .. } => 4800,
+                ai_provider::Content::Audio { .. } => 4800,
             }).sum()
         }
         AgentMessage::ToolResult(result) => {

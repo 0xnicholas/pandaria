@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::AgentError;
 
@@ -68,6 +69,7 @@ pub trait AgentTool: Send + Sync {
         tool_call_id: &str,
         params: serde_json::Value,
         on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+        signal: CancellationToken,
     ) -> Result<AgentToolResult, AgentError>;
 }
 

@@ -45,7 +45,16 @@ pub struct UsageInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SendMessageRequest { pub content: String }
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessageContentPart {
+    Text { text: String },
+    Image { data: String, mime_type: String },
+    Video { data: String, mime_type: String },
+    Audio { data: String, mime_type: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendMessageRequest { pub content: Vec<MessageContentPart> }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest { pub title: Option<String> }
@@ -92,6 +101,12 @@ pub enum HistoricalContent {
     Thinking { thinking: String },
     #[serde(rename = "toolCall")]
     ToolCall { id: String, name: String, arguments: serde_json::Value },
+    #[serde(rename = "image")]
+    Image { data: String, mime_type: String },
+    #[serde(rename = "video")]
+    Video { data: String, mime_type: String },
+    #[serde(rename = "audio")]
+    Audio { data: String, mime_type: String },
 }
 
 #[cfg(test)]

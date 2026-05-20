@@ -56,7 +56,7 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
             Some(ServerEvent::TextDelta { delta: content_delta })
         }
         AgentEvent::ToolExecutionEnd { tool_call_id, result } => {
-            let result_text = extract_text_content(&result.content);
+            let result_text = extract_tool_result_text(&result.content);
             Some(ServerEvent::ToolCallDone {
                 call_id: tool_call_id,
                 result: result_text,
@@ -93,20 +93,19 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
     }
 }
 
-fn extract_text_content(contents: &[agent_core::Content]) -> Option<String> {
-    let texts: Vec<String> = contents
+fn extract_tool_result_text(contents: &[agent_core::Content]) -> Option<String> {
+    let parts: Vec<String> = contents
         .iter()
-        .filter_map(|c| match c {
-            agent_core::Content::Text { text, .. } => Some(text.clone()),
-            _ => None,
+        .map(|c| match c {
+            agent_core::Content::Text { text, .. } => text.clone(),
+            agent_core::Content::Image { mime_type, .. } => format!("[image: {}]", mime_type),
+            agent_core::Content::Video { mime_type, .. } => format!("[video: {}]", mime_type),
+            agent_core::Content::Audio { mime_type, .. } => format!("[audio: {}]", mime_type),
+            _ => String::new(),
         })
         .collect();
-
-    if texts.is_empty() {
-        None
-    } else {
-        Some(texts.join(""))
-    }
+    let joined = parts.join("\n");
+    if joined.is_empty() { None } else { Some(joined) }
 }
 
 fn extract_turn_end_info(
@@ -139,7 +138,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_text_content() {
+    fn test_extract_tool_result_text() {
         let contents = vec![
             agent_core::Content::Text {
                 text: "hello".into(),
@@ -150,13 +149,31 @@ mod tests {
                 text_signature: None,
             },
         ];
-        assert_eq!(extract_text_content(&contents), Some("hello world".into()));
+        assert_eq!(extract_tool_result_text(&contents), Some("hello\n world".into()));
     }
 
     #[test]
-    fn test_extract_text_content_empty() {
+    fn test_extract_tool_result_text_with_media() {
+        let contents = vec![
+            agent_core::Content::Text {
+                text: "result".into(),
+                text_signature: None,
+            },
+            agent_core::Content::Image {
+                data: "base64".into(),
+                mime_type: "image/png".into(),
+            },
+        ];
+        assert_eq!(
+            extract_tool_result_text(&contents),
+            Some("result\n[image: image/png]".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_tool_result_text_empty() {
         let contents: Vec<agent_core::Content> = vec![];
-        assert_eq!(extract_text_content(&contents), None);
+        assert_eq!(extract_tool_result_text(&contents), None);
     }
 
     #[test]
