@@ -398,12 +398,15 @@ pub struct CompactEndCtx {
     pub session_id: String,
     pub compacted_messages: Vec<AgentMessage>,
     pub token_savings: usize,
+    /// The compaction result, if compaction succeeded.
+    pub result: Option<crate::compaction::CompactionResult>,
 }
 
 impl CompactEndCtx {
     /// Create a new `CompactEndCtx` with the given identifiers.
     ///
-    /// `compacted_messages` defaults to empty, `token_savings` to `0`.
+    /// `compacted_messages` defaults to empty, `token_savings` to `0`,
+    /// `result` to `None`.
     pub fn new(
         tenant_id: impl Into<String>,
         session_id: impl Into<String>,
@@ -413,6 +416,7 @@ impl CompactEndCtx {
             session_id: session_id.into(),
             compacted_messages: vec![],
             token_savings: 0,
+            result: None,
         }
     }
 }

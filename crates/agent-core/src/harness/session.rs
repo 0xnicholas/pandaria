@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use ai_provider::{Content, StopReason};
 use tokio_util::sync::CancellationToken;
@@ -21,6 +22,18 @@ use crate::types::{AgentMessage, AgentToolRef};
 
 struct QueuedEvent {
     event: AgentEvent,
+}
+
+/// Explicit session state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionState {
+    /// Session created, no turn in progress.
+    Idle,
+    /// Turn is in progress (AgentLoop running).
+    Running,
+    /// Unrecoverable error occurred; requires reset.
+    Error,
 }
 
 /// Manages the lifecycle of a single agent session for a given tenant.
@@ -57,7 +70,8 @@ pub struct SessionActor {
     event_listeners: Arc<Mutex<Vec<Arc<dyn AgentEventListener>>>>,
     event_tx: Option<tokio::sync::mpsc::Sender<QueuedEvent>>,
     event_processor_handle: Option<tokio::task::JoinHandle<()>>,
-    is_streaming: bool,
+    state: AtomicU8, // 0=Idle, 1=Running, 2=Error
+    error_reason: Mutex<Option<String>>,
 }
 
 /// Configuration for creating a new [`SessionActor`].
@@ -174,7 +188,8 @@ impl SessionActor {
             event_listeners: Arc::new(Mutex::new(Vec::new())),
             event_tx: None,
             event_processor_handle: None,
-            is_streaming: false,
+            state: AtomicU8::new(0),
+            error_reason: Mutex::new(None),
         };
         let event_tx = actor.spawn_event_processor();
         actor.event_tx = Some(event_tx);
@@ -252,6 +267,10 @@ impl SessionActor {
         &mut self,
         content: Vec<Content>,
     ) -> Result<Vec<AgentMessage>, AgentError> {
+        if self.state.load(Ordering::SeqCst) == 2 {
+            let reason = self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+            return Err(AgentError::SessionInError { reason });
+        }
         // Handle /skill:name invocation only when there's exactly one Text part
         if content.len() == 1 {
             if let Content::Text { ref text, .. } = content[0] {
@@ -302,13 +321,47 @@ impl SessionActor {
     }
 
     pub async fn continue_(&mut self) -> Result<Vec<AgentMessage>, AgentError> {
+        if self.state.load(Ordering::SeqCst) == 2 {
+            let reason = self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+            return Err(AgentError::SessionInError { reason });
+        }
         self.run_with_messages(None).await
     }
 
-    pub fn is_streaming(&self) -> bool { self.is_streaming }
+    pub fn is_streaming(&self) -> bool {
+        self.state.load(Ordering::SeqCst) == 1
+    }
+
+    pub fn state(&self) -> SessionState {
+        match self.state.load(Ordering::SeqCst) {
+            1 => SessionState::Running,
+            2 => SessionState::Error,
+            _ => SessionState::Idle,
+        }
+    }
+
+    pub fn error_reason(&self) -> Option<String> {
+        self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub async fn reset(&mut self) -> Result<CancellationToken, AgentError> {
+        self.abort_token.cancel();
+        self.entries.clear();
+        self.recovery = RecoveryStateMachine::new(self.max_retries);
+        self.state.store(0, Ordering::SeqCst);
+        *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.abort_token = CancellationToken::new();
+        Ok(self.abort_token.clone())
+    }
 
     pub fn add_event_listener(&mut self, listener: Arc<dyn AgentEventListener>) {
         self.event_listeners.lock().unwrap_or_else(|e| e.into_inner()).push(listener);
+    }
+
+    fn emit_event(&self, event: AgentEvent) {
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.try_send(QueuedEvent { event });
+        }
     }
 
     pub fn set_system_prompt(&mut self, prompt: String) {
@@ -348,7 +401,8 @@ impl SessionActor {
         let mut all_new_msgs = Vec::new();
 
         loop {
-            self.is_streaming = true;
+            self.state.store(1, Ordering::SeqCst);
+            self.emit_event(AgentEvent::StateChanged { state: SessionState::Running });
             self.abort_token = CancellationToken::new();
 
             let messages = SessionContextBuilder::build_context(&self.entries);
@@ -377,7 +431,7 @@ impl SessionActor {
 
             match AgentLoop::new(config).run(messages, self.abort_token.child_token()).await {
                 Ok(msgs) => {
-                    self.is_streaming = false;
+                    self.state.store(0, Ordering::SeqCst);
                     if let Some(AgentMessage::Assistant(assistant)) = msgs.iter().rfind(|m| matches!(m, AgentMessage::Assistant(a) if a.stop_reason != StopReason::ToolUse)) {
                         let action = self.recovery.evaluate(assistant);
                         match action {
@@ -401,6 +455,9 @@ impl SessionActor {
                             }
                             RecoveryAction::Abort { reason } => {
                                 self.recovery.mark_success();
+                                self.state.store(2, Ordering::SeqCst);
+                                *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason.clone());
+                                self.emit_event(AgentEvent::StateChanged { state: SessionState::Error });
                                 return Err(AgentError::RecoveryAborted(reason));
                             }
                             RecoveryAction::Continue => { self.recovery.mark_success(); }
@@ -410,8 +467,11 @@ impl SessionActor {
                     all_new_msgs.extend(msgs);
                 }
                 Err(e) => {
-                    self.is_streaming = false;
+                    self.state.store(0, Ordering::SeqCst);
                     match e {
+                        AgentError::Cancelled => {
+                            return Err(AgentError::Cancelled);
+                        }
                         AgentError::ContextOverflow(msg) => {
                             let action = self.recovery.evaluate_overflow(&msg);
                             match action {
@@ -421,6 +481,9 @@ impl SessionActor {
                                     continue;
                                 }
                                 RecoveryAction::Abort { reason } => {
+                                    self.state.store(2, Ordering::SeqCst);
+                                    *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason.clone());
+                                    self.emit_event(AgentEvent::StateChanged { state: SessionState::Error });
                                     return Err(AgentError::CompactionFailed(reason));
                                 }
                                 RecoveryAction::RetryAfterBackoff { delay_ms } => {
@@ -437,11 +500,19 @@ impl SessionActor {
                                     continue;
                                 }
                                 RecoveryAction::Continue => {
+                                    self.state.store(2, Ordering::SeqCst);
+                                    *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg.clone());
+                                    self.emit_event(AgentEvent::StateChanged { state: SessionState::Error });
                                     return Err(AgentError::ContextOverflow(msg));
                                 }
                             }
                         }
-                        other => return Err(other),
+                        other => {
+                            self.state.store(2, Ordering::SeqCst);
+                            *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(other.to_string());
+                            self.emit_event(AgentEvent::StateChanged { state: SessionState::Error });
+                            return Err(other);
+                        }
                     }
                 }
             }
@@ -457,6 +528,11 @@ impl SessionActor {
 
             break;
         }
+
+        // Emit final Idle event and clear any stale error reason.
+        // State is already Idle set by the Ok(msgs) branch above.
+        self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).take();
+        self.emit_event(AgentEvent::StateChanged { state: SessionState::Idle });
 
         info!(
             tenant_id = %self.tenant_id,
@@ -591,6 +667,7 @@ impl SessionActor {
         self.truncate_entries_before(result.first_kept_entry_id);
 
         // 4. Emit compaction_end
+        let result_for_hook = result.clone();
         if let Some(tx) = &self.event_tx {
             tx.send(QueuedEvent {
                 event: AgentEvent::CompactionEnd {
@@ -602,6 +679,21 @@ impl SessionActor {
                 },
             }).await.ok();
         }
+
+        // 5. Trigger on_compact_end hook
+        let compact_end_ctx = crate::hook::context::CompactEndCtx {
+            tenant_id: self.tenant_id.clone(),
+            session_id: self.session_id.clone(),
+            compacted_messages: vec![],
+            token_savings: 0,
+            result: Some(result_for_hook),
+        };
+        let _ = crate::hook::timeout::with_timeout(
+            self.hook_dispatcher.on_compact_end(&compact_end_ctx),
+            500,
+            (),
+            "on_compact_end",
+        ).await;
 
         Ok(())
     }
@@ -807,6 +899,11 @@ impl SessionActor {
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
+
+    /// Return the tools registered for this session.
+    pub fn tools(&self) -> &[crate::types::AgentToolRef] {
+        &self.tools
+    }
 }
 
 impl Drop for SessionActor {
@@ -814,13 +911,16 @@ impl Drop for SessionActor {
         // 1. Cancel any in-flight operations
         self.abort_token.cancel();
 
-        // 2. Drop event sender to signal processor exit
+        // 2. Drop event sender so the event processor sees channel closed
+        //    and drains any buffered events before exiting naturally.
+        //    We do NOT abort the handle here — a forced abort would drop
+        //    events already sitting in the mpsc buffer (e.g. TurnEnd).
         self.event_tx.take();
 
-        // 3. Abort the event processor task if still running
-        if let Some(handle) = self.event_processor_handle.take() {
-            handle.abort();
-        }
+        // Take the handle out so it is dropped alongside this SessionActor.
+        // JoinHandle::drop does NOT abort the task; the task continues to
+        // run until the recv loop observes the closed channel.
+        let _ = self.event_processor_handle.take();
 
         // NOTE: `last_save` is intentionally NOT awaited here because
         // `Drop` cannot be async. Callers MUST call `shutdown()` (which
@@ -1537,5 +1637,148 @@ mod tests {
         let prompt = session.system_prompt();
         assert!(prompt.starts_with("New persona."), "expected new base persona, got: {}", prompt);
         assert!(prompt.contains("<available_skills>"), "expected skills XML preserved after set_system_prompt, got: {}", prompt);
+    }
+
+    #[tokio::test]
+    async fn test_state_idle_after_creation() {
+        let provider = TestProvider::text("response");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let session = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        });
+
+        assert_eq!(session.state(), SessionState::Idle);
+        assert!(!session.is_streaming());
+    }
+
+    #[tokio::test]
+    async fn test_state_idle_after_successful_prompt() {
+        let provider = TestProvider::text("response");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        });
+
+        let _ = session.prompt("hello".to_string()).await.unwrap();
+        assert_eq!(session.state(), SessionState::Idle);
+        assert!(!session.is_streaming());
+    }
+
+    #[tokio::test]
+    async fn test_state_error_after_unrecoverable_error() {
+        let provider = TestProvider::error("something went wrong");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        });
+
+        let result = session.prompt("hello".to_string()).await;
+        assert!(result.is_err());
+        assert_eq!(session.state(), SessionState::Error);
+        assert!(session.error_reason().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_error_state_blocks_prompt() {
+        let provider = TestProvider::error("something went wrong");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        });
+
+        let _ = session.prompt("hello".to_string()).await;
+        assert_eq!(session.state(), SessionState::Error);
+
+        let err = session.prompt("again".to_string()).await.unwrap_err();
+        match err {
+            AgentError::SessionInError { .. } => {}
+            other => panic!("expected SessionInError, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_reset_clears_error_state() {
+        let provider = TestProvider::error("something went wrong");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        });
+
+        let _ = session.prompt("hello".to_string()).await;
+        assert_eq!(session.state(), SessionState::Error);
+
+        session.reset().await.unwrap();
+        assert_eq!(session.state(), SessionState::Idle);
+        assert!(session.error_reason().is_none());
+        assert!(session.messages().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_reset_preserves_config() {
+        let provider = TestProvider::text("response");
+        let dispatcher = Arc::new(AllowAllDispatcher);
+        let mut session = SessionActor::new(SessionConfig {
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "original prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        });
+
+        session.prompt("hello".to_string()).await.unwrap();
+        session.reset().await.unwrap();
+
+        assert_eq!(session.system_prompt(), "original prompt");
+        assert_eq!(session.state(), SessionState::Idle);
     }
 }

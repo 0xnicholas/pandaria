@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 tokio = { workspace = true, features = ["sync", "rt", "macros", "signal"] }
@@ -25,6 +25,7 @@ dotenvy = "0.15"
 tenant = { path = "../tenant" }
 agent-core = { path = "../agent-core" }
 ai-provider = { path = "../ai-provider" }
+reqwest = { version = "0.12", features = ["json"] }
 
 [[bin]]
 name = "pandaria-server"
@@ -37,6 +38,9 @@ wiremock = "0.6"
 tracing-subscriber = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 ai-provider = { path = "../ai-provider", features = ["test-utils"] }
+tokio-tungstenite = "0.26"
+reqwest = "0.12"
+hex = "0.4"
 
 [[test]]
 name = "e2e_session_lifecycle"
@@ -53,3 +57,23 @@ path = "tests/e2e/e2e_tool_use_http.rs"
 [[test]]
 name = "e2e_tenant_isolation"
 path = "tests/e2e/e2e_tenant_isolation.rs"
+
+[[test]]
+name = "e2e_http_proxy_tool"
+path = "tests/e2e/e2e_http_proxy_tool.rs"
+
+[[test]]
+name = "e2e_session_state"
+path = "tests/e2e/e2e_session_state.rs"
+
+[[test]]
+name = "e2e_webhook"
+path = "tests/e2e/e2e_webhook.rs"
+
+[[test]]
+name = "e2e_api_extensions"
+path = "tests/e2e/e2e_api_extensions.rs"
+
+[[test]]
+name = "e2e_websocket"
+path = "tests/e2e/e2e_websocket.rs"

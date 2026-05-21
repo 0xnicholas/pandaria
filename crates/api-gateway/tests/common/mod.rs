@@ -154,6 +154,75 @@ impl TenantManager for MockTenantManager {
         Ok(vec![])
     }
 
+    async fn get_session_state(
+        &self,
+        _tenant_id: &str,
+        _session_id: &Uuid,
+    ) -> Result<(agent_core::SessionState, Option<String>), TenantError> {
+        Ok((agent_core::SessionState::Idle, None))
+    }
+
+    async fn get_quota(&self, tenant_id: &str) -> Result<tenant::manager::QuotaInfo, TenantError> {
+        Ok(tenant::manager::QuotaInfo {
+            tenant_id: tenant_id.into(),
+            max_concurrent_sessions: 10,
+            active_sessions: 0,
+            max_tokens_per_day: 1_000_000,
+            tokens_used_today: 0,
+            max_tool_calls_per_minute: 60,
+            tool_calls_in_last_minute: 0,
+            default_model: "claude-sonnet-4".into(),
+            available_models: vec!["claude-sonnet-4".into()],
+        })
+    }
+
+    async fn batch_create_sessions(
+        &self,
+        tenant_id: &str,
+        count: usize,
+        template: CreateSessionParams,
+    ) -> Result<tenant::manager::BatchCreateResult, TenantError> {
+        let mut created = vec![];
+        for _ in 0..count {
+            created.push(self.create_session(tenant_id, template.clone()).await?);
+        }
+        Ok(tenant::manager::BatchCreateResult {
+            created,
+            failed: vec![],
+        })
+    }
+
+    async fn clone_session(
+        &self,
+        tenant_id: &str,
+        _session_id: &Uuid,
+        title: Option<String>,
+    ) -> Result<SessionInfo, TenantError> {
+        self.create_session(tenant_id, CreateSessionParams {
+            title,
+            ..Default::default()
+        }).await
+    }
+
+    async fn reset_session(
+        &self,
+        _tenant_id: &str,
+        _session_id: &Uuid,
+    ) -> Result<agent_core::SessionState, TenantError> {
+        Ok(agent_core::SessionState::Idle)
+    }
+
+    async fn send_message_and_wait(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+        content: Vec<ai_provider::Content>,
+        _timeout_ms: u64,
+    ) -> Result<tenant::manager::WaitResult, TenantError> {
+        let turn_index = self.send_message(tenant_id, session_id, content).await?;
+        Ok(tenant::manager::WaitResult::Timeout { turn_index })
+    }
+
     async fn shutdown(&self) {}
 }
 

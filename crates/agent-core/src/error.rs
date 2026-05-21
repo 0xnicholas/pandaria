@@ -46,6 +46,9 @@ pub enum AgentError {
 
     #[error("skill load failed: {0}")]
     SkillLoadFailed(String),
+
+    #[error("session in error state: {reason}")]
+    SessionInError { reason: String },
 }
 
 impl AgentError {
@@ -65,6 +68,7 @@ impl AgentError {
             Self::QuotaExceeded(_) => "quota_exceeded",
             Self::SkillNotFound(_) => "skill_not_found",
             Self::SkillLoadFailed(_) => "skill_load_failed",
+            Self::SessionInError { .. } => "session_in_error",
         }
     }
 

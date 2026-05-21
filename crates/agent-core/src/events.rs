@@ -68,6 +68,9 @@ pub enum AgentEvent {
     Error {
         error: AgentError,
     },
+    StateChanged {
+        state: crate::harness::SessionState,
+    },
 }
 
 #[async_trait]

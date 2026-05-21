@@ -49,11 +49,20 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
     use agent_core::AgentEvent;
 
     match event {
+        AgentEvent::TurnStart { turn_index } => {
+            Some(ServerEvent::TurnStart { turn_index })
+        }
         AgentEvent::MessageStart { message_index } => {
             Some(ServerEvent::MessageStart { message_index })
         }
         AgentEvent::MessageUpdate { content_delta, .. } => {
             Some(ServerEvent::TextDelta { delta: content_delta })
+        }
+        AgentEvent::ToolExecutionStart { tool_call_id, tool_name } => {
+            Some(ServerEvent::ToolCallStarted {
+                call_id: tool_call_id,
+                name: tool_name,
+            })
         }
         AgentEvent::ToolExecutionEnd { tool_call_id, result } => {
             let result_text = extract_tool_result_text(&result.content);
@@ -70,21 +79,30 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
                 usage,
             })
         }
+        AgentEvent::AutoRetryStart { attempt, max_attempts, delay_ms } => {
+            Some(ServerEvent::AutoRetryStart {
+                attempt,
+                max_attempts,
+                delay_ms,
+            })
+        }
+        AgentEvent::AutoRetryEnd { success, error } => {
+            Some(ServerEvent::AutoRetryEnd { success, error })
+        }
         AgentEvent::Error { error } => Some(ServerEvent::Error {
             code: error_variant_name(&error),
             message: error.to_sanitized_string(),
         }),
-        // MVP 不转发的事件
+        AgentEvent::StateChanged { state } => Some(ServerEvent::StateChanged {
+            state: format!("{:?}", state).to_lowercase(),
+        }),
+        // 以下事件内部产生但暂不对外暴露（可随需求逐步补充）
         AgentEvent::AgentStart
         | AgentEvent::AgentEnd { .. }
-        | AgentEvent::TurnStart { .. }
         | AgentEvent::MessageEnd { .. }
-        | AgentEvent::ToolExecutionStart { .. }
         | AgentEvent::ToolExecutionUpdate { .. }
         | AgentEvent::CompactionStart { .. }
-        | AgentEvent::CompactionEnd { .. }
-        | AgentEvent::AutoRetryStart { .. }
-        | AgentEvent::AutoRetryEnd { .. } => None,
+        | AgentEvent::CompactionEnd { .. } => None,
         // Forward-compatibility for future AgentEvent variants
         _ => {
             tracing::warn!("unhandled AgentEvent variant in SSE mapper");

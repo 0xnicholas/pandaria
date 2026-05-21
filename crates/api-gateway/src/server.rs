@@ -52,9 +52,15 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/messages", post(messages::send))
         .route("/sessions/{id}/messages/current", delete(messages::interrupt))
+        .route("/sessions/{id}/state", get(sessions::get_state))
+        .route("/sessions/{id}/clone", post(sessions::clone))
+        .route("/sessions/{id}/reset", post(sessions::reset))
         .route("/sessions/{id}/events", get(events::stream))
+        .route("/sessions/{id}/ws", get(crate::routes::ws::session_ws))
         .route("/sessions/{id}/compact", post(sessions::compact))
         .route("/sessions/{id}/messages", get(sessions::messages))
+        .route("/sessions/batch", post(sessions::batch_create))
+        .route("/tenant/quota", get(sessions::get_quota))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             rate_limit::rate_limit_middleware,

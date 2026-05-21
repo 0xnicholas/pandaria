@@ -25,15 +25,22 @@ pub fn build_test_app(provider: Arc<dyn ai_provider::LlmProvider>) -> Router {
     );
     registry.register(test_tenant).unwrap();
 
+    let runtime_config = Arc::new(agent_core::RuntimeConfig {
+        provider: provider.clone(),
+        default_model: "gpt-4".to_string(),
+        default_system_prompt: "You are a helpful assistant.".to_string(),
+        default_context_window: 128_000,
+        store: None,
+        media_provider: None,
+        media_registry: None,
+        http_client: reqwest::Client::new(),
+        compaction_config: agent_core::CompactionConfig::default(),
+        agent_space: agent_core::AgentSpace::default(),
+        hook_config: agent_core::DefaultHookConfig::default(),
+        memory_store: None,
+    });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(
-            registry,
-            provider,
-            None, // no persistent store
-            "gpt-4",
-            "You are a helpful assistant.",
-            128_000,
-        ),
+        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
     );
 
     let config = ServerConfig {
@@ -49,15 +56,70 @@ pub fn build_test_app_with_registry(
     provider: Arc<dyn ai_provider::LlmProvider>,
     registry: Arc<tenant::TenantRegistry>,
 ) -> Router {
+    let runtime_config = Arc::new(agent_core::RuntimeConfig {
+        provider: provider.clone(),
+        default_model: "gpt-4".to_string(),
+        default_system_prompt: "You are a helpful assistant.".to_string(),
+        default_context_window: 128_000,
+        store: None,
+        media_provider: None,
+        media_registry: None,
+        http_client: reqwest::Client::new(),
+        compaction_config: agent_core::CompactionConfig::default(),
+        agent_space: agent_core::AgentSpace::default(),
+        hook_config: agent_core::DefaultHookConfig::default(),
+        memory_store: None,
+    });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(
-            registry,
-            provider,
-            None,
-            "gpt-4",
-            "You are a helpful assistant.",
-            128_000,
-        ),
+        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
+    );
+
+    let config = ServerConfig {
+        auth_secret: secrecy::SecretString::from(TEST_SECRET),
+        ..Default::default()
+    };
+    let state = Arc::new(AppState::new(manager, config));
+    api_gateway::build_router(state)
+}
+
+/// Build a test router with a custom HTTP client for external tools/webhooks.
+///
+/// The `client` is injected into `TenantManagerImpl` so that `HttpProxyTool`
+/// and `WebhookEventListener` use it for outbound requests. This allows E2E
+/// tests to route requests to local mock servers (e.g. wiremock) while using
+/// a public-looking domain that passes SSRF checks.
+pub fn build_test_app_with_client(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    client: reqwest::Client,
+) -> Router {
+    let registry = Arc::new(tenant::TenantRegistry::new());
+    let test_tenant = tenant::Tenant::new(
+        "test-tenant",
+        tenant::TenantQuota {
+            max_concurrent_sessions: 10,
+            max_tokens_per_day: 1_000_000,
+            max_tool_calls_per_minute: 60,
+            cpu_time_budget_ms_per_day: 3_600_000,
+        },
+    );
+    registry.register(test_tenant).unwrap();
+
+    let runtime_config = Arc::new(agent_core::RuntimeConfig {
+        provider: provider.clone(),
+        default_model: "gpt-4".to_string(),
+        default_system_prompt: "You are a helpful assistant.".to_string(),
+        default_context_window: 128_000,
+        store: None,
+        media_provider: None,
+        media_registry: None,
+        http_client: client,
+        compaction_config: agent_core::CompactionConfig::default(),
+        agent_space: agent_core::AgentSpace::default(),
+        hook_config: agent_core::DefaultHookConfig::default(),
+        memory_store: None,
+    });
+    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
+        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
     );
 
     let config = ServerConfig {

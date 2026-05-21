@@ -160,7 +160,7 @@ paths:
           $ref: '#/components/responses/RateLimited'
 
     post:
-      summary: Send a user message
+      summary: Send a message to a session
       operationId: sendMessage
       parameters:
         - name: id
@@ -169,6 +169,18 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: wait
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: timeout_ms
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30000
       requestBody:
         required: true
         content:
@@ -176,8 +188,14 @@ paths:
             schema:
               $ref: '#/components/schemas/SendMessageRequest'
       responses:
+        '200':
+          description: Turn complete (wait=true) or accepted (wait=false)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WaitResult'
         '202':
-          description: Message accepted
+          description: Message accepted (async) or turn in progress (wait=true timeout)
           content:
             application/json:
               schema:
@@ -186,6 +204,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -227,7 +247,7 @@ paths:
           content:
             text/event-stream:
               schema:
-                type: string
+                $ref: '#/components/schemas/ServerEvent'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -255,6 +275,149 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/state:
+    get:
+      summary: Get session state
+      operationId: getSessionState
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionStateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/clone:
+    post:
+      summary: Clone a session (copy config, not history)
+      operationId: cloneSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+      responses:
+        '201':
+          description: Session cloned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/{id}/reset:
+    post:
+      summary: Reset a session (clear history, keep config)
+      operationId: resetSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session reset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResetSessionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/sessions/batch:
+    post:
+      summary: Batch create sessions
+      operationId: batchCreateSessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCreateRequest'
+      responses:
+        '201':
+          description: Sessions created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchCreateResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/tenant/quota:
+    get:
+      summary: Get tenant quota information
+      operationId: getTenantQuota
+      responses:
+        '200':
+          description: Quota information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/sessions/{id}/ws:
+    get:
+      summary: WebSocket connection for session events
+      operationId: sessionWebSocket
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '101':
+          description: WebSocket upgrade successful
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
 components:
   securitySchemes:
@@ -301,7 +464,13 @@ components:
         system_prompt:
           type: string
           nullable: true
-          default: null
+        tools:
+          type: array
+          items:
+            $ref: '#/components/schemas/ToolConfig'
+          default: []
+        webhook:
+          $ref: '#/components/schemas/WebhookConfig'
 
     UpdateSessionRequest:
       type: object
@@ -312,7 +481,6 @@ components:
           type: string
         system_prompt:
           type: string
-          default: null
 
     SendMessageRequest:
       type: object
@@ -320,8 +488,10 @@ components:
         - content
       properties:
         content:
-          type: string
-          description: User message text
+          type: array
+          description: User message content parts (text, image, video, audio)
+          items:
+            $ref: '#/components/schemas/MessageContentPart'
 
     SendMessageResponse:
       type: object
@@ -331,6 +501,64 @@ components:
         turn_index:
           type: integer
           format: int64
+
+    MessageContentPart:
+      type: object
+      required:
+        - type
+      discriminator:
+        propertyName: type
+      oneOf:
+        - $ref: '#/components/schemas/TextContentPart'
+        - $ref: '#/components/schemas/ImageContentPart'
+        - $ref: '#/components/schemas/VideoContentPart'
+        - $ref: '#/components/schemas/AudioContentPart'
+
+    TextContentPart:
+      type: object
+      required: [type, text]
+      properties:
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: string
+
+    ImageContentPart:
+      type: object
+      required: [type, data, mime_type]
+      properties:
+        type:
+          type: string
+          enum: [image]
+        data:
+          type: string
+        mime_type:
+          type: string
+
+    VideoContentPart:
+      type: object
+      required: [type, data, mime_type]
+      properties:
+        type:
+          type: string
+          enum: [video]
+        data:
+          type: string
+        mime_type:
+          type: string
+
+    AudioContentPart:
+      type: object
+      required: [type, data, mime_type]
+      properties:
+        type:
+          type: string
+          enum: [audio]
+        data:
+          type: string
+        mime_type:
+          type: string
 
     ServerEvent:
       type: object
@@ -348,6 +576,9 @@ components:
             - tool_call_done
             - turn_end
             - error
+            - state_changed
+            - auto_retry_start
+            - auto_retry_end
       description: |
         SSE event types. Events are serialized as:
         ```
@@ -365,6 +596,9 @@ components:
         - $ref: '#/components/schemas/ToolCallDoneEvent'
         - $ref: '#/components/schemas/TurnEndEvent'
         - $ref: '#/components/schemas/ErrorEvent'
+        - $ref: '#/components/schemas/StateChangedEvent'
+        - $ref: '#/components/schemas/AutoRetryStartEvent'
+        - $ref: '#/components/schemas/AutoRetryEndEvent'
 
     MessageStartEvent:
       type: object
@@ -496,6 +730,52 @@ components:
           type: string
         message:
           type: string
+
+    StateChangedEvent:
+      type: object
+      required:
+        - type
+        - state
+      properties:
+        type:
+          type: string
+          enum: [state_changed]
+        state:
+          type: string
+          enum: [idle, running, error]
+
+    AutoRetryStartEvent:
+      type: object
+      required:
+        - type
+        - attempt
+        - max_attempts
+        - delay_ms
+      properties:
+        type:
+          type: string
+          enum: [auto_retry_start]
+        attempt:
+          type: integer
+        max_attempts:
+          type: integer
+        delay_ms:
+          type: integer
+
+    AutoRetryEndEvent:
+      type: object
+      required:
+        - type
+        - success
+      properties:
+        type:
+          type: string
+          enum: [auto_retry_end]
+        success:
+          type: boolean
+        error:
+          type: string
+          nullable: true
 
     ApiError:
       type: object
@@ -690,6 +970,156 @@ components:
         model:
           type: string
 
+    ToolConfig:
+      type: object
+      required:
+        - name
+        - description
+        - parameters
+        - endpoint
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        parameters:
+          type: object
+        endpoint:
+          type: string
+          format: uri
+        timeout_ms:
+          type: integer
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+
+    WebhookConfig:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          format: uri
+        events:
+          type: array
+          items:
+            type: string
+        secret:
+          type: string
+
+    SessionStateResponse:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          enum: [idle, running, error]
+        error_reason:
+          type: string
+          nullable: true
+
+    QuotaInfo:
+      type: object
+      required:
+        - tenant_id
+        - max_concurrent_sessions
+        - active_sessions
+        - max_tokens_per_day
+        - tokens_used_today
+        - max_tool_calls_per_minute
+        - tool_calls_in_last_minute
+        - default_model
+        - available_models
+      properties:
+        tenant_id:
+          type: string
+        max_concurrent_sessions:
+          type: integer
+        active_sessions:
+          type: integer
+        max_tokens_per_day:
+          type: integer
+        tokens_used_today:
+          type: integer
+        max_tool_calls_per_minute:
+          type: integer
+        tool_calls_in_last_minute:
+          type: integer
+        default_model:
+          type: string
+        available_models:
+          type: array
+          items:
+            type: string
+
+    BatchCreateRequest:
+      type: object
+      required:
+        - count
+        - template
+      properties:
+        count:
+          type: integer
+        template:
+          $ref: '#/components/schemas/CreateSessionRequest'
+
+    BatchCreateResult:
+      type: object
+      required:
+        - created
+        - failed
+      properties:
+        created:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionInfo'
+        failed:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchFailure'
+
+    BatchFailure:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+
+    WaitResult:
+      type: object
+      required:
+        - turn_index
+        - completed
+      properties:
+        turn_index:
+          type: integer
+        completed:
+          type: boolean
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentMessage'
+        usage:
+          type: object
+          properties:
+            input_tokens:
+              type: integer
+            output_tokens:
+              type: integer
+
+    ResetSessionResponse:
+      type: object
+      required:
+        - state
+      properties:
+        state:
+          type: string
+          enum: [idle]
+
   responses:
     Unauthorized:
       description: Invalid or missing authentication token
@@ -717,6 +1147,28 @@ components:
             error:
               code: not_found
               message: session not found
+
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+          example:
+            error:
+              code: bad_request
+              message: invalid request parameter
+
+    Conflict:
+      description: Session is in error state and must be reset
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorBody'
+          example:
+            error:
+              code: session_in_error
+              message: session in error state
 
     RateLimited:
       description: Rate limit exceeded

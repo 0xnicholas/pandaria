@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use tenant::manager::{CreateSessionParams, TenantManager, TenantManagerImpl};
 use tenant::{Tenant, TenantQuota, TenantRegistry};
+use agent_core::{RuntimeConfig, CompactionConfig, AgentSpace, DefaultHookConfig};
 
 struct EchoProvider {
     config: ProviderConfig,
@@ -118,18 +119,27 @@ async fn test_end_to_end_tenant_isolation() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
 
-    let manager = TenantManagerImpl::new(
-        registry.clone(),
-        provider,
-        None,
-        "echo",
-        "You are helpful.",
-        128_000,
-    );
+    let manager = {
+        let runtime_config = Arc::new(RuntimeConfig {
+            provider: provider.clone(),
+            default_model: "echo".to_string(),
+            default_system_prompt: "You are helpful.".to_string(),
+            default_context_window: 128_000,
+            store: None,
+            media_provider: None,
+            media_registry: None,
+            http_client: reqwest::Client::new(),
+            compaction_config: CompactionConfig::default(),
+            agent_space: AgentSpace::default(),
+            hook_config: DefaultHookConfig::default(),
+            memory_store: None,
+        });
+        TenantManagerImpl::new(registry.clone(), runtime_config)
+    };
 
     // Tenant 1
     let info1 = manager
-        .create_session("t1", CreateSessionParams { title: None, system_prompt: None })
+        .create_session("t1", CreateSessionParams::default())
         .await
         .unwrap();
 
@@ -142,7 +152,7 @@ async fn test_end_to_end_tenant_isolation() {
 
     // Tenant 2
     let info2 = manager
-        .create_session("t2", CreateSessionParams { title: None, system_prompt: None })
+        .create_session("t2", CreateSessionParams::default())
         .await
         .unwrap();
 
@@ -170,22 +180,31 @@ async fn test_tenant_session_limit_enforced() {
     registry.register(t1).unwrap();
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
-    let manager = TenantManagerImpl::new(
-        registry.clone(),
-        provider,
-        None,
-        "echo",
-        "You are helpful.",
-        128_000,
-    );
+    let manager = {
+        let runtime_config = Arc::new(RuntimeConfig {
+            provider: provider.clone(),
+            default_model: "echo".to_string(),
+            default_system_prompt: "You are helpful.".to_string(),
+            default_context_window: 128_000,
+            store: None,
+            media_provider: None,
+            media_registry: None,
+            http_client: reqwest::Client::new(),
+            compaction_config: CompactionConfig::default(),
+            agent_space: AgentSpace::default(),
+            hook_config: DefaultHookConfig::default(),
+            memory_store: None,
+        });
+        TenantManagerImpl::new(registry.clone(), runtime_config)
+    };
 
     let info1 = manager
-        .create_session("t1", CreateSessionParams { title: None, system_prompt: None })
+        .create_session("t1", CreateSessionParams::default())
         .await
         .unwrap();
 
     let err = manager
-        .create_session("t1", CreateSessionParams { title: None, system_prompt: None })
+        .create_session("t1", CreateSessionParams::default())
         .await
         .unwrap_err();
 
@@ -198,14 +217,23 @@ async fn test_tenant_session_limit_enforced() {
 async fn test_delete_session_not_found() {
     let registry = Arc::new(TenantRegistry::new());
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
-    let manager = TenantManagerImpl::new(
-        registry,
-        provider,
-        None,
-        "echo",
-        "You are helpful.",
-        128_000,
-    );
+    let manager = {
+        let runtime_config = Arc::new(RuntimeConfig {
+            provider: provider.clone(),
+            default_model: "echo".to_string(),
+            default_system_prompt: "You are helpful.".to_string(),
+            default_context_window: 128_000,
+            store: None,
+            media_provider: None,
+            media_registry: None,
+            http_client: reqwest::Client::new(),
+            compaction_config: CompactionConfig::default(),
+            agent_space: AgentSpace::default(),
+            hook_config: DefaultHookConfig::default(),
+            memory_store: None,
+        });
+        TenantManagerImpl::new(registry, runtime_config)
+    };
 
     let fake_id = uuid::Uuid::new_v4();
     let err = manager.delete_session("t1", &fake_id).await.unwrap_err();
@@ -221,21 +249,30 @@ async fn test_shutdown_cleans_all_sessions() {
     registry.register(t1).unwrap();
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
-    let manager = TenantManagerImpl::new(
-        registry.clone(),
-        provider,
-        None,
-        "echo",
-        "You are helpful.",
-        128_000,
-    );
+    let manager = {
+        let runtime_config = Arc::new(RuntimeConfig {
+            provider: provider.clone(),
+            default_model: "echo".to_string(),
+            default_system_prompt: "You are helpful.".to_string(),
+            default_context_window: 128_000,
+            store: None,
+            media_provider: None,
+            media_registry: None,
+            http_client: reqwest::Client::new(),
+            compaction_config: CompactionConfig::default(),
+            agent_space: AgentSpace::default(),
+            hook_config: DefaultHookConfig::default(),
+            memory_store: None,
+        });
+        TenantManagerImpl::new(registry.clone(), runtime_config)
+    };
 
     let info1 = manager
-        .create_session("t1", CreateSessionParams { title: None, system_prompt: None })
+        .create_session("t1", CreateSessionParams::default())
         .await
         .unwrap();
     let info2 = manager
-        .create_session("t1", CreateSessionParams { title: None, system_prompt: None })
+        .create_session("t1", CreateSessionParams::default())
         .await
         .unwrap();
 

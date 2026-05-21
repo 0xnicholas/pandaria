@@ -55,6 +55,16 @@ impl IntoResponse for GatewayError {
                     "quota.tool_rate_limit",
                     tenant_err.to_string(),
                 ),
+                tenant::TenantError::BadRequest(_) => (
+                    StatusCode::BAD_REQUEST,
+                    "bad_request",
+                    tenant_err.to_string(),
+                ),
+                tenant::TenantError::SessionInError(_) => (
+                    StatusCode::CONFLICT,
+                    "session_in_error",
+                    tenant_err.to_string(),
+                ),
                 tenant::TenantError::Internal { tenant_id, message } => {
                     tracing::error!(tenant_id = %tenant_id, error = %message, "tenant internal error");
                     (

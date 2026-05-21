@@ -26,7 +26,9 @@ pub mod circuit_breaker;
 pub mod error;
 pub mod events;
 pub mod file_ops;
+pub mod memory;
 pub mod prompt;
+pub mod runtime;
 pub mod skills;
 pub mod tools;
 #[cfg(any(test, feature = "testing"))]
@@ -40,8 +42,10 @@ pub mod types;
 pub use harness::{
     compaction,
     compaction::{CompactionActor, CompactionConfig, CompactionPreparation, CompactionResult},
-    session::{SessionActor, SessionConfig},
+    session::{SessionActor, SessionConfig, SessionState},
 };
+
+pub use runtime::{RuntimeConfig, SessionBuilder, BuiltSession, DefaultHookConfig};
 
 pub use harness::agent_loop::{AgentLoop, AgentLoopConfig, TurnResult};
 
@@ -71,7 +75,7 @@ pub use error::{AgentError, CompactionError};
 pub use events::{AgentEvent, AgentEventListener};
 pub use file_ops::{DefaultFileOperationExtractor, FileOperationExtractor, FileOperations};
 pub use space::AgentSpace;
-pub use tools::MediaGenerationTool;
+pub use tools::{HttpProxyTool, MediaGenerationTool, ToolConfig};
 pub use types::*;
 
 // Re-export ai-provider types used in public API

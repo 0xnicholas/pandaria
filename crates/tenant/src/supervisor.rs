@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::error::TenantError;
 use crate::meter::SlidingWindowMeter;
-use crate::tenant::{QuotaCheck, Tenant};
+use crate::tenant::{QuotaCheck, Tenant, TenantQuota};
 
 /// Per-tenant resource supervisor. Tracks active sessions and usage meters.
 pub struct TenantSupervisor {
@@ -149,5 +149,20 @@ impl TenantSupervisor {
             tool_calls_in_window: self.tool_call_meter.count(),
             cpu_time_ms_consumed: self.cpu_time_meter.sum(),
         }
+    }
+
+    /// Return the tenant's quota configuration.
+    pub fn quota(&self) -> &TenantQuota {
+        &self.tenant.quota
+    }
+
+    /// Return the number of currently active sessions.
+    pub fn active_session_count(&self) -> usize {
+        self.active_sessions.load(Ordering::SeqCst)
+    }
+
+    /// Return the maximum allowed concurrent sessions.
+    pub fn max_concurrent_sessions(&self) -> usize {
+        self.tenant.quota.max_concurrent_sessions as usize
     }
 }

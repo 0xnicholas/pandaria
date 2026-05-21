@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -9,9 +9,21 @@ use uuid::Uuid;
 use crate::{
     error::GatewayError,
     middleware::TenantId,
-    types::{MessageContentPart, SendMessageRequest, SendMessageResponse},
+    types::{MessageContentPart, SendMessageRequest, UsageInfo},
 };
 use crate::server::AppState;
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SendMessageQuery {
+    #[serde(default)]
+    pub wait: bool,
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_timeout_ms() -> u64 {
+    30000
+}
 
 /// 发送消息并阻塞直到当前 turn 完成。
 /// 客户端应在调用此端点**之前**先订阅 `/events` SSE，否则可能错过事件。
@@ -40,17 +52,56 @@ pub async fn send(
     State(state): State<Arc<AppState>>,
     Extension(tenant_id): Extension<TenantId>,
     Path(id): Path<Uuid>,
+    Query(query): Query<SendMessageQuery>,
     Json(req): Json<SendMessageRequest>,
-) -> Result<(StatusCode, Json<SendMessageResponse>), GatewayError> {
-    let turn_index = state
-        .tenant_manager
-        .send_message(&tenant_id.0, &id, convert_content(req.content))
-        .await?;
+) -> Result<(StatusCode, Json<serde_json::Value>), GatewayError> {
+    let content = convert_content(req.content);
 
-    Ok((
-        StatusCode::OK,
-        Json(SendMessageResponse { turn_index }),
-    ))
+    if query.wait {
+        let result = state
+            .tenant_manager
+            .send_message_and_wait(&tenant_id.0, &id, content, query.timeout_ms)
+            .await?;
+
+        match result {
+            tenant::WaitResult::Completed { turn_index, messages } => {
+                let last_assistant = messages.iter().rev().find_map(|m| match m {
+                    agent_core::AgentMessage::Assistant(a) => Some(a),
+                    _ => None,
+                });
+                let usage = last_assistant.map(|a| UsageInfo {
+                    input_tokens: a.usage.input_tokens,
+                    output_tokens: a.usage.output_tokens,
+                });
+
+                let body = serde_json::json!({
+                    "turn_index": turn_index,
+                    "completed": true,
+                    "messages": messages,
+                    "usage": usage,
+                });
+                Ok((StatusCode::OK, Json(body)))
+            }
+            tenant::WaitResult::Timeout { turn_index } => {
+                let body = serde_json::json!({
+                    "turn_index": turn_index,
+                    "completed": false,
+                    "message": "turn still in progress, subscribe to events for updates",
+                });
+                Ok((StatusCode::ACCEPTED, Json(body)))
+            }
+        }
+    } else {
+        let turn_index = state
+            .tenant_manager
+            .send_message(&tenant_id.0, &id, content)
+            .await?;
+
+        let body = serde_json::json!({
+            "turn_index": turn_index,
+        });
+        Ok((StatusCode::OK, Json(body)))
+    }
 }
 
 pub async fn interrupt(

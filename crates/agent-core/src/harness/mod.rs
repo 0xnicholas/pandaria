@@ -6,5 +6,5 @@ pub mod tool;
 
 pub use agent_loop::*;
 pub use compaction::*;
-pub use session::{SessionActor, SessionConfig};
+pub use session::{SessionActor, SessionConfig, SessionState};
 // ToolExecutor is pub(crate) — not re-exported at harness boundary.

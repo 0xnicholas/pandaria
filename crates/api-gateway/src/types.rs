@@ -1,9 +1,35 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
+
+/// Configuration for an external HTTP tool.
+/// Defined independently in api-gateway to avoid leaking agent-core types
+/// into the API contract layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolConfig {
+    /// Tool name, used as the tool_call identifier.
+    pub name: String,
+    /// Human-readable description injected into the LLM system prompt.
+    pub description: String,
+    /// JSON Schema describing the tool parameters.
+    pub parameters: serde_json::Value,
+    /// HTTP endpoint for tool execution.
+    pub endpoint: String,
+    /// Request timeout in milliseconds (default: 30000).
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    /// Optional authentication headers.
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
+}
 
 /// SSE 事件类型，与 TUI 客户端 `client/model.rs` 保持字段级兼容。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
 pub enum ServerEvent {
+    #[serde(rename = "turn_start")]
+    TurnStart { turn_index: u64 },
+
     #[serde(rename = "message_start")]
     MessageStart { message_index: u64 },
 
@@ -38,6 +64,15 @@ pub enum ServerEvent {
 
     #[serde(rename = "error")]
     Error { code: String, message: String },
+
+    #[serde(rename = "state_changed")]
+    StateChanged { state: String },
+
+    #[serde(rename = "auto_retry_start")]
+    AutoRetryStart { attempt: u32, max_attempts: u32, delay_ms: u64 },
+
+    #[serde(rename = "auto_retry_end")]
+    AutoRetryEnd { success: bool, error: Option<String> },
 }
 
 /// Token 使用量统计。api-gateway 独立定义，不依赖 ai-provider 的 Usage 类型。
@@ -72,12 +107,28 @@ impl From<tenant::SessionInfo> for SessionInfo {
     }
 }
 
+/// Webhook configuration for a session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookConfig {
+    pub url: String,
+    #[serde(default)]
+    pub events: Vec<String>,
+    #[serde(default)]
+    pub secret: Option<String>,
+}
+
 /// 创建 session 请求体。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
     pub title: Option<String>,
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Optional external tools to register for this session.
+    #[serde(default)]
+    pub tools: Vec<ToolConfig>,
+    /// Optional webhook configuration for event delivery.
+    #[serde(default)]
+    pub webhook: Option<WebhookConfig>,
 }
 
 /// 消息内容片段，支持多模态。
@@ -94,6 +145,53 @@ pub enum MessageContentPart {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendMessageRequest {
     pub content: Vec<MessageContentPart>,
+}
+
+/// Session 状态查询响应。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStateResponse {
+    pub state: String,
+    pub error_reason: Option<String>,
+}
+
+/// 配额查询响应。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaInfoResponse {
+    pub tenant_id: String,
+    pub max_concurrent_sessions: usize,
+    pub active_sessions: usize,
+    pub max_tokens_per_day: u64,
+    pub tokens_used_today: u64,
+    pub max_tool_calls_per_minute: u64,
+    pub tool_calls_in_last_minute: u64,
+    pub default_model: String,
+    pub available_models: Vec<String>,
+}
+
+/// 批量创建 session 请求。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchCreateRequest {
+    pub count: usize,
+    pub template: CreateSessionRequest,
+}
+
+/// 批量创建 session 响应。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchCreateResult {
+    pub created: Vec<SessionInfo>,
+    pub failed: Vec<BatchFailure>,
+}
+
+/// 单个批量失败项。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchFailure {
+    pub reason: String,
+}
+
+/// Session 重置响应。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResetSessionResponse {
+    pub state: String,
 }
 
 /// 更新 session 请求体（所有字段可选）。

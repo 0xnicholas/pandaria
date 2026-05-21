@@ -72,6 +72,7 @@ impl Stream for EventStream {
 
 fn event_type_name(event: &ServerEvent) -> &'static str {
     match event {
+        ServerEvent::TurnStart { .. } => "turn_start",
         ServerEvent::MessageStart { .. } => "message_start",
         ServerEvent::TextDelta { .. } => "text_delta",
         ServerEvent::ThinkingDelta { .. } => "thinking_delta",
@@ -79,7 +80,10 @@ fn event_type_name(event: &ServerEvent) -> &'static str {
         ServerEvent::ToolCallDelta { .. } => "tool_call_delta",
         ServerEvent::ToolCallDone { .. } => "tool_call_done",
         ServerEvent::TurnEnd { .. } => "turn_end",
+        ServerEvent::AutoRetryStart { .. } => "auto_retry_start",
+        ServerEvent::AutoRetryEnd { .. } => "auto_retry_end",
         ServerEvent::Error { .. } => "error",
+        ServerEvent::StateChanged { .. } => "state_changed",
     }
 }
 

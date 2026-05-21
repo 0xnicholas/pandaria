@@ -7,9 +7,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use agent_core::{CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig, SessionStore};
-use agent_core::space::AgentSpace;
-use agent_core::skills::SkillLoader;
+use agent_core::{RuntimeConfig, SessionBuilder};
 
 use crate::error::TenantError;
 use crate::events::SessionEventBridge;
@@ -17,11 +15,26 @@ use crate::registry::TenantRegistry;
 use crate::session_entry::ActiveSession;
 
 
-/// Parameters for creating a new session.
+/// Webhook configuration for session event delivery.
 #[derive(Debug, Clone)]
+pub struct WebhookConfig {
+    /// Webhook receiver endpoint.
+    pub url: String,
+    /// Subscribed event types; empty defaults to ["turn_end", "error"].
+    pub events: Vec<String>,
+    /// HMAC signing secret (optional).
+    pub secret: Option<String>,
+}
+
+/// Parameters for creating a new session.
+#[derive(Debug, Clone, Default)]
 pub struct CreateSessionParams {
     pub title: Option<String>,
     pub system_prompt: Option<String>,
+    /// External HTTP proxy tools to register for this session.
+    pub tools: Vec<agent_core::ToolConfig>,
+    /// Optional webhook configuration for event delivery.
+    pub webhook: Option<WebhookConfig>,
 }
 
 /// Partial updates for an existing session.
@@ -120,8 +133,84 @@ pub trait TenantManager: Send + Sync {
         session_id: &Uuid,
     ) -> Result<Vec<agent_core::types::AgentMessage>, TenantError>;
 
+    /// Get the current state of a session.
+    async fn get_session_state(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+    ) -> Result<(agent_core::SessionState, Option<String>), TenantError>;
+
+    /// Get quota information for a tenant.
+    async fn get_quota(&self, tenant_id: &str) -> Result<QuotaInfo, TenantError>;
+
+    /// Create multiple sessions from a shared template.
+    async fn batch_create_sessions(
+        &self,
+        tenant_id: &str,
+        count: usize,
+        template: CreateSessionParams,
+    ) -> Result<BatchCreateResult, TenantError>;
+
+    /// Clone an existing session (copy config, not history).
+    async fn clone_session(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+        title: Option<String>,
+    ) -> Result<SessionInfo, TenantError>;
+
+    /// Reset a session (clear history, keep config).
+    async fn reset_session(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+    ) -> Result<agent_core::SessionState, TenantError>;
+
+    /// Send a message and wait for the turn to complete.
+    async fn send_message_and_wait(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+        content: Vec<ai_provider::Content>,
+        timeout_ms: u64,
+    ) -> Result<WaitResult, TenantError>;
+
     /// Gracefully shut down all sessions.
     async fn shutdown(&self);
+}
+
+/// Quota information for a tenant.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QuotaInfo {
+    pub tenant_id: String,
+    pub max_concurrent_sessions: usize,
+    pub active_sessions: usize,
+    pub max_tokens_per_day: u64,
+    pub tokens_used_today: u64,
+    pub max_tool_calls_per_minute: u64,
+    pub tool_calls_in_last_minute: u64,
+    pub default_model: String,
+    pub available_models: Vec<String>,
+}
+
+/// Result of a batch session creation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BatchCreateResult {
+    pub created: Vec<SessionInfo>,
+    pub failed: Vec<BatchFailure>,
+}
+
+/// A single failure in a batch create operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BatchFailure {
+    pub reason: String,
+}
+
+/// Result of a synchronous wait operation.
+#[derive(Debug, Clone)]
+pub enum WaitResult {
+    Completed { turn_index: u64, messages: Vec<agent_core::types::AgentMessage> },
+    Timeout { turn_index: u64 },
 }
 
 /// Default implementation of `TenantManager`.
@@ -130,59 +219,39 @@ pub trait TenantManager: Send + Sync {
 /// and bridges `AgentEvent` streams to subscribers.
 pub struct TenantManagerImpl {
     registry: Arc<TenantRegistry>,
-    provider: Arc<dyn ai_provider::LlmProvider>,
-    store: Option<Arc<dyn SessionStore>>,
-    default_model: String,
-    default_system_prompt: String,
-    #[allow(dead_code)]
-    default_context_window: usize,
+    runtime_config: Arc<RuntimeConfig>,
     sessions: DashMap<(String, Uuid), ActiveSession>,
-    /// Optional media provider for generate_media tool.
-    media_provider: Option<Arc<dyn ai_provider::MediaProvider>>,
-    /// Optional media model registry.
-    media_registry: Option<Arc<ai_provider::MediaModelRegistry>>,
-    /// Optional per-tenant cost tracker.
-    cost_tracker: Option<Arc<crate::meter::CostTracker>>,
+    /// Available models for quota query.
+    available_models: Vec<String>,
+    /// Maximum allowed synchronous wait timeout in milliseconds.
+    max_sync_wait_ms: u64,
 }
 
 impl TenantManagerImpl {
     /// Create a new `TenantManagerImpl`.
     pub fn new(
         registry: Arc<TenantRegistry>,
-        provider: Arc<dyn ai_provider::LlmProvider>,
-        store: Option<Arc<dyn SessionStore>>,
-        default_model: impl Into<String>,
-        default_system_prompt: impl Into<String>,
-        default_context_window: usize,
+        runtime_config: Arc<RuntimeConfig>,
     ) -> Self {
+        let default_model = runtime_config.default_model.clone();
         Self {
             registry,
-            provider,
-            store,
-            default_model: default_model.into(),
-            default_system_prompt: default_system_prompt.into(),
-            default_context_window,
+            runtime_config,
             sessions: DashMap::new(),
-            media_provider: None,
-            media_registry: None,
-            cost_tracker: None,
+            available_models: vec![default_model],
+            max_sync_wait_ms: 60_000,
         }
     }
 
-    /// Set an optional media provider and registry for the `generate_media` tool.
-    pub fn with_media(
-        mut self,
-        provider: Arc<dyn ai_provider::MediaProvider>,
-        registry: Arc<ai_provider::MediaModelRegistry>,
-    ) -> Self {
-        self.media_provider = Some(provider);
-        self.media_registry = Some(registry);
+    /// Set the list of available models returned by `get_quota`.
+    pub fn with_available_models(mut self, models: Vec<String>) -> Self {
+        self.available_models = models;
         self
     }
 
-    /// Set an optional cost tracker for media and LLM cost accounting.
-    pub fn with_cost_tracker(mut self, tracker: Arc<crate::meter::CostTracker>) -> Self {
-        self.cost_tracker = Some(tracker);
+    /// Set the maximum synchronous wait timeout in milliseconds.
+    pub fn with_max_sync_wait_ms(mut self, ms: u64) -> Self {
+        self.max_sync_wait_ms = ms;
         self
     }
 }
@@ -194,92 +263,79 @@ impl TenantManager for TenantManagerImpl {
         tenant_id: &str,
         params: CreateSessionParams,
     ) -> Result<SessionInfo, TenantError> {
-        // 1. Validate tenant exists
+        // 1. Validate tenant exists and reserve a session slot.
         let supervisor = self
             .registry
             .get(tenant_id)
             .ok_or_else(|| TenantError::TenantNotFound(tenant_id.to_string()))?;
-
-        // 2. Reserve a session slot (RAII guard). Quota check is implicit.
         let guard = supervisor.reserve_session()?;
 
-        // 3. Create per-session hook dispatcher and tools
-        let mut dispatcher = agent_core::DefaultHookDispatcher::new();
-        if let Some(ref tracker) = self.cost_tracker {
-            let tracker = tracker.clone();
-            dispatcher.cost_callback = Some(Arc::new(move |tenant_id, cost| {
-                tracker.record_media_call(cost);
-                tracing::info!(tenant_id, cost, "media cost recorded");
-            }));
-        }
-        let hook_dispatcher = Arc::new(dispatcher) as Arc<dyn agent_core::HookDispatcher>;
-        let mut tools: Vec<Arc<dyn agent_core::types::AgentTool>> = vec![];
-        if let (Some(media_provider), Some(media_registry)) = (&self.media_provider, &self.media_registry) {
-            let media_tool = Arc::new(agent_core::MediaGenerationTool::new(
-                media_provider.clone(),
-                media_registry.clone(),
-                self.default_model.clone(),
-                tenant_id,
-            ));
-            tools.push(media_tool);
-        }
+        let session_id = Uuid::new_v4();
 
-        // 4. Create compaction actor
-        let compaction_config = CompactionConfig {
-            enabled: true,
-            reserve_tokens: 4096,
-            keep_recent_tokens: 8192,
-        };
-        let compaction_actor = Arc::new(agent_core::CompactionActor::new(
-            compaction_config,
-            self.provider.clone(),
-            self.default_model.clone(),
-            Arc::new(DefaultFileOperationExtractor::default()),
-        ));
-
-        // 5. Load skills for this tenant
-        let agent_space = AgentSpace::from_env_or_default();
-        let user_skills_dir = agent_space.skills_dir().display().to_string();
-        let project_skills_dir = agent_space.workspace_for(tenant_id).join("skills");
-        let _ = std::fs::create_dir_all(&project_skills_dir);
-
-        let loader = agent_core::skills::FileSystemSkillLoader {
-            user_skills_dir,
-            project_skills_dir: project_skills_dir.display().to_string(),
-            explicit_paths: vec![],
-        };
-        let load_result = loader.load_skills().await;
-        if !load_result.diagnostics.is_empty() {
-            for diag in &load_result.diagnostics {
-                tracing::warn!(path = %diag.path, kind = ?diag.kind, "skill diagnostic: {}", diag.message);
+        // 2. Validate external tool endpoints (security boundary).
+        for tool_config in &params.tools {
+            if url::Url::parse(&tool_config.endpoint).is_err() {
+                return Err(TenantError::BadRequest(format!(
+                    "tool_endpoint_invalid: {}",
+                    tool_config.endpoint
+                )));
+            }
+            if agent_core::utils::ssrf::is_internal_endpoint(&tool_config.endpoint) {
+                return Err(TenantError::BadRequest(format!(
+                    "tool_endpoint_forbidden: {}",
+                    tool_config.endpoint
+                )));
             }
         }
-        let skills = load_result.skills;
 
-        // 6. Create session actor
-        let session_id = Uuid::new_v4();
+        // 3. Build the session via SessionBuilder.
         let system_prompt = params
             .system_prompt
-            .unwrap_or_else(|| self.default_system_prompt.clone());
+            .clone()
+            .unwrap_or_else(|| self.runtime_config.default_system_prompt.clone());
+        let built = SessionBuilder::new(&self.runtime_config)
+            .tenant_id(tenant_id)
+            .session_id(session_id.to_string())
+            .system_prompt(system_prompt.clone())
+            .model(self.runtime_config.default_model.clone())
+            .with_external_tools(params.tools.clone())
+            .build()
+            .await
+            .map_err(|e| TenantError::Internal {
+                tenant_id: tenant_id.to_string(),
+                message: format!("session build failed: {}", e),
+            })?;
+        let mut actor = built.actor;
+        let tools = built.tools;
 
-        let mut actor = SessionActor::new(SessionConfig {
-            tenant_id: tenant_id.to_string(),
-            session_id: session_id.to_string(),
-            system_prompt: system_prompt.clone(),
-            model: self.default_model.clone(),
-            provider: self.provider.clone(),
-            hook_dispatcher,
-            compaction_actor,
-            tools,
-            store: self.store.clone(),
-            skills,
-        });
+        // 4. Register webhook event listener if configured.
+        if let Some(ref webhook_config) = params.webhook {
+            if url::Url::parse(&webhook_config.url).is_err() {
+                return Err(TenantError::BadRequest(format!(
+                    "webhook_url_invalid: {}",
+                    webhook_config.url
+                )));
+            }
+            if agent_core::utils::ssrf::is_internal_endpoint(&webhook_config.url) {
+                return Err(TenantError::BadRequest(format!(
+                    "webhook_url_forbidden: {}",
+                    webhook_config.url
+                )));
+            }
+            let listener = crate::events::WebhookEventListener::new(
+                webhook_config.clone(),
+                tenant_id.to_string(),
+                session_id.to_string(),
+                self.runtime_config.http_client.clone(),
+            );
+            actor.add_event_listener(Arc::new(listener));
+        }
 
-        // 6. Set up event bridge and abort token
+        // 5. Set up event bridge and abort token.
         let (event_tx, _) = tokio::sync::broadcast::channel(256);
         let bridge = Arc::new(SessionEventBridge::new(event_tx));
         actor.add_event_listener(bridge.clone());
-        let abort_token = actor.abort_token();
+        let abort_token = Arc::new(std::sync::Mutex::new(actor.abort_token()));
 
         let info = SessionInfo {
             id: session_id,
@@ -292,10 +348,9 @@ impl TenantManager for TenantManagerImpl {
             turn_count: 0,
             system_prompt: Some(system_prompt),
             title: params.title.clone(),
-            model: self.default_model.clone(),
+            model: self.runtime_config.default_model.clone(),
         };
 
-        // 7. Store session handle
         self.sessions.insert(
             (tenant_id.to_string(), session_id),
             ActiveSession {
@@ -305,6 +360,9 @@ impl TenantManager for TenantManagerImpl {
                 info: info.clone(),
                 bridge,
                 turn_counter: AtomicU64::new(0),
+                tools,
+                webhook: params.webhook.clone(),
+                original_tools: params.tools.clone(),
             },
         );
 
@@ -392,7 +450,7 @@ impl TenantManager for TenantManagerImpl {
         // Cancel the token without holding the actor lock — this allows
         // abort to reach the in-flight LLM stream even while prompt()
         // is running.
-        entry.abort_token.cancel();
+        entry.abort_token.lock().unwrap().cancel();
 
         warn!(
             tenant_id = %tenant_id,
@@ -432,12 +490,25 @@ impl TenantManager for TenantManagerImpl {
             })?
             .1;
 
-        // Cancel any in-flight operation.
-        entry.abort_token.cancel();
+        // Gracefully shut down the actor so buffered events are drained
+        // (e.g. webhook deliveries) before the session is dropped.
+        {
+            let mut actor = entry.actor.lock().await;
+            actor.shutdown().await;
+        }
 
-        // Extension lifecycle is managed by the caller (api-gateway) via factory.
-        // The SessionGuard in `entry._guard` will be dropped here,
-        // automatically releasing the session slot.
+        // Cancel any in-flight operation.
+        entry.abort_token.lock().unwrap().cancel();
+
+        // Notify external memory system of session deletion (optional).
+        if let Some(ref mem) = self.runtime_config.memory_store {
+            let mem_ctx = agent_core::memory::MemoryContext {
+                tenant_id: tenant_id.to_string(),
+                session_id: session_id.to_string(),
+                user_id: None,
+            };
+            let _ = mem.forget_session(&mem_ctx).await;
+        }
 
         info!(
             tenant_id = %tenant_id,
@@ -521,6 +592,172 @@ impl TenantManager for TenantManagerImpl {
         Ok(actor.messages())
     }
 
+    async fn get_session_state(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+    ) -> Result<(agent_core::SessionState, Option<String>), TenantError> {
+        let entry = self
+            .sessions
+            .get(&(tenant_id.to_string(), *session_id))
+            .ok_or_else(|| {
+                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
+            })?;
+
+        let actor = entry.actor.lock().await;
+        Ok((actor.state(), actor.error_reason()))
+    }
+
+    async fn get_quota(&self, tenant_id: &str) -> Result<QuotaInfo, TenantError> {
+        let supervisor = self
+            .registry
+            .get(tenant_id)
+            .ok_or_else(|| TenantError::TenantNotFound(tenant_id.to_string()))?;
+
+        let status = supervisor.quota_status();
+        let quota = supervisor.quota();
+        Ok(QuotaInfo {
+            tenant_id: tenant_id.to_string(),
+            max_concurrent_sessions: quota.max_concurrent_sessions as usize,
+            active_sessions: status.active_sessions as usize,
+            max_tokens_per_day: quota.max_tokens_per_day,
+            tokens_used_today: status.tokens_consumed,
+            max_tool_calls_per_minute: quota.max_tool_calls_per_minute as u64,
+            tool_calls_in_last_minute: status.tool_calls_in_window as u64,
+            default_model: self.runtime_config.default_model.clone(),
+            available_models: self.available_models.clone(),
+        })
+    }
+
+    async fn batch_create_sessions(
+        &self,
+        tenant_id: &str,
+        count: usize,
+        template: CreateSessionParams,
+    ) -> Result<BatchCreateResult, TenantError> {
+        let max_count = 10usize;
+        if count > max_count {
+            return Err(TenantError::BadRequest(format!(
+                "batch_size_exceeded: max {}",
+                max_count
+            )));
+        }
+
+        let supervisor = self
+            .registry
+            .get(tenant_id)
+            .ok_or_else(|| TenantError::TenantNotFound(tenant_id.to_string()))?;
+
+        let current = supervisor.active_session_count();
+        let max = supervisor.max_concurrent_sessions();
+        if current + count > max {
+            return Err(TenantError::SessionLimitExceeded {
+                tenant_id: tenant_id.to_string(),
+                max: max as u32,
+                current: current as u32,
+            });
+        }
+
+        let mut created = vec![];
+        for _ in 0..count {
+            match self.create_session(tenant_id, template.clone()).await {
+                Ok(info) => created.push(info),
+                Err(e) => {
+                    for info in &created {
+                        let _ = self.delete_session(tenant_id, &info.id).await;
+                    }
+                    return Err(TenantError::Internal {
+                        tenant_id: tenant_id.to_string(),
+                        message: format!("batch_create_failed: {}", e),
+                    });
+                }
+            }
+        }
+
+        Ok(BatchCreateResult {
+            created,
+            failed: vec![],
+        })
+    }
+
+    async fn clone_session(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+        title: Option<String>,
+    ) -> Result<SessionInfo, TenantError> {
+        let entry = self
+            .sessions
+            .get(&(tenant_id.to_string(), *session_id))
+            .ok_or_else(|| {
+                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
+            })?;
+
+        let template = CreateSessionParams {
+            title,
+            system_prompt: Some({
+                let actor = entry.actor.lock().await;
+                actor.system_prompt()
+            }),
+            tools: entry.original_tools.clone(),
+            webhook: entry.webhook.clone(),
+        };
+
+        self.create_session(tenant_id, template).await
+    }
+
+    async fn reset_session(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+    ) -> Result<agent_core::SessionState, TenantError> {
+        let entry = self
+            .sessions
+            .get(&(tenant_id.to_string(), *session_id))
+            .ok_or_else(|| {
+                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
+            })?;
+
+        let mut actor = entry.actor.lock().await;
+        let new_token = actor.reset().await.map_err(|e| map_agent_error(e, tenant_id))?;
+        *entry.abort_token.lock().unwrap() = new_token;
+        Ok(actor.state())
+    }
+
+    async fn send_message_and_wait(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+        content: Vec<ai_provider::Content>,
+        timeout_ms: u64,
+    ) -> Result<WaitResult, TenantError> {
+        let mut rx = self.subscribe_events(tenant_id, session_id).await?;
+        let turn_index = self.send_message(tenant_id, session_id, content).await?;
+
+        let timeout = std::time::Duration::from_millis(timeout_ms.min(self.max_sync_wait_ms));
+        let result = tokio::time::timeout(timeout, async {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    agent_core::AgentEvent::TurnEnd { messages, .. } => {
+                        return Ok(WaitResult::Completed { turn_index, messages });
+                    }
+                    agent_core::AgentEvent::Error { error } => {
+                        return Err(map_agent_error(error, tenant_id));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(WaitResult::Timeout { turn_index })
+        })
+        .await;
+
+        match result {
+            Ok(Ok(wait_result)) => Ok(wait_result),
+            Ok(Err(e)) => Err(e),
+            Err(_) => Ok(WaitResult::Timeout { turn_index }),
+        }
+    }
+
     async fn shutdown(&self) {
         let keys: Vec<_> = self
             .sessions
@@ -554,6 +791,7 @@ fn map_agent_error(e: agent_core::AgentError, tenant_id: &str) -> TenantError {
             tenant_id: tenant_id.into(),
             message: "session cancelled".to_string(),
         },
+        AgentError::SessionInError { reason } => TenantError::SessionInError(reason.clone()),
         _ => TenantError::Internal {
             tenant_id: tenant_id.into(),
             message: format!("agent error: {}", e),

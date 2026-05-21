@@ -76,16 +76,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     registry.register(test_tenant)?;
     info!("registered test tenant: test-tenant");
 
-    // --- 3. Tenant Manager ---
+    // --- 3. Runtime Config ---
+    let runtime_config = Arc::new(agent_core::RuntimeConfig {
+        provider: provider.clone(),
+        default_model: "deepseek/deepseek-v4-pro".to_string(),
+        default_system_prompt: "You are a helpful assistant.".to_string(),
+        default_context_window: 128_000,
+        store: None,
+        media_provider: None,
+        media_registry: None,
+        http_client: reqwest::Client::new(),
+        compaction_config: agent_core::CompactionConfig {
+            enabled: true,
+            reserve_tokens: 4096,
+            keep_recent_tokens: 8192,
+        },
+        agent_space: agent_core::AgentSpace::from_env_or_default(),
+        hook_config: agent_core::DefaultHookConfig::default(),
+        memory_store: None,
+    });
+
+    // --- 4. Tenant Manager ---
     let tenant_manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(
-            registry,
-            provider,
-            None,                        // no persistent session store (in-memory only)
-            "deepseek/deepseek-v4-pro",  // default model (RouterProvider needs provider/model format)
-            "You are a helpful assistant.", // default system prompt
-            128_000,                     // default context window
-        ),
+        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
     );
 
     // --- 5. Server Config ---
