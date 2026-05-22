@@ -218,11 +218,16 @@ pub(crate) async fn openai_compatible_stream(
 
     let mut builder =
         crate::protocol::request::RequestBuilder::new(client, base_url, fallback, options.clone())
-            .body(body)
-            .header(
-                "Authorization",
-                format!("Bearer {}", api_key.expose_secret()),
-            );
+            .body(body);
+
+    let (auth_key, auth_value) = match compat.auth_header.as_ref() {
+        Some(header_name) => (header_name.as_str(), api_key.expose_secret().to_string()),
+        None => (
+            "Authorization",
+            format!("Bearer {}", api_key.expose_secret()),
+        ),
+    };
+    builder = builder.header(auth_key, auth_value);
 
     // Session affinity headers for cache (OpenAI-only)
     if provider_name == "openai"
