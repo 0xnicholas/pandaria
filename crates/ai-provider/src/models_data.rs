@@ -697,6 +697,44 @@ fn build_models() -> HashMap<String, Model> {
         8192
     );
 
+    // ── Mimo ────────────────────────────────────────────────────────
+    insert!(
+        m,
+        "mimo",
+        "mimo-v2.5-pro",
+        "MiMo V2.5 Pro",
+        "openai-completions",
+        "https://api.xiaomimimo.com/v1/chat/completions",
+        true,
+        vec![Modality::Text],
+        TokenCost {
+            input: 0.20,
+            output: 1.00,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        1_048_576,
+        128_000
+    );
+    insert!(
+        m,
+        "mimo",
+        "mimo-v2.5",
+        "MiMo V2.5",
+        "openai-completions",
+        "https://api.xiaomimimo.com/v1/chat/completions",
+        true,
+        vec![Modality::Text],
+        TokenCost {
+            input: 0.08,
+            output: 0.40,
+            cache_read: 0.0,
+            cache_write: 0.0
+        },
+        1_048_576,
+        128_000
+    );
+
     // Fill compat fields using auto-detection logic
     for (_key, model) in m.iter_mut() {
         model.compat = match model.api.as_str() {
@@ -783,6 +821,13 @@ fn build_provider_list() -> HashMap<String, Vec<String>> {
             "doubao-seed-1.6".to_string(),
             "doubao-seed-1.6-flash".to_string(),
             "doubao-seed-1.6-vision".to_string(),
+        ],
+    );
+    p.insert(
+        "mimo".to_string(),
+        vec![
+            "mimo-v2.5-pro".to_string(),
+            "mimo-v2.5".to_string(),
         ],
     );
     p
