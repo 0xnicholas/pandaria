@@ -32,11 +32,27 @@
 
 ---
 
-## 核心设计挑战：认证头差异
+## 核心设计挑战：认证头差异 & compat 传播路径
+
+### 认证头差异
 
 Mimo 使用 `api-key: {key}` 认证头，而非 OpenAI 标准的 `Authorization: Bearer {key}`。现有的 `openai_compatible_stream` 函数硬编码了 `Authorization: Bearer` 格式，无法直接复用。
 
-**解决方案**: 在 `OpenAiCompat` 中新增 `auth_header` 字段，允许 provider 覆盖默认认证头。
+**解决方案**: 在 `OpenAiCompat` 中新增 `auth_header` 字段，通过 `detect_openai_compat()` 自动检测，provider 覆盖默认认证头。
+
+### compat 传播路径限制
+
+`openai_compatible_stream` 内部的 `compat` 变量来源于 `get_model(provider_name, model).compat`，而模型注册宏 `insert!` 将 `compat` 固定为 `None`。`ProviderRule.compat_hints`（在 resolver 中定义）**不会**传播到 `openai_compatible_stream` 内部。
+
+因此 `auth_header` 的提供路径为：
+
+```
+detect_openai_compat(provider_name, base_url, model_id)
+  → OpenAiCompat { auth_header: Some("api-key"), ... }
+  → openai_compatible_stream 内部调用 detect_openai_compat 获取 auth_header
+```
+
+而非通过 `ProviderRule.compat_hints` 或模型注册的 `compat` 字段。
 
 ---
 
@@ -60,7 +76,21 @@ pub struct OpenAiCompat {
 - `merge_openai_compat()` — 新增一行 merge 逻辑
 - 现有所有 provider 不受影响（`None` 时行为不变）
 
+#### `detect_openai_compat` Mimo 检测
+
+```rust
+// 在 detect_openai_compat 函数末尾的 return 之前
+let is_mimo = provider == "mimo" || base_url.contains("xiaomimimo.com");
+
+OpenAiCompat {
+    // ... 现有字段 ...
+    auth_header: if is_mimo { Some("api-key".to_string()) } else { None },
+}
+```
+
 ### 2. `openai_compatible_stream` 认证逻辑 (`openai.rs`)
+
+**关键**：不能使用模型 `compat`（始终为 `None`），应调用 `detect_openai_compat` 专门获取 `auth_header`。
 
 **变更前**（硬编码）:
 ```rust
@@ -69,16 +99,19 @@ builder.header("Authorization", format!("Bearer {}", api_key.expose_secret()));
 
 **变更后**:
 ```rust
-let (auth_key, auth_value) = match compat.auth_header.as_ref() {
+let auto_compat = detect_openai_compat(provider_name, &base_url, model);
+let (auth_key, auth_value) = match auto_compat.auth_header.as_ref() {
     Some(header_name) => (header_name.as_str(), api_key.expose_secret().to_string()),
     None => ("Authorization", format!("Bearer {}", api_key.expose_secret())),
 };
 builder.header(auth_key, auth_value);
 ```
 
+> 注意：`compat` 变量（用于 thinking/reasoning 逻辑）保持从 `get_model().compat` 获取，不受此改动影响。
+
 ### 3. Provider 注册 (`resolver.rs`)
 
-在 `build_builtin_rules()` 中新增:
+在 `build_builtin_rules()` 中新增。注意 `auth_header` 不在此设置（它走 `detect_openai_compat` 路径），`compat_hints` 仅设置非标准字段：
 
 ```rust
 rules.insert("mimo".to_string(), ProviderRule {
@@ -89,12 +122,7 @@ rules.insert("mimo".to_string(), ProviderRule {
     default_base_url: "https://api.xiaomimimo.com/v1/chat/completions".to_string(),
     env_key: "MIMO_API_KEY",
     api_type: "openai-completions",
-    compat_hints: Some(ModelCompat::OpenAI(OpenAiCompat {
-        auth_header: Some("api-key".to_string()),
-        supports_store: Some(false),
-        supports_developer_role: Some(false),
-        ..Default::default()
-    })),
+    compat_hints: None,
     fallback_context_window: 1_048_576,
     fallback_max_tokens: 128_000,
 });
@@ -127,8 +155,8 @@ insert!(m, "mimo", "mimo-v2.5", "MiMo V2.5",
 
 | 文件 | 改动类型 | 说明 |
 |---|---|---|
-| `crates/ai-provider/src/compat.rs` | 修改 | `OpenAiCompat` 新增 `auth_header` 字段；`detect_openai_compat` 添加 Mimo 分支；`merge_openai_compat` 添加 merge |
-| `crates/ai-provider/src/providers/openai.rs` | 修改 | `openai_compatible_stream` 读取 `auth_header` 选择认证头 |
+| `crates/ai-provider/src/compat.rs` | 修改 | `OpenAiCompat` 新增 `auth_header` 字段；`detect_openai_compat` 添加 Mimo 分支（`provider == "mimo"` → `auth_header: Some("api-key")`）；`merge_openai_compat` 添加 merge |
+| `crates/ai-provider/src/providers/openai.rs` | 修改 | `openai_compatible_stream` 调用 `detect_openai_compat` 获取 `auth_header` 选择认证头 |
 | `crates/ai-provider/src/resolver.rs` | 修改 | `build_builtin_rules` 注册 `mimo` |
 | `crates/ai-provider/src/models_data.rs` | 修改 | 注册 `mimo-v2.5-pro`、`mimo-v2.5` |
 
@@ -146,8 +174,9 @@ insert!(m, "mimo", "mimo-v2.5", "MiMo V2.5",
 
 ## 测试计划
 
-1. **单元测试**: `compat.rs` 新增 `detect_openai_compat("mimo", ...)` 测试，验证 `auth_header = Some("api-key")`
+1. **单元测试**: `compat.rs` 新增 `detect_openai_compat("mimo", "https://api.xiaomimimo.com/v1/chat/completions", "mimo-v2.5-pro")` 测试，验证 `auth_header = Some("api-key")`
 2. **单元测试**: `resolver.rs` 新增 `test_resolve_mimo` 测试，验证 `mimo/mimo-v2.5-pro` 解析正确
 3. **模型元数据测试**: 验证 `get_model("mimo", "mimo-v2.5")` 返回正确元数据
 4. **merge 测试**: 验证 `auth_header` 字段的显式覆盖和默认行为
-5. **集成测试**（可选）: 若有 Mimo API key，可手动验证端到端调用
+5. **认证头构建测试**: 验证 `detect_openai_compat` 对非 Mimo provider 返回 `auth_header: None`（保持 `Authorization: Bearer` 不变）
+6. **集成测试**（可选）: 若有 Mimo API key，可手动验证端到端调用
