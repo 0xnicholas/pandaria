@@ -4,13 +4,12 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use ai_provider::media::{
-    MediaModelRegistry, MediaProvider, MediaRequest, MediaResponse,
-    media_task_type_from_str,
+    MediaModelRegistry, MediaProvider, MediaRequest, MediaResponse, media_task_type_from_str,
 };
 
+use crate::error::AgentError;
 use crate::space::AgentSpace;
 use crate::types::{AgentTool, AgentToolProgressUpdate, AgentToolResult};
-use crate::error::AgentError;
 
 pub struct MediaGenerationTool {
     provider: Arc<dyn MediaProvider>,
@@ -50,7 +49,11 @@ impl MediaGenerationTool {
     }
 
     /// Resolve the actual model ID based on media_type and optional explicit model.
-    fn resolve_model(&self, media_type: &str, explicit_model: Option<&str>) -> Result<String, AgentError> {
+    fn resolve_model(
+        &self,
+        media_type: &str,
+        explicit_model: Option<&str>,
+    ) -> Result<String, AgentError> {
         let task = media_task_type_from_str(media_type)
             .map_err(|e| AgentError::ToolExecutionFailed(e.to_string()))?;
         let candidate = explicit_model.unwrap_or(&self.default_model);
@@ -91,9 +94,9 @@ impl MediaGenerationTool {
         mime_type: &str,
     ) -> Result<std::path::PathBuf, AgentError> {
         let workspace = self.space.media_dir(&self.tenant_id);
-        tokio::fs::create_dir_all(&workspace)
-            .await
-            .map_err(|e| AgentError::ToolExecutionFailed(format!("create workspace failed: {}", e)))?;
+        tokio::fs::create_dir_all(&workspace).await.map_err(|e| {
+            AgentError::ToolExecutionFailed(format!("create workspace failed: {}", e))
+        })?;
 
         if bytes.len() as u64 > self.max_file_size {
             return Err(AgentError::ToolExecutionFailed(format!(
@@ -165,7 +168,8 @@ impl AgentTool for MediaGenerationTool {
         on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
         signal: CancellationToken,
     ) -> Result<AgentToolResult, AgentError> {
-        let media_type = params["media_type"].as_str()
+        let media_type = params["media_type"]
+            .as_str()
             .ok_or_else(|| AgentError::ToolExecutionFailed("media_type is required".to_string()))?;
         let prompt = params["prompt"].as_str().unwrap_or("").to_string();
         let explicit_model = params.get("model").and_then(|m| m.as_str());
@@ -198,10 +202,16 @@ impl AgentTool for MediaGenerationTool {
                 voice: None,
                 format: Some("mp3".to_string()),
             },
-            _ => return Err(AgentError::ToolExecutionFailed(format!("unsupported media_type: {}", media_type))),
+            _ => {
+                return Err(AgentError::ToolExecutionFailed(format!(
+                    "unsupported media_type: {}",
+                    media_type
+                )));
+            }
         };
 
-        let response = self.provider
+        let response = self
+            .provider
             .generate(&model, request, signal.clone())
             .await
             .map_err(|e| AgentError::ToolExecutionFailed(e.to_string()))?;
@@ -227,14 +237,20 @@ impl AgentTool for MediaGenerationTool {
                 }
             }
             MediaResponse::Reference { url, mime_type } => {
-                let bytes = self.provider
+                let bytes = self
+                    .provider
                     .download(&url, self.max_file_size, signal)
                     .await
                     .map_err(|e| AgentError::ToolExecutionFailed(e.to_string()))?;
-                let path = self.save_media_to_workspace_bytes(&bytes, &mime_type).await?;
+                let path = self
+                    .save_media_to_workspace_bytes(&bytes, &mime_type)
+                    .await?;
                 let mut d = serde_json::Map::new();
                 d.insert("url".to_string(), serde_json::Value::String(url));
-                d.insert("mime_type".to_string(), serde_json::Value::String(mime_type));
+                d.insert(
+                    "mime_type".to_string(),
+                    serde_json::Value::String(mime_type),
+                );
                 (
                     vec![ai_provider::Content::Text {
                         text: format!("媒体已保存至 {}", path.display()),

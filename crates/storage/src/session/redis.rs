@@ -60,25 +60,26 @@ impl SessionStore for RedisSessionStore {
     ) -> Result<(), AgentError> {
         let key = Self::session_key(tenant_id, session_id);
         let index_key = Self::tenant_index_key(tenant_id);
-        let json =
-            serde_json::to_string(entries).map_err(|e| {
-                AgentError::Persistence(format!("serialize: {e}"))
-            })?;
+        let json = serde_json::to_string(entries)
+            .map_err(|e| AgentError::Persistence(format!("serialize: {e}")))?;
 
         let mut conn = self.conn.clone();
-        let _: () = conn.set(&key, &json).await.map_err(|e| {
-            AgentError::Persistence(format!("redis save: {e}"))
-        })?;
+        let _: () = conn
+            .set(&key, &json)
+            .await
+            .map_err(|e| AgentError::Persistence(format!("redis save: {e}")))?;
 
         // Set TTL to prevent unbounded accumulation
-        let _: () = conn.expire(&key, self.ttl_seconds as i64).await.map_err(|e| {
-            AgentError::Persistence(format!("redis expire: {e}"))
-        })?;
+        let _: () = conn
+            .expire(&key, self.ttl_seconds as i64)
+            .await
+            .map_err(|e| AgentError::Persistence(format!("redis expire: {e}")))?;
 
         // Track session in tenant index
-        let _: () = conn.sadd(&index_key, session_id).await.map_err(|e| {
-            AgentError::Persistence(format!("redis index: {e}"))
-        })?;
+        let _: () = conn
+            .sadd(&index_key, session_id)
+            .await
+            .map_err(|e| AgentError::Persistence(format!("redis index: {e}")))?;
 
         debug!(
             tenant_id = %tenant_id,
@@ -97,16 +98,15 @@ impl SessionStore for RedisSessionStore {
         let key = Self::session_key(tenant_id, session_id);
 
         let mut conn = self.conn.clone();
-        let json: Option<String> = conn.get(&key).await.map_err(|e| {
-            AgentError::Persistence(format!("redis load: {e}"))
-        })?;
+        let json: Option<String> = conn
+            .get(&key)
+            .await
+            .map_err(|e| AgentError::Persistence(format!("redis load: {e}")))?;
 
         match json {
             Some(data) => {
                 let entries: Vec<SessionEntry> = serde_json::from_str(&data)
-                    .map_err(|e| {
-                        AgentError::Persistence(format!("deserialize: {e}"))
-                    })?;
+                    .map_err(|e| AgentError::Persistence(format!("deserialize: {e}")))?;
                 debug!(
                     tenant_id = %tenant_id,
                     session_id = %session_id,
@@ -119,36 +119,32 @@ impl SessionStore for RedisSessionStore {
         }
     }
 
-    async fn delete_session(
-        &self,
-        tenant_id: &str,
-        session_id: &str,
-    ) -> Result<(), AgentError> {
+    async fn delete_session(&self, tenant_id: &str, session_id: &str) -> Result<(), AgentError> {
         let key = Self::session_key(tenant_id, session_id);
         let index_key = Self::tenant_index_key(tenant_id);
 
         let mut conn = self.conn.clone();
-        let _: () = conn.del(&key).await.map_err(|e| {
-            AgentError::Persistence(format!("redis delete: {e}"))
-        })?;
+        let _: () = conn
+            .del(&key)
+            .await
+            .map_err(|e| AgentError::Persistence(format!("redis delete: {e}")))?;
 
-        let _: () = conn.srem(&index_key, session_id).await.map_err(|e| {
-            AgentError::Persistence(format!("redis index remove: {e}"))
-        })?;
+        let _: () = conn
+            .srem(&index_key, session_id)
+            .await
+            .map_err(|e| AgentError::Persistence(format!("redis index remove: {e}")))?;
 
         Ok(())
     }
 
-    async fn list_sessions(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<String>, AgentError> {
+    async fn list_sessions(&self, tenant_id: &str) -> Result<Vec<String>, AgentError> {
         let index_key = Self::tenant_index_key(tenant_id);
 
         let mut conn = self.conn.clone();
-        let sessions: Vec<String> = conn.smembers(&index_key).await.map_err(|e| {
-            AgentError::Persistence(format!("redis list: {e}"))
-        })?;
+        let sessions: Vec<String> = conn
+            .smembers(&index_key)
+            .await
+            .map_err(|e| AgentError::Persistence(format!("redis list: {e}")))?;
 
         Ok(sessions)
     }

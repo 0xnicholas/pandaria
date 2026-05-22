@@ -1,9 +1,9 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ai_provider::{
-    AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content,
-    LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall, Usage,
+    AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, LlmContext,
+    LlmProvider, StopReason, StreamOptions, ToolCall, Usage,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -31,7 +31,11 @@ pub struct TestToolCall {
 }
 
 impl TestToolCall {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, arguments: serde_json::Value) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -91,7 +95,10 @@ impl TestProvider {
     }
 
     /// Always returns the given tool call(s) with `StopReason::ToolUse`.
-    pub fn tool_call(name: impl Into<String>, arguments: serde_json::Value) -> Arc<dyn LlmProvider> {
+    pub fn tool_call(
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Arc<dyn LlmProvider> {
         let name = name.into();
         Arc::new(Self {
             factory: Arc::new(move |_| {
@@ -144,18 +151,18 @@ impl TestProvider {
     // Internal helpers
     // ------------------------------------------------------------------
 
-    fn build_message(&self,
+    fn build_message(
+        &self,
         call_index: usize,
-    ) -> (
-            Vec<AssistantMessageEvent>,
-            StopReason,
-            Option<String>,
-        ) {
+    ) -> (Vec<AssistantMessageEvent>, StopReason, Option<String>) {
         let response = (self.factory)(call_index);
 
         let (content, stop_reason, error_message) = match response {
             TestResponse::Text(text) => (
-                vec![Content::Text { text, text_signature: None }],
+                vec![Content::Text {
+                    text,
+                    text_signature: None,
+                }],
                 StopReason::Stop,
                 None,
             ),
@@ -197,10 +204,18 @@ impl TestProvider {
             },
             usage: Usage {
                 input_tokens: 0,
-                output_tokens: if stop_reason == StopReason::Stop { 1 } else { 0 },
+                output_tokens: if stop_reason == StopReason::Stop {
+                    1
+                } else {
+                    0
+                },
                 cache_creation_input_tokens: None,
                 cache_read_input_tokens: None,
-                total_tokens: if stop_reason == StopReason::Stop { 1 } else { 0 },
+                total_tokens: if stop_reason == StopReason::Stop {
+                    1
+                } else {
+                    0
+                },
             },
             stop_reason: stop_reason.clone(),
             response_id: None,
@@ -209,9 +224,7 @@ impl TestProvider {
         };
 
         let events = if stop_reason == StopReason::Error {
-            vec![AssistantMessageEvent::Error {
-                error: partial,
-            }]
+            vec![AssistantMessageEvent::Error { error: partial }]
         } else {
             vec![
                 AssistantMessageEvent::Start {

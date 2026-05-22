@@ -4,15 +4,20 @@ use crate::prompt::{FragmentKind, FragmentSource, PromptBuilder, PromptFragment}
 /// Format a slice of skills as an XML block to be appended to the system
 /// prompt.  Compatible with pi.dev's `<available_skills>` format.
 pub fn format_skills_for_prompt(skills: &[Skill]) -> String {
-    let visible: Vec<_> = skills.iter().filter(|s| !s.disable_model_invocation).collect();
+    let visible: Vec<_> = skills
+        .iter()
+        .filter(|s| !s.disable_model_invocation)
+        .collect();
     if visible.is_empty() {
         return String::new();
     }
 
     let mut lines = vec![
         "\n\nThe following skills provide specialized instructions for specific tasks.".to_string(),
-        "Use the read tool to load a skill's file when the task matches its description.".to_string(),
-        "When a skill file references a relative path, resolve it against the skill directory.".to_string(),
+        "Use the read tool to load a skill's file when the task matches its description."
+            .to_string(),
+        "When a skill file references a relative path, resolve it against the skill directory."
+            .to_string(),
         String::new(),
         "<available_skills>".to_string(),
     ];
@@ -66,8 +71,8 @@ fn escape_xml(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::{Skill, SkillSource};
+    use super::*;
 
     fn make_skill(name: &str, desc: &str, path: &str, disabled: bool) -> Skill {
         Skill {
@@ -82,9 +87,12 @@ mod tests {
 
     #[test]
     fn test_format_skills_basic() {
-        let skills = vec![
-            make_skill("rust-debug", "Debug Rust async issues.", "/skills/rust-debug/SKILL.md", false),
-        ];
+        let skills = vec![make_skill(
+            "rust-debug",
+            "Debug Rust async issues.",
+            "/skills/rust-debug/SKILL.md",
+            false,
+        )];
         let xml = format_skills_for_prompt(&skills);
         assert!(xml.contains("<available_skills>"));
         assert!(xml.contains("<name>rust-debug</name>"));
@@ -111,14 +119,15 @@ mod tests {
 
     #[test]
     fn test_format_skills_all_disabled_returns_empty() {
-        let skills = vec![
-            make_skill("a", "desc", "/a", true),
-        ];
+        let skills = vec![make_skill("a", "desc", "/a", true)];
         assert_eq!(format_skills_for_prompt(&skills), "");
     }
 
     #[test]
     fn test_escape_xml() {
-        assert_eq!(escape_xml("a & b < c > d \"e\" 'f'"), "a &amp; b &lt; c &gt; d &quot;e&quot; &apos;f&apos;");
+        assert_eq!(
+            escape_xml("a & b < c > d \"e\" 'f'"),
+            "a &amp; b &lt; c &gt; d &quot;e&quot; &apos;f&apos;"
+        );
     }
 }

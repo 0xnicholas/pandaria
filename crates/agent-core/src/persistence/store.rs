@@ -26,15 +26,8 @@ pub trait SessionStore: Send + Sync {
     ) -> Result<Vec<SessionEntry>, AgentError>;
 
     /// Delete a session and all its data.
-    async fn delete_session(
-        &self,
-        tenant_id: &str,
-        session_id: &str,
-    ) -> Result<(), AgentError>;
+    async fn delete_session(&self, tenant_id: &str, session_id: &str) -> Result<(), AgentError>;
 
     /// List all session IDs for a given tenant.
-    async fn list_sessions(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<String>, AgentError>;
+    async fn list_sessions(&self, tenant_id: &str) -> Result<Vec<String>, AgentError>;
 }

@@ -21,7 +21,10 @@ mod tests {
 
     #[test]
     fn test_parse_skill_invocation_valid() {
-        assert_eq!(parse_skill_invocation("/skill:code-review"), Some("code-review"));
+        assert_eq!(
+            parse_skill_invocation("/skill:code-review"),
+            Some("code-review")
+        );
     }
 
     #[test]

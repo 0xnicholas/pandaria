@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 
+use crate::error::AgentError;
 use crate::harness::compaction::CompactionResult;
 use crate::hook::context::CompactReason;
-use crate::error::AgentError;
 use crate::types::AgentMessage;
 
 /// Events emitted during an agent session lifecycle.

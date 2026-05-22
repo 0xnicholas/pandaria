@@ -32,24 +32,78 @@ pub struct SlashCommandProvider {
 impl SlashCommandProvider {
     pub fn new() -> Self {
         let commands = vec![
-            SlashCommand { name: "quit".into(), description: "Exit the application".into() },
-            SlashCommand { name: "new".into(), description: "Create a new session".into() },
-            SlashCommand { name: "switch".into(), description: "Switch to another session".into() },
-            SlashCommand { name: "list".into(), description: "List all sessions".into() },
-            SlashCommand { name: "model".into(), description: "Select a model".into() },
-            SlashCommand { name: "clear".into(), description: "Clear the current conversation".into() },
-            SlashCommand { name: "connect".into(), description: "Connect to a server".into() },
-            SlashCommand { name: "auth".into(), description: "Authenticate with the server".into() },
-            SlashCommand { name: "tokens".into(), description: "Show token usage for this session".into() },
-            SlashCommand { name: "help".into(), description: "Show help".into() },
-            SlashCommand { name: "retry".into(), description: "Retry the last user message".into() },
-            SlashCommand { name: "copy".into(), description: "Copy last assistant reply to clipboard".into() },
-            SlashCommand { name: "dump".into(), description: "Export session to a Markdown file".into() },
-            SlashCommand { name: "compact".into(), description: "Trigger context compaction".into() },
-            SlashCommand { name: "rename".into(), description: "Rename the current session".into() },
-            SlashCommand { name: "delete".into(), description: "Delete the current session".into() },
-            SlashCommand { name: "system".into(), description: "Update system prompt for current session".into() },
-            SlashCommand { name: "skill".into(), description: "Invoke a skill by name (/skill:name)".into() },
+            SlashCommand {
+                name: "quit".into(),
+                description: "Exit the application".into(),
+            },
+            SlashCommand {
+                name: "new".into(),
+                description: "Create a new session".into(),
+            },
+            SlashCommand {
+                name: "switch".into(),
+                description: "Switch to another session".into(),
+            },
+            SlashCommand {
+                name: "list".into(),
+                description: "List all sessions".into(),
+            },
+            SlashCommand {
+                name: "model".into(),
+                description: "Select a model".into(),
+            },
+            SlashCommand {
+                name: "clear".into(),
+                description: "Clear the current conversation".into(),
+            },
+            SlashCommand {
+                name: "connect".into(),
+                description: "Connect to a server".into(),
+            },
+            SlashCommand {
+                name: "auth".into(),
+                description: "Authenticate with the server".into(),
+            },
+            SlashCommand {
+                name: "tokens".into(),
+                description: "Show token usage for this session".into(),
+            },
+            SlashCommand {
+                name: "help".into(),
+                description: "Show help".into(),
+            },
+            SlashCommand {
+                name: "retry".into(),
+                description: "Retry the last user message".into(),
+            },
+            SlashCommand {
+                name: "copy".into(),
+                description: "Copy last assistant reply to clipboard".into(),
+            },
+            SlashCommand {
+                name: "dump".into(),
+                description: "Export session to a Markdown file".into(),
+            },
+            SlashCommand {
+                name: "compact".into(),
+                description: "Trigger context compaction".into(),
+            },
+            SlashCommand {
+                name: "rename".into(),
+                description: "Rename the current session".into(),
+            },
+            SlashCommand {
+                name: "delete".into(),
+                description: "Delete the current session".into(),
+            },
+            SlashCommand {
+                name: "system".into(),
+                description: "Update system prompt for current session".into(),
+            },
+            SlashCommand {
+                name: "skill".into(),
+                description: "Invoke a skill by name (/skill:name)".into(),
+            },
         ];
         Self { commands }
     }
@@ -100,10 +154,7 @@ fn fd_available() -> bool {
 /// - `prefix` is the filename prefix to filter by (empty if path ends with '/')
 fn parse_path_prefix(_current_line: &str, text_before_cursor: &str) -> Option<(PathBuf, String)> {
     // Find the start index of the last word within the current line
-    let last_word_start = text_before_cursor
-        .rfind(' ')
-        .map(|i| i + 1)
-        .unwrap_or(0);
+    let last_word_start = text_before_cursor.rfind(' ').map(|i| i + 1).unwrap_or(0);
 
     let last_word = &text_before_cursor[last_word_start..];
 
@@ -127,8 +178,12 @@ fn parse_path_prefix(_current_line: &str, text_before_cursor: &str) -> Option<(P
     if expanded.ends_with('/') || path.is_dir() {
         Some((path, String::new()))
     } else {
-        let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
-        let prefix = path.file_name()
+        let dir = path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let prefix = path
+            .file_name()
             .and_then(|f| f.to_str())
             .unwrap_or("")
             .to_string();
@@ -147,20 +202,25 @@ impl AutocompleteProvider for FilePathProvider {
         }
 
         // Check if the last word starts with a path-like prefix
-        let last_word_start = context.text_before_cursor
+        let last_word_start = context
+            .text_before_cursor
             .rfind(' ')
             .map(|i| i + 1)
             .unwrap_or(0);
         let last_word = &context.text_before_cursor[last_word_start..];
 
-        last_word.starts_with("./") || last_word.starts_with("../") || last_word.starts_with('/') || last_word.starts_with("~/")
+        last_word.starts_with("./")
+            || last_word.starts_with("../")
+            || last_word.starts_with('/')
+            || last_word.starts_with("~/")
     }
 
     fn get_suggestions(&self, context: &AutocompleteContext) -> Vec<Suggestion> {
-        let (dir, prefix) = match parse_path_prefix(&context.current_line, &context.text_before_cursor) {
-            Some(p) => p,
-            None => return Vec::new(),
-        };
+        let (dir, prefix) =
+            match parse_path_prefix(&context.current_line, &context.text_before_cursor) {
+                Some(p) => p,
+                None => return Vec::new(),
+            };
 
         let resolved_dir = if dir.is_absolute() {
             dir
@@ -196,9 +256,7 @@ fn fd_suggestions(dir: &PathBuf, prefix: &str) -> Vec<Suggestion> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let results: Vec<Suggestion> = stdout
         .lines()
-        .filter(|line| {
-            line.starts_with(prefix) || prefix.is_empty()
-        })
+        .filter(|line| line.starts_with(prefix) || prefix.is_empty())
         .take(8)
         .map(|line| {
             let file_path = dir.join(line);
@@ -382,10 +440,8 @@ mod tests {
         let provider = SlashCommandProvider::new();
         // All commands should be found with their full name prefix
         let expected = vec![
-            "quit", "new", "switch", "list", "model", "clear",
-            "connect", "auth", "tokens", "help",
-            "retry", "copy", "dump", "compact", "rename",
-            "delete", "system",
+            "quit", "new", "switch", "list", "model", "clear", "connect", "auth", "tokens", "help",
+            "retry", "copy", "dump", "compact", "rename", "delete", "system",
         ];
         for cmd in &expected {
             let ctx = make_context(&format!("/{}", cmd), cmd.len() + 1);

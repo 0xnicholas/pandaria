@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use agent_core::{AgentEvent, AgentEventListener};
 
@@ -145,7 +145,8 @@ impl WebhookEventListener {
 
                         if let Some(ref s) = *secret {
                             let signature = hmac_sha256(s, &body);
-                            req = req.header("X-Pandaria-Signature", format!("sha256={}", signature));
+                            req =
+                                req.header("X-Pandaria-Signature", format!("sha256={}", signature));
                         }
 
                         tracing::info!(url = %url, "webhook sending request");
@@ -260,7 +261,10 @@ fn build_payload(event: &AgentEvent, delivery_id: uuid::Uuid) -> Option<String> 
     use serde_json::json;
 
     let payload = match event {
-        AgentEvent::TurnEnd { turn_index, messages } => {
+        AgentEvent::TurnEnd {
+            turn_index,
+            messages,
+        } => {
             let last_assistant = messages.iter().rev().find_map(|m| match m {
                 agent_core::AgentMessage::Assistant(a) => Some(a),
                 _ => None,
@@ -299,8 +303,8 @@ fn hmac_sha256(secret: &str, body: &str) -> String {
 
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(body.as_bytes());
     let result = mac.finalize();
     let bytes = result.into_bytes();

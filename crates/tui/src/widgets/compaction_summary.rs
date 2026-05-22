@@ -44,10 +44,7 @@ impl Widget for CompactionSummaryWidget<'_> {
             if let Some(tokens_before) = self.block.tokens_before {
                 if let Some(tokens_after) = self.block.tokens_after {
                     lines.push(Line::from(Span::styled(
-                        format!(
-                            "    ({} → {} tokens)",
-                            tokens_before, tokens_after
-                        ),
+                        format!("    ({} → {} tokens)", tokens_before, tokens_after),
                         Style::default().fg(self.theme.muted),
                     )));
                 }

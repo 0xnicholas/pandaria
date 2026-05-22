@@ -99,10 +99,7 @@ impl HookDispatcher for CombinedDispatcher {
         }
     }
 
-    async fn on_before_agent_start(
-        &self,
-        ctx: &BeforeAgentStartCtx,
-    ) -> BeforeAgentStartMutation {
+    async fn on_before_agent_start(&self, ctx: &BeforeAgentStartCtx) -> BeforeAgentStartMutation {
         let mut mutation = BeforeAgentStartMutation::default();
         let mut prompt_builder = ctx.prompt_builder.clone();
         let mut messages = ctx.messages.clone();
@@ -201,7 +198,10 @@ impl HookDispatcher for CombinedDispatcher {
                     turn_index: ctx.turn_index,
                     attempt: ctx.attempt,
                     messages_before: ctx.messages_before.clone(),
-                    stop_reason: mutation.stop_reason.clone().unwrap_or_else(|| ctx.stop_reason.clone()),
+                    stop_reason: mutation
+                        .stop_reason
+                        .clone()
+                        .unwrap_or_else(|| ctx.stop_reason.clone()),
                 })
                 .await;
             if next.content.is_some() {

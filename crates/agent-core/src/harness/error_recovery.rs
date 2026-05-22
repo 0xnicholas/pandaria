@@ -3,9 +3,15 @@ use ai_provider::{AssistantMessage, StopReason};
 #[derive(Debug, Clone)]
 pub(crate) enum RecoveryAction {
     Continue,
-    RetryAfterBackoff { delay_ms: u64 },
-    RetryAfterCompaction { reason: crate::hook::context::CompactReason },
-    Abort { reason: String },
+    RetryAfterBackoff {
+        delay_ms: u64,
+    },
+    RetryAfterCompaction {
+        reason: crate::hook::context::CompactReason,
+    },
+    Abort {
+        reason: String,
+    },
 }
 
 pub(crate) struct RecoveryStateMachine {
@@ -96,9 +102,18 @@ fn is_context_overflow(msg: &AssistantMessage) -> bool {
 }
 
 const RETRYABLE_PATTERNS: &[&str] = &[
-    "overloaded", "rate limit", "429", "timeout", "network error",
-    "service unavailable", "fetch failed", "terminated",
-    "500", "502", "503", "504",
+    "overloaded",
+    "rate limit",
+    "429",
+    "timeout",
+    "network error",
+    "service unavailable",
+    "fetch failed",
+    "terminated",
+    "500",
+    "502",
+    "503",
+    "504",
 ];
 
 fn is_session_retryable(msg: &AssistantMessage) -> bool {
@@ -121,8 +136,17 @@ mod tests {
             content: vec![],
             provider: "test".to_string(),
             model: "test".to_string(),
-            api: Api { provider: "test".to_string(), model: "test".to_string() },
-            usage: Usage { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: None, cache_read_input_tokens: None, total_tokens: 0 },
+            api: Api {
+                provider: "test".to_string(),
+                model: "test".to_string(),
+            },
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                total_tokens: 0,
+            },
             stop_reason,
             response_id: None,
             error_message: error.map(|s| s.to_string()),
@@ -133,15 +157,27 @@ mod tests {
     #[test]
     fn test_overflow_first_time() {
         let mut r = RecoveryStateMachine::new(3);
-        let action = r.evaluate(&make_msg(StopReason::Error, Some("context length exceeded")));
-        assert!(matches!(action, RecoveryAction::RetryAfterCompaction { .. }));
+        let action = r.evaluate(&make_msg(
+            StopReason::Error,
+            Some("context length exceeded"),
+        ));
+        assert!(matches!(
+            action,
+            RecoveryAction::RetryAfterCompaction { .. }
+        ));
     }
 
     #[test]
     fn test_overflow_second_time_aborts() {
         let mut r = RecoveryStateMachine::new(3);
-        r.evaluate(&make_msg(StopReason::Error, Some("context length exceeded")));
-        let action = r.evaluate(&make_msg(StopReason::Error, Some("context length exceeded")));
+        r.evaluate(&make_msg(
+            StopReason::Error,
+            Some("context length exceeded"),
+        ));
+        let action = r.evaluate(&make_msg(
+            StopReason::Error,
+            Some("context length exceeded"),
+        ));
         assert!(matches!(action, RecoveryAction::Abort { .. }));
     }
 
@@ -149,7 +185,10 @@ mod tests {
     fn test_retryable_backoff() {
         let mut r = RecoveryStateMachine::new(3);
         let action = r.evaluate(&make_msg(StopReason::Error, Some("rate limit")));
-        assert!(matches!(action, RecoveryAction::RetryAfterBackoff { delay_ms: 100 }));
+        assert!(matches!(
+            action,
+            RecoveryAction::RetryAfterBackoff { delay_ms: 100 }
+        ));
     }
 
     #[test]

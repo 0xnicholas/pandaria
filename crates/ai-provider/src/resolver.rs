@@ -116,11 +116,7 @@ impl ProviderResolver {
             .unwrap_or_default()
     }
 
-    fn resolve_standard(
-        &self,
-        provider: &str,
-        model_id: &str,
-    ) -> Result<ResolvedModel, LlmError> {
+    fn resolve_standard(&self, provider: &str, model_id: &str) -> Result<ResolvedModel, LlmError> {
         let rule = self.get_rule(provider)?;
         Ok(ResolvedModel {
             provider_name: provider.to_string(),
@@ -220,7 +216,8 @@ impl ProviderResolver {
             "google".to_string(),
             ProviderRule {
                 factory: ProviderFactory::Google,
-                default_base_url: "https://generativelanguage.googleapis.com/v1beta/models".to_string(),
+                default_base_url: "https://generativelanguage.googleapis.com/v1beta/models"
+                    .to_string(),
                 env_key: "GOOGLE_API_KEY",
                 api_type: "google-generative",
                 compat_hints: None,
@@ -272,7 +269,8 @@ impl ProviderResolver {
             "doubao".to_string(),
             ProviderRule {
                 factory: ProviderFactory::Doubao,
-                default_base_url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions".to_string(),
+                default_base_url: "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+                    .to_string(),
                 env_key: "DOUBAO_API_KEY",
                 api_type: "openai-completions",
                 compat_hints: Some(ModelCompat::OpenAI(OpenAiCompat::default())),
@@ -352,7 +350,9 @@ mod tests {
     #[test]
     fn test_resolve_standard_anthropic() {
         let resolver = ProviderResolver::new();
-        let resolved = resolver.resolve("anthropic/claude-sonnet-4-20250514").unwrap();
+        let resolved = resolver
+            .resolve("anthropic/claude-sonnet-4-20250514")
+            .unwrap();
         assert_eq!(resolved.provider_name, "anthropic");
         assert_eq!(resolved.model_id, "claude-sonnet-4-20250514");
         assert_eq!(resolved.api_type, "anthropic-messages");

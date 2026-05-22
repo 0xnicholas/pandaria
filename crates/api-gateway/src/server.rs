@@ -1,8 +1,8 @@
 use axum::{
+    Router,
     extract::DefaultBodyLimit,
     middleware,
     routing::{delete, get, post},
-    Router,
 };
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -22,10 +22,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(
-        tenant_manager: Arc<dyn tenant::TenantManager>,
-        config: ServerConfig,
-    ) -> Self {
+    pub fn new(tenant_manager: Arc<dyn tenant::TenantManager>, config: ServerConfig) -> Self {
         Self {
             tenant_manager,
             config,
@@ -51,7 +48,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
                 .delete(sessions::delete),
         )
         .route("/sessions/{id}/messages", post(messages::send))
-        .route("/sessions/{id}/messages/current", delete(messages::interrupt))
+        .route(
+            "/sessions/{id}/messages/current",
+            delete(messages::interrupt),
+        )
         .route("/sessions/{id}/state", get(sessions::get_state))
         .route("/sessions/{id}/clone", post(sessions::clone))
         .route("/sessions/{id}/reset", post(sessions::reset))
@@ -74,10 +74,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         CorsLayer::permissive()
     } else if let Some(ref origins) = state.config.cors_origins {
         use tower_http::cors::AllowOrigin;
-        let allowed: Vec<_> = origins
-            .iter()
-            .filter_map(|o| o.parse().ok())
-            .collect();
+        let allowed: Vec<_> = origins.iter().filter_map(|o| o.parse().ok()).collect();
         CorsLayer::new().allow_origin(AllowOrigin::list(allowed))
     } else {
         CorsLayer::new()
@@ -92,14 +89,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-pub async fn serve(
-    state: Arc<AppState>,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve(state: Arc<AppState>) -> Result<(), Box<dyn std::error::Error>> {
     // 安全启动检查：禁止以默认测试密钥运行
     if state.config.is_default_secret() {
-        panic!(
-            "Default auth secret detected. Set PANDARIA_AUTH_SECRET environment variable."
-        );
+        panic!("Default auth secret detected. Set PANDARIA_AUTH_SECRET environment variable.");
     }
 
     let listener = tokio::net::TcpListener::bind(&state.config.bind_addr).await?;
@@ -113,10 +106,9 @@ pub async fn serve(
                 tokio::signal::ctrl_c().await.ok();
             };
             let sigterm = async {
-                let mut sigterm = tokio::signal::unix::signal(
-                    tokio::signal::unix::SignalKind::terminate(),
-                )
-                .expect("SIGTERM handler");
+                let mut sigterm =
+                    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                        .expect("SIGTERM handler");
                 sigterm.recv().await;
             };
             tokio::select! {

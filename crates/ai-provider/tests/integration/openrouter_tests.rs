@@ -1,9 +1,7 @@
 //! OpenRouter provider integration tests via wiremock.
 
 use ai_provider::providers::openai_compatible::OpenAiCompatibleProvider;
-use ai_provider::{
-    AssistantMessageEvent, LlmContext, LlmProvider, StopReason, StreamOptions,
-};
+use ai_provider::{AssistantMessageEvent, LlmContext, LlmProvider, StopReason, StreamOptions};
 use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
@@ -56,7 +54,13 @@ data: [DONE]
     assert!(matches!(event, AssistantMessageEvent::Start { .. }));
 
     let event = stream.next().await.expect("should have TextStart");
-    assert!(matches!(event, AssistantMessageEvent::TextStart { content_index: 0, .. }));
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextStart {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have TextDelta");
     assert!(
@@ -64,7 +68,13 @@ data: [DONE]
     );
 
     let event = stream.next().await.expect("should have TextEnd");
-    assert!(matches!(event, AssistantMessageEvent::TextEnd { content_index: 0, .. }));
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextEnd {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have Done");
     match event {

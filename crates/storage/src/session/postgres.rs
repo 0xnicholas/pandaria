@@ -60,10 +60,7 @@ impl PgSessionStore {
     }
 
     /// List all session IDs for a given tenant (internal helper).
-    async fn list_sessions_inner(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<String>, StorageError> {
+    async fn list_sessions_inner(&self, tenant_id: &str) -> Result<Vec<String>, StorageError> {
         let rows: Vec<(String,)> = sqlx::query_as(
             "SELECT session_id FROM sessions WHERE tenant_id = $1 ORDER BY updated_at DESC",
         )
@@ -124,14 +121,13 @@ impl SessionStore for PgSessionStore {
         tenant_id: &str,
         session_id: &str,
     ) -> Result<Vec<SessionEntry>, AgentError> {
-        let row: Option<(serde_json::Value,)> = sqlx::query_as(
-            "SELECT entries FROM sessions WHERE tenant_id = $1 AND session_id = $2",
-        )
-        .bind(tenant_id)
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AgentError::Persistence(format!("pg load: {e}")))?;
+        let row: Option<(serde_json::Value,)> =
+            sqlx::query_as("SELECT entries FROM sessions WHERE tenant_id = $1 AND session_id = $2")
+                .bind(tenant_id)
+                .bind(session_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AgentError::Persistence(format!("pg load: {e}")))?;
 
         match row {
             Some((json,)) => {
@@ -143,20 +139,13 @@ impl SessionStore for PgSessionStore {
         }
     }
 
-    async fn delete_session(
-        &self,
-        tenant_id: &str,
-        session_id: &str,
-    ) -> Result<(), AgentError> {
+    async fn delete_session(&self, tenant_id: &str, session_id: &str) -> Result<(), AgentError> {
         self.delete_session_inner(tenant_id, session_id)
             .await
             .map_err(|e| AgentError::Persistence(e.to_string()))
     }
 
-    async fn list_sessions(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<String>, AgentError> {
+    async fn list_sessions(&self, tenant_id: &str) -> Result<Vec<String>, AgentError> {
         self.list_sessions_inner(tenant_id)
             .await
             .map_err(|e| AgentError::Persistence(e.to_string()))

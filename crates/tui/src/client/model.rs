@@ -29,9 +29,17 @@ pub enum ServerEvent {
     #[serde(rename = "tool_call_delta")]
     ToolCallDelta { call_id: String, delta: String },
     #[serde(rename = "tool_call_done")]
-    ToolCallDone { call_id: String, result: Option<String>, #[serde(default)] is_error: bool },
+    ToolCallDone {
+        call_id: String,
+        result: Option<String>,
+        #[serde(default)]
+        is_error: bool,
+    },
     #[serde(rename = "turn_end")]
-    TurnEnd { stop_reason: String, usage: Option<UsageInfo> },
+    TurnEnd {
+        stop_reason: String,
+        usage: Option<UsageInfo>,
+    },
     #[serde(rename = "error")]
     Error { code: String, message: String },
 }
@@ -54,10 +62,14 @@ pub enum MessageContentPart {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SendMessageRequest { pub content: Vec<MessageContentPart> }
+pub struct SendMessageRequest {
+    pub content: Vec<MessageContentPart>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateSessionRequest { pub title: Option<String> }
+pub struct CreateSessionRequest {
+    pub title: Option<String>,
+}
 
 /// Historical message returned by `GET /sessions/{id}/messages`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,7 +112,11 @@ pub enum HistoricalContent {
     #[serde(rename = "thinking")]
     Thinking { thinking: String },
     #[serde(rename = "toolCall")]
-    ToolCall { id: String, name: String, arguments: serde_json::Value },
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
     #[serde(rename = "image")]
     Image { data: String, mime_type: String },
     #[serde(rename = "video")]
@@ -129,7 +145,8 @@ mod tests {
         let event: ServerEvent = serde_json::from_str(json).unwrap();
         match event {
             ServerEvent::ToolCallStarted { call_id, name } => {
-                assert_eq!(call_id, "c1"); assert_eq!(name, "read");
+                assert_eq!(call_id, "c1");
+                assert_eq!(name, "read");
             }
             _ => panic!("expected ToolCallStarted"),
         }
@@ -154,7 +171,8 @@ mod tests {
         let event: ServerEvent = serde_json::from_str(json).unwrap();
         match event {
             ServerEvent::Error { code, message } => {
-                assert_eq!(code, "rate_limited"); assert_eq!(message, "too fast");
+                assert_eq!(code, "rate_limited");
+                assert_eq!(message, "too fast");
             }
             _ => panic!("expected Error"),
         }

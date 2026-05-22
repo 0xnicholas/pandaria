@@ -1,6 +1,6 @@
+use futures::FutureExt;
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
-use futures::FutureExt;
 use tracing::{error, warn};
 
 /// Execute an async block with a timeout, catching panics.
@@ -19,7 +19,8 @@ where
     let result = tokio::time::timeout(
         Duration::from_millis(timeout_ms),
         AssertUnwindSafe(future).catch_unwind(),
-    ).await;
+    )
+    .await;
 
     match result {
         Ok(Ok(value)) => value,

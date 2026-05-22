@@ -1,17 +1,16 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use async_trait::async_trait;
 use ai_provider::{
-    Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream,
-    Content, LlmContext, LlmError, LlmProvider, StopReason, StreamOptions, Usage,
-    providers::shared::ProviderConfig,
+    Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, LlmContext,
+    LlmError, LlmProvider, StopReason, StreamOptions, Usage, providers::shared::ProviderConfig,
 };
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+use agent_core::{AgentSpace, CompactionConfig, HarnessConfig, HookConfig};
 use tenant::manager::{CreateSessionParams, TenantManager, TenantManagerImpl};
 use tenant::{Tenant, TenantQuota, TenantRegistry};
-use agent_core::{RuntimeConfig, CompactionConfig, AgentSpace, DefaultHookConfig};
 
 struct EchoProvider {
     config: ProviderConfig,
@@ -20,12 +19,7 @@ struct EchoProvider {
 impl EchoProvider {
     fn new() -> Self {
         Self {
-            config: ProviderConfig::new(
-                None,
-                "http://localhost:9999",
-                "echo",
-                "ECHO_API_KEY",
-            ),
+            config: ProviderConfig::new(None, "http://localhost:9999", "echo", "ECHO_API_KEY"),
         }
     }
 }
@@ -106,7 +100,7 @@ async fn test_manager_create_session() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+            let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -115,9 +109,10 @@ async fn test_manager_create_session() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry, runtime_config)
@@ -140,7 +135,7 @@ async fn test_manager_create_session_unknown_tenant() {
     let registry = Arc::new(TenantRegistry::new());
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+            let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -149,9 +144,10 @@ async fn test_manager_create_session_unknown_tenant() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry, runtime_config)
@@ -175,7 +171,7 @@ async fn test_manager_list_and_get_session() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+            let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -184,9 +180,10 @@ async fn test_manager_list_and_get_session() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry, runtime_config)
@@ -219,7 +216,7 @@ async fn test_manager_send_message() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+            let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -228,9 +225,10 @@ async fn test_manager_send_message() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry, runtime_config)
@@ -242,7 +240,14 @@ async fn test_manager_send_message() {
         .unwrap();
 
     let turn_index = manager
-        .send_message("t1", &info.id, vec![ai_provider::Content::Text { text: "hello".to_string(), text_signature: None }])
+        .send_message(
+            "t1",
+            &info.id,
+            vec![ai_provider::Content::Text {
+                text: "hello".to_string(),
+                text_signature: None,
+            }],
+        )
         .await
         .unwrap();
 
@@ -261,7 +266,7 @@ async fn test_manager_subscribe_events() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+            let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -270,9 +275,10 @@ async fn test_manager_subscribe_events() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry, runtime_config)
@@ -287,7 +293,14 @@ async fn test_manager_subscribe_events() {
 
     // Send a message to trigger events
     let _ = manager
-        .send_message("t1", &info.id, vec![ai_provider::Content::Text { text: "hello".to_string(), text_signature: None }])
+        .send_message(
+            "t1",
+            &info.id,
+            vec![ai_provider::Content::Text {
+                text: "hello".to_string(),
+                text_signature: None,
+            }],
+        )
         .await
         .unwrap();
 
@@ -306,15 +319,18 @@ async fn test_manager_delete_session_releases_slot() {
     let _ = tracing_subscriber::fmt().try_init();
 
     let registry = Arc::new(TenantRegistry::new());
-    let tenant = Tenant::new("t1", TenantQuota {
-        max_concurrent_sessions: 1,
-        ..TenantQuota::default()
-    });
+    let tenant = Tenant::new(
+        "t1",
+        TenantQuota {
+            max_concurrent_sessions: 1,
+            ..TenantQuota::default()
+        },
+    );
     registry.register(tenant).unwrap();
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+            let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -323,9 +339,10 @@ async fn test_manager_delete_session_releases_slot() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry.clone(), runtime_config)
@@ -360,7 +377,7 @@ async fn test_manager_interrupt_does_not_deadlock() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+            let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -369,9 +386,10 @@ async fn test_manager_interrupt_does_not_deadlock() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry, runtime_config)

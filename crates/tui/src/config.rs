@@ -34,13 +34,20 @@ fn default_config_path() -> PathBuf {
     }
     // 2. 检查统一 agent 空间目录
     if let Ok(root) = std::env::var("PANDARIA_SPACE_ROOT") {
-        let space_path = PathBuf::from(root).join("config").join("tui").join("config.toml");
+        let space_path = PathBuf::from(root)
+            .join("config")
+            .join("tui")
+            .join("config.toml");
         if space_path.exists() {
             return space_path;
         }
     }
     if let Ok(home) = std::env::var("HOME") {
-        let space_path = PathBuf::from(&home).join(".pandaria").join("config").join("tui").join("config.toml");
+        let space_path = PathBuf::from(&home)
+            .join(".pandaria")
+            .join("config")
+            .join("tui")
+            .join("config.toml");
         if space_path.exists() {
             return space_path;
         }
@@ -54,10 +61,17 @@ fn default_config_path() -> PathBuf {
     }
     // 4. 默认创建位置：统一 agent 空间
     if let Ok(root) = std::env::var("PANDARIA_SPACE_ROOT") {
-        return PathBuf::from(root).join("config").join("tui").join("config.toml");
+        return PathBuf::from(root)
+            .join("config")
+            .join("tui")
+            .join("config.toml");
     }
     if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(&home).join(".pandaria").join("config").join("tui").join("config.toml");
+        return PathBuf::from(&home)
+            .join(".pandaria")
+            .join("config")
+            .join("tui")
+            .join("config.toml");
     }
     PathBuf::from("config.toml")
 }
@@ -79,8 +93,12 @@ pub struct ServerConfig {
     pub timeout_secs: u64,
 }
 
-fn default_url() -> String { "http://localhost:8080".to_string() }
-fn default_timeout_secs() -> u64 { 30 }
+fn default_url() -> String {
+    "http://localhost:8080".to_string()
+}
+fn default_timeout_secs() -> u64 {
+    30
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
@@ -101,10 +119,18 @@ pub struct UiConfig {
     pub models: Vec<String>,
 }
 
-fn default_max_history() -> usize { 500 }
-fn default_true() -> bool { true }
-fn default_syntax_theme() -> String { "base16-ocean.dark".to_string() }
-fn default_scrollback() -> usize { 1000 }
+fn default_max_history() -> usize {
+    500
+}
+fn default_true() -> bool {
+    true
+}
+fn default_syntax_theme() -> String {
+    "base16-ocean.dark".to_string()
+}
+fn default_scrollback() -> usize {
+    1000
+}
 pub fn default_models() -> Vec<String> {
     vec![
         "deepseek/deepseek-v4-flash".to_string(),
@@ -134,7 +160,10 @@ impl Config {
         };
 
         let mut config = file_config.unwrap_or(Config {
-            server: ServerConfig { url: default_url(), timeout_secs: default_timeout_secs() },
+            server: ServerConfig {
+                url: default_url(),
+                timeout_secs: default_timeout_secs(),
+            },
             auth: AuthConfig { token: None },
             ui: UiConfig {
                 max_history: default_max_history(),
@@ -147,9 +176,15 @@ impl Config {
         });
 
         // CLI/env overrides
-        if let Some(url) = cli.url { config.server.url = url; }
-        if let Some(token) = cli.token { config.auth.token = Some(token); }
-        if let Some(theme) = cli.theme { config.ui.syntax_theme = theme; }
+        if let Some(url) = cli.url {
+            config.server.url = url;
+        }
+        if let Some(token) = cli.token {
+            config.auth.token = Some(token);
+        }
+        if let Some(theme) = cli.theme {
+            config.ui.syntax_theme = theme;
+        }
 
         Ok(config)
     }
@@ -162,7 +197,10 @@ mod tests {
     #[test]
     fn test_default_config_values() {
         let cli = CliArgs {
-            url: None, token: None, theme: None, config: None,
+            url: None,
+            token: None,
+            theme: None,
+            config: None,
         };
         let config = Config::load(cli).expect("load config");
         assert_eq!(config.server.url, "http://localhost:8080");

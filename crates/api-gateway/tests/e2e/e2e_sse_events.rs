@@ -86,7 +86,9 @@ async fn test_sse_stream_receives_events() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"hello"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -98,23 +100,20 @@ async fn test_sse_stream_receives_events() {
     let _keep_alive = app;
 
     // Wait for SSE collection to finish (with timeout)
-    let events = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        sse_handle,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let events = tokio::time::timeout(std::time::Duration::from_secs(5), sse_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     assert!(!events.is_empty(), "expected at least one SSE event");
 
     // Verify we have the expected event types
-    let has_message_start = events.iter().any(|e| {
-        matches!(e, api_gateway::types::ServerEvent::MessageStart { .. })
-    });
-    let has_turn_end = events.iter().any(|e| {
-        matches!(e, api_gateway::types::ServerEvent::TurnEnd { .. })
-    });
+    let has_message_start = events
+        .iter()
+        .any(|e| matches!(e, api_gateway::types::ServerEvent::MessageStart { .. }));
+    let has_turn_end = events
+        .iter()
+        .any(|e| matches!(e, api_gateway::types::ServerEvent::TurnEnd { .. }));
 
     assert!(has_message_start, "expected MessageStart event");
     assert!(has_turn_end, "expected TurnEnd event");
@@ -188,7 +187,9 @@ async fn test_sse_text_delta_content() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"hello"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -198,13 +199,10 @@ async fn test_sse_text_delta_content() {
     let _keep_alive = app;
 
     // Collect events
-    let events = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        sse_handle,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let events = tokio::time::timeout(std::time::Duration::from_secs(5), sse_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Concatenate all text deltas
     let text: String = events

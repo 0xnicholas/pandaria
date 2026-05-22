@@ -1,17 +1,16 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use async_trait::async_trait;
 use ai_provider::{
-    Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream,
-    Content, LlmContext, LlmError, LlmProvider, StopReason, StreamOptions, Usage,
-    providers::shared::ProviderConfig,
+    Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, LlmContext,
+    LlmError, LlmProvider, StopReason, StreamOptions, Usage, providers::shared::ProviderConfig,
 };
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
+use agent_core::{AgentSpace, CompactionConfig, HarnessConfig, HookConfig};
 use tenant::manager::{CreateSessionParams, TenantManager, TenantManagerImpl};
 use tenant::{Tenant, TenantQuota, TenantRegistry};
-use agent_core::{RuntimeConfig, CompactionConfig, AgentSpace, DefaultHookConfig};
 
 struct EchoProvider {
     config: ProviderConfig,
@@ -20,12 +19,7 @@ struct EchoProvider {
 impl EchoProvider {
     fn new() -> Self {
         Self {
-            config: ProviderConfig::new(
-                None,
-                "http://localhost:9999",
-                "echo",
-                "ECHO_API_KEY",
-            ),
+            config: ProviderConfig::new(None, "http://localhost:9999", "echo", "ECHO_API_KEY"),
         }
     }
 }
@@ -101,18 +95,24 @@ async fn test_end_to_end_tenant_isolation() {
 
     let registry = Arc::new(TenantRegistry::new());
 
-    let t1 = Tenant::new("t1", TenantQuota {
-        max_concurrent_sessions: 2,
-        max_tokens_per_day: 100,
-        max_tool_calls_per_minute: 10,
-        ..TenantQuota::default()
-    });
-    let t2 = Tenant::new("t2", TenantQuota {
-        max_concurrent_sessions: 5,
-        max_tokens_per_day: 200,
-        max_tool_calls_per_minute: 20,
-        ..TenantQuota::default()
-    });
+    let t1 = Tenant::new(
+        "t1",
+        TenantQuota {
+            max_concurrent_sessions: 2,
+            max_tokens_per_day: 100,
+            max_tool_calls_per_minute: 10,
+            ..TenantQuota::default()
+        },
+    );
+    let t2 = Tenant::new(
+        "t2",
+        TenantQuota {
+            max_concurrent_sessions: 5,
+            max_tokens_per_day: 200,
+            max_tool_calls_per_minute: 20,
+            ..TenantQuota::default()
+        },
+    );
 
     registry.register(t1).unwrap();
     registry.register(t2).unwrap();
@@ -120,7 +120,7 @@ async fn test_end_to_end_tenant_isolation() {
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
 
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -129,9 +129,10 @@ async fn test_end_to_end_tenant_isolation() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry.clone(), runtime_config)
@@ -144,7 +145,14 @@ async fn test_end_to_end_tenant_isolation() {
         .unwrap();
 
     manager
-        .send_message("t1", &info1.id, vec![ai_provider::Content::Text { text: "hello".to_string(), text_signature: None }])
+        .send_message(
+            "t1",
+            &info1.id,
+            vec![ai_provider::Content::Text {
+                text: "hello".to_string(),
+                text_signature: None,
+            }],
+        )
         .await
         .unwrap();
 
@@ -157,7 +165,14 @@ async fn test_end_to_end_tenant_isolation() {
         .unwrap();
 
     manager
-        .send_message("t2", &info2.id, vec![ai_provider::Content::Text { text: "world".to_string(), text_signature: None }])
+        .send_message(
+            "t2",
+            &info2.id,
+            vec![ai_provider::Content::Text {
+                text: "world".to_string(),
+                text_signature: None,
+            }],
+        )
         .await
         .unwrap();
 
@@ -173,15 +188,18 @@ async fn test_tenant_session_limit_enforced() {
     let _ = tracing_subscriber::fmt().try_init();
 
     let registry = Arc::new(TenantRegistry::new());
-    let t1 = Tenant::new("t1", TenantQuota {
-        max_concurrent_sessions: 1,
-        ..TenantQuota::default()
-    });
+    let t1 = Tenant::new(
+        "t1",
+        TenantQuota {
+            max_concurrent_sessions: 1,
+            ..TenantQuota::default()
+        },
+    );
     registry.register(t1).unwrap();
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -190,9 +208,10 @@ async fn test_tenant_session_limit_enforced() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry.clone(), runtime_config)
@@ -208,7 +227,10 @@ async fn test_tenant_session_limit_enforced() {
         .await
         .unwrap_err();
 
-    assert!(matches!(err, tenant::TenantError::SessionLimitExceeded { .. }));
+    assert!(matches!(
+        err,
+        tenant::TenantError::SessionLimitExceeded { .. }
+    ));
 
     manager.delete_session("t1", &info1.id).await.unwrap();
 }
@@ -218,7 +240,7 @@ async fn test_delete_session_not_found() {
     let registry = Arc::new(TenantRegistry::new());
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -227,9 +249,10 @@ async fn test_delete_session_not_found() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry, runtime_config)
@@ -250,7 +273,7 @@ async fn test_shutdown_cleans_all_sessions() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-        let runtime_config = Arc::new(RuntimeConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -259,9 +282,10 @@ async fn test_shutdown_cleans_all_sessions() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: HookConfig::default(),
             memory_store: None,
         });
         TenantManagerImpl::new(registry.clone(), runtime_config)

@@ -6,11 +6,19 @@ pub struct PasteStore {
 }
 
 impl PasteStore {
-    pub fn new() -> Self { Self { markers: HashMap::new(), next_id: 0 } }
+    pub fn new() -> Self {
+        Self {
+            markers: HashMap::new(),
+            next_id: 0,
+        }
+    }
     pub fn store(&mut self, content: &str) -> String {
         let line_count = content.lines().count();
-        if line_count <= 10 { return content.trim_end_matches('\n').to_string(); }
-        let id = self.next_id; self.next_id += 1;
+        if line_count <= 10 {
+            return content.trim_end_matches('\n').to_string();
+        }
+        let id = self.next_id;
+        self.next_id += 1;
         self.markers.insert(id, content.to_string());
         format!("[paste #{} +{} lines]", id, line_count)
     }
@@ -56,14 +64,39 @@ impl PasteStore {
 }
 
 impl Default for PasteStore {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test] fn test_small_paste() { let mut s = PasteStore::new(); assert_eq!(s.store("hi"), "hi"); }
-    #[test] fn test_large_paste_marker() { let mut s = PasteStore::new(); let c = "line\n".repeat(15); let r = s.store(&c); assert!(r.contains("[paste #")); }
-    #[test] fn test_expand_resolves() { let mut s = PasteStore::new(); let c = "line\n".repeat(15); let m = s.store(&c); let expanded = s.expand(&format!("before {} after", m)); assert!(expanded.starts_with("before line")); }
-    #[test] fn test_expand_unknown_marker() { assert_eq!(PasteStore::new().expand("text [paste #99 +5 lines]"), "text [paste #99 +5 lines]"); }
+    #[test]
+    fn test_small_paste() {
+        let mut s = PasteStore::new();
+        assert_eq!(s.store("hi"), "hi");
+    }
+    #[test]
+    fn test_large_paste_marker() {
+        let mut s = PasteStore::new();
+        let c = "line\n".repeat(15);
+        let r = s.store(&c);
+        assert!(r.contains("[paste #"));
+    }
+    #[test]
+    fn test_expand_resolves() {
+        let mut s = PasteStore::new();
+        let c = "line\n".repeat(15);
+        let m = s.store(&c);
+        let expanded = s.expand(&format!("before {} after", m));
+        assert!(expanded.starts_with("before line"));
+    }
+    #[test]
+    fn test_expand_unknown_marker() {
+        assert_eq!(
+            PasteStore::new().expand("text [paste #99 +5 lines]"),
+            "text [paste #99 +5 lines]"
+        );
+    }
 }

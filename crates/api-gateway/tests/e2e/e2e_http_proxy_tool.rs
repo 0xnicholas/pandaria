@@ -6,14 +6,14 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{body_json, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
 async fn test_http_proxy_tool_end_to_end() {
@@ -21,7 +21,11 @@ async fn test_http_proxy_tool_end_to_end() {
 
     // 1. Start an external tool endpoint (simulated by wiremock)
     let tool_server = MockServer::start().await;
-    let tool_port = tool_server.uri().trim_start_matches("http://127.0.0.1:").parse::<u16>().unwrap();
+    let tool_port = tool_server
+        .uri()
+        .trim_start_matches("http://127.0.0.1:")
+        .parse::<u16>()
+        .unwrap();
 
     Mock::given(method("POST"))
         .and(path("/invoke"))
@@ -156,7 +160,9 @@ data: [DONE]
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"call the echo_proxy tool"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"call the echo_proxy tool"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -168,22 +174,29 @@ data: [DONE]
     assert_eq!(call_count.load(Ordering::SeqCst), 2);
 
     // 6. Collect SSE events and verify ToolCallDone is present and not an error
-    let events = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        sse_handle,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let events = tokio::time::timeout(std::time::Duration::from_secs(5), sse_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
-    let tool_done = events.iter().find(|e| {
-        matches!(e, api_gateway::types::ServerEvent::ToolCallDone { .. })
-    });
+    let tool_done = events
+        .iter()
+        .find(|e| matches!(e, api_gateway::types::ServerEvent::ToolCallDone { .. }));
     assert!(tool_done.is_some(), "expected ToolCallDone in SSE events");
 
-    if let api_gateway::types::ServerEvent::ToolCallDone { call_id, is_error, result, .. } = tool_done.unwrap() {
+    if let api_gateway::types::ServerEvent::ToolCallDone {
+        call_id,
+        is_error,
+        result,
+        ..
+    } = tool_done.unwrap()
+    {
         assert_eq!(call_id, "call_proxy");
-        assert!(!is_error, "expected no error for proxy tool, got result: {:?}", result);
+        assert!(
+            !is_error,
+            "expected no error for proxy tool, got result: {:?}",
+            result
+        );
         assert_eq!(result.as_deref(), Some("pong"));
     }
 
@@ -209,9 +222,7 @@ data: [DONE]
     );
 
     // Verify tool_result message exists
-    let has_tool_result = msgs_arr.iter().any(|m| {
-        m.get("tool_call_id").is_some()
-    });
+    let has_tool_result = msgs_arr.iter().any(|m| m.get("tool_call_id").is_some());
     assert!(has_tool_result, "expected tool_result message in history");
 }
 

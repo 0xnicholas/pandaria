@@ -5,13 +5,13 @@ use axum::{
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::server::AppState;
 use crate::{
     error::GatewayError,
     middleware::TenantId,
     sse::SseStream,
     types::{ServerEvent, UsageInfo},
 };
-use crate::server::AppState;
 
 pub async fn stream(
     State(state): State<Arc<AppState>>,
@@ -49,22 +49,24 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
     use agent_core::AgentEvent;
 
     match event {
-        AgentEvent::TurnStart { turn_index } => {
-            Some(ServerEvent::TurnStart { turn_index })
-        }
+        AgentEvent::TurnStart { turn_index } => Some(ServerEvent::TurnStart { turn_index }),
         AgentEvent::MessageStart { message_index } => {
             Some(ServerEvent::MessageStart { message_index })
         }
-        AgentEvent::MessageUpdate { content_delta, .. } => {
-            Some(ServerEvent::TextDelta { delta: content_delta })
-        }
-        AgentEvent::ToolExecutionStart { tool_call_id, tool_name } => {
-            Some(ServerEvent::ToolCallStarted {
-                call_id: tool_call_id,
-                name: tool_name,
-            })
-        }
-        AgentEvent::ToolExecutionEnd { tool_call_id, result } => {
+        AgentEvent::MessageUpdate { content_delta, .. } => Some(ServerEvent::TextDelta {
+            delta: content_delta,
+        }),
+        AgentEvent::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+        } => Some(ServerEvent::ToolCallStarted {
+            call_id: tool_call_id,
+            name: tool_name,
+        }),
+        AgentEvent::ToolExecutionEnd {
+            tool_call_id,
+            result,
+        } => {
             let result_text = extract_tool_result_text(&result.content);
             Some(ServerEvent::ToolCallDone {
                 call_id: tool_call_id,
@@ -74,18 +76,17 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
         }
         AgentEvent::TurnEnd { messages, .. } => {
             let (stop_reason, usage) = extract_turn_end_info(&messages);
-            Some(ServerEvent::TurnEnd {
-                stop_reason,
-                usage,
-            })
+            Some(ServerEvent::TurnEnd { stop_reason, usage })
         }
-        AgentEvent::AutoRetryStart { attempt, max_attempts, delay_ms } => {
-            Some(ServerEvent::AutoRetryStart {
-                attempt,
-                max_attempts,
-                delay_ms,
-            })
-        }
+        AgentEvent::AutoRetryStart {
+            attempt,
+            max_attempts,
+            delay_ms,
+        } => Some(ServerEvent::AutoRetryStart {
+            attempt,
+            max_attempts,
+            delay_ms,
+        }),
         AgentEvent::AutoRetryEnd { success, error } => {
             Some(ServerEvent::AutoRetryEnd { success, error })
         }
@@ -123,12 +124,14 @@ fn extract_tool_result_text(contents: &[agent_core::Content]) -> Option<String> 
         })
         .collect();
     let joined = parts.join("\n");
-    if joined.is_empty() { None } else { Some(joined) }
+    if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
+    }
 }
 
-fn extract_turn_end_info(
-    messages: &[agent_core::AgentMessage],
-) -> (String, Option<UsageInfo>) {
+fn extract_turn_end_info(messages: &[agent_core::AgentMessage]) -> (String, Option<UsageInfo>) {
     let last_assistant = messages.iter().rev().find_map(|m| match m {
         agent_core::AgentMessage::Assistant(a) => Some(a),
         _ => None,
@@ -167,7 +170,10 @@ mod tests {
                 text_signature: None,
             },
         ];
-        assert_eq!(extract_tool_result_text(&contents), Some("hello\n world".into()));
+        assert_eq!(
+            extract_tool_result_text(&contents),
+            Some("hello\n world".into())
+        );
     }
 
     #[test]
@@ -199,7 +205,8 @@ mod tests {
         let err = agent_core::AgentError::ContextOverflow("test".into());
         assert_eq!(error_variant_name(&err), "context_overflow");
 
-        let err = agent_core::AgentError::LlmError(ai_provider::LlmError::ProviderError("test".into()));
+        let err =
+            agent_core::AgentError::LlmError(ai_provider::LlmError::ProviderError("test".into()));
         assert_eq!(error_variant_name(&err), "llm_error");
     }
 }

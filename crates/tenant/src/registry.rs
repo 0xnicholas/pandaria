@@ -23,9 +23,7 @@ impl TenantRegistry {
         let id = tenant.id.clone();
         let supervisor = Arc::new(TenantSupervisor::new(tenant));
         match self.tenants.entry(id.clone()) {
-            dashmap::mapref::entry::Entry::Occupied(_) => {
-                Err(TenantError::TenantAlreadyExists(id))
-            }
+            dashmap::mapref::entry::Entry::Occupied(_) => Err(TenantError::TenantAlreadyExists(id)),
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 e.insert(supervisor);
                 Ok(())

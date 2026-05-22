@@ -6,7 +6,6 @@
 /// hard-coded test secret. This module lets the TUI automatically
 /// generate a valid token for that local server so developers do not
 /// need to manually configure one.
-
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 

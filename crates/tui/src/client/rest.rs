@@ -16,7 +16,10 @@ impl RestClient {
             .timeout(Duration::from_secs(config.timeout_secs))
             .build()
             .expect("failed to build reqwest client");
-        Self { client, base_url: config.url.trim_end_matches('/').to_string() }
+        Self {
+            client,
+            base_url: config.url.trim_end_matches('/').to_string(),
+        }
     }
 
     async fn check_status(resp: reqwest::Response) -> Result<reqwest::Response, TuiError> {
@@ -29,106 +32,182 @@ impl RestClient {
         }
     }
 
-    pub async fn send_message(&self, session_id: &str, content: &str, token: &str) -> Result<(), TuiError> {
+    pub async fn send_message(
+        &self,
+        session_id: &str,
+        content: &str,
+        token: &str,
+    ) -> Result<(), TuiError> {
         let url = format!("{}/api/v1/sessions/{}/messages", self.base_url, session_id);
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .json(&SendMessageRequest { content: vec![MessageContentPart::Text { text: content.to_string() }] })
-            .send().await?;
+            .json(&SendMessageRequest {
+                content: vec![MessageContentPart::Text {
+                    text: content.to_string(),
+                }],
+            })
+            .send()
+            .await?;
         Self::check_status(resp).await?;
         Ok(())
     }
 
     pub async fn interrupt(&self, session_id: &str, token: &str) -> Result<(), TuiError> {
-        let url = format!("{}/api/v1/sessions/{}/messages/current", self.base_url, session_id);
-        let resp = self.client.delete(&url)
+        let url = format!(
+            "{}/api/v1/sessions/{}/messages/current",
+            self.base_url, session_id
+        );
+        let resp = self
+            .client
+            .delete(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .send().await?;
+            .send()
+            .await?;
         Self::check_status(resp).await?;
         Ok(())
     }
 
     pub async fn list_sessions(&self, token: &str) -> Result<Vec<SessionInfo>, TuiError> {
         let url = format!("{}/api/v1/sessions", self.base_url);
-        let resp = self.client.get(&url)
+        let resp = self
+            .client
+            .get(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .send().await?;
+            .send()
+            .await?;
         let resp = Self::check_status(resp).await?;
         Ok(resp.json::<Vec<SessionInfo>>().await?)
     }
 
-    pub async fn get_session(&self, session_id: &str, token: &str) -> Result<SessionInfo, TuiError> {
+    pub async fn get_session(
+        &self,
+        session_id: &str,
+        token: &str,
+    ) -> Result<SessionInfo, TuiError> {
         let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
-        let resp = self.client.get(&url)
+        let resp = self
+            .client
+            .get(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .send().await?;
+            .send()
+            .await?;
         let resp = Self::check_status(resp).await?;
         Ok(resp.json::<SessionInfo>().await?)
     }
 
-    pub async fn create_session(&self, title: Option<&str>, token: &str) -> Result<SessionInfo, TuiError> {
+    pub async fn create_session(
+        &self,
+        title: Option<&str>,
+        token: &str,
+    ) -> Result<SessionInfo, TuiError> {
         let url = format!("{}/api/v1/sessions", self.base_url);
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .json(&CreateSessionRequest { title: title.map(|t| t.to_string()) })
-            .send().await?;
+            .json(&CreateSessionRequest {
+                title: title.map(|t| t.to_string()),
+            })
+            .send()
+            .await?;
         let resp = Self::check_status(resp).await?;
         Ok(resp.json::<SessionInfo>().await?)
     }
 
-    pub async fn rename_session(&self, session_id: &str, title: &str, token: &str) -> Result<SessionInfo, TuiError> {
+    pub async fn rename_session(
+        &self,
+        session_id: &str,
+        title: &str,
+        token: &str,
+    ) -> Result<SessionInfo, TuiError> {
         let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
-        let resp = self.client.patch(&url)
+        let resp = self
+            .client
+            .patch(&url)
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({ "title": title }))
-            .send().await?;
+            .send()
+            .await?;
         let resp = Self::check_status(resp).await?;
         Ok(resp.json::<SessionInfo>().await?)
     }
 
-    pub async fn update_model(&self, session_id: &str, model: &str, token: &str) -> Result<SessionInfo, TuiError> {
+    pub async fn update_model(
+        &self,
+        session_id: &str,
+        model: &str,
+        token: &str,
+    ) -> Result<SessionInfo, TuiError> {
         let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
-        let resp = self.client.patch(&url)
+        let resp = self
+            .client
+            .patch(&url)
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({ "model": model }))
-            .send().await?;
+            .send()
+            .await?;
         let resp = Self::check_status(resp).await?;
         Ok(resp.json::<SessionInfo>().await?)
     }
 
     pub async fn compact_session(&self, session_id: &str, token: &str) -> Result<(), TuiError> {
         let url = format!("{}/api/v1/sessions/{}/compact", self.base_url, session_id);
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .send().await?;
+            .send()
+            .await?;
         Self::check_status(resp).await?;
         Ok(())
     }
 
     pub async fn delete_session(&self, session_id: &str, token: &str) -> Result<(), TuiError> {
         let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
-        let resp = self.client.delete(&url)
+        let resp = self
+            .client
+            .delete(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .send().await?;
+            .send()
+            .await?;
         Self::check_status(resp).await?;
         Ok(())
     }
 
-    pub async fn get_session_messages(&self, session_id: &str, token: &str) -> Result<Vec<crate::client::model::HistoricalMessage>, TuiError> {
+    pub async fn get_session_messages(
+        &self,
+        session_id: &str,
+        token: &str,
+    ) -> Result<Vec<crate::client::model::HistoricalMessage>, TuiError> {
         let url = format!("{}/api/v1/sessions/{}/messages", self.base_url, session_id);
-        let resp = self.client.get(&url)
+        let resp = self
+            .client
+            .get(&url)
             .header("Authorization", format!("Bearer {}", token))
-            .send().await?;
+            .send()
+            .await?;
         let resp = Self::check_status(resp).await?;
-        Ok(resp.json::<Vec<crate::client::model::HistoricalMessage>>().await?)
+        Ok(resp
+            .json::<Vec<crate::client::model::HistoricalMessage>>()
+            .await?)
     }
 
-    pub async fn update_system_prompt(&self, session_id: &str, prompt: &str, token: &str) -> Result<SessionInfo, TuiError> {
+    pub async fn update_system_prompt(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        token: &str,
+    ) -> Result<SessionInfo, TuiError> {
         let url = format!("{}/api/v1/sessions/{}", self.base_url, session_id);
-        let resp = self.client.patch(&url)
+        let resp = self
+            .client
+            .patch(&url)
             .header("Authorization", format!("Bearer {}", token))
             .json(&serde_json::json!({ "system_prompt": prompt }))
-            .send().await?;
+            .send()
+            .await?;
         let resp = Self::check_status(resp).await?;
         Ok(resp.json::<SessionInfo>().await?)
     }

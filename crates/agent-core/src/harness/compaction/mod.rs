@@ -63,32 +63,41 @@ pub struct CompactionPreparation {
 
 fn estimate_tokens(message: &AgentMessage) -> usize {
     let chars: usize = match message {
-        AgentMessage::User(user) => {
-            user.content.iter().map(|c| match c {
+        AgentMessage::User(user) => user
+            .content
+            .iter()
+            .map(|c| match c {
                 ai_provider::Content::Text { text, .. } => text.len(),
                 ai_provider::Content::Image { .. } => 4800,
                 _ => 0,
-            }).sum()
-        }
-        AgentMessage::Assistant(assistant) => {
-            assistant.content.iter().map(|c| match c {
+            })
+            .sum(),
+        AgentMessage::Assistant(assistant) => assistant
+            .content
+            .iter()
+            .map(|c| match c {
                 ai_provider::Content::Text { text, .. } => text.len(),
                 ai_provider::Content::Thinking { thinking, .. } => thinking.len(),
                 ai_provider::Content::ToolCall(tc) => {
-                    tc.name.len() + serde_json::to_string(&tc.arguments).unwrap_or_default().len()
+                    tc.name.len()
+                        + serde_json::to_string(&tc.arguments)
+                            .unwrap_or_default()
+                            .len()
                 }
                 ai_provider::Content::Image { .. } => 4800,
                 ai_provider::Content::Video { .. } => 4800,
                 ai_provider::Content::Audio { .. } => 4800,
-            }).sum()
-        }
-        AgentMessage::ToolResult(result) => {
-            result.content.iter().map(|c| match c {
+            })
+            .sum(),
+        AgentMessage::ToolResult(result) => result
+            .content
+            .iter()
+            .map(|c| match c {
                 ai_provider::Content::Text { text, .. } => text.len(),
                 ai_provider::Content::Image { .. } => 4800,
                 _ => 0,
-            }).sum()
-        }
+            })
+            .sum(),
     };
     (chars as f64 / 4.0).ceil() as usize
 }
@@ -159,8 +168,18 @@ fn find_valid_cut_points(entries: &[SessionEntry], start: usize, end: usize) -> 
     points
 }
 
-fn find_turn_start_index(entries: &[SessionEntry], entry_index: usize, start: usize) -> Option<usize> {
-    for (i, entry) in entries.iter().enumerate().skip(start).take(entry_index - start + 1).rev() {
+fn find_turn_start_index(
+    entries: &[SessionEntry],
+    entry_index: usize,
+    start: usize,
+) -> Option<usize> {
+    for (i, entry) in entries
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(entry_index - start + 1)
+        .rev()
+    {
         if let SessionEntry::Message {
             message: AgentMessage::User(_),
             ..
@@ -236,17 +255,16 @@ fn find_cut_point(
 }
 
 // ============================================================================
-// CompactionActor
-// ============================================================================
-
-pub struct CompactionActor {
+// Compactor
+// =========
+pub struct Compactor {
     pub config: CompactionConfig,
     provider: Arc<dyn ai_provider::LlmProvider>,
     model: String,
     file_op_extractor: Arc<dyn FileOperationExtractor>,
 }
 
-impl CompactionActor {
+impl Compactor {
     pub fn new(
         config: CompactionConfig,
         provider: Arc<dyn ai_provider::LlmProvider>,
@@ -291,9 +309,9 @@ impl CompactionActor {
             previous_summary = Some(summary.clone());
             boundary_start = entries
                 .iter()
-                .position(|e| {
-                    matches!(e, SessionEntry::Message { id, .. } if id == first_kept_entry_id)
-                })
+                .position(
+                    |e| matches!(e, SessionEntry::Message { id, .. } if id == first_kept_entry_id),
+                )
                 .unwrap_or(idx + 1);
         }
 
@@ -301,8 +319,12 @@ impl CompactionActor {
         let tokens_before = estimate_context_tokens(entries);
 
         // 3. Find cut point
-        let cut_point =
-            find_cut_point(entries, boundary_start, boundary_end, self.config.keep_recent_tokens);
+        let cut_point = find_cut_point(
+            entries,
+            boundary_start,
+            boundary_end,
+            self.config.keep_recent_tokens,
+        );
 
         // 4. Determine history end
         let history_end = if cut_point.is_split_turn {
@@ -324,8 +346,14 @@ impl CompactionActor {
         // 6. Collect turn prefix messages
         let mut turn_prefix_messages = Vec::new();
         if cut_point.is_split_turn {
-            let turn_start = cut_point.turn_start_index.expect("is_split_turn guarantees turn_start_index is Some");
-            for entry in entries.iter().take(cut_point.first_kept_entry_index).skip(turn_start) {
+            let turn_start = cut_point
+                .turn_start_index
+                .expect("is_split_turn guarantees turn_start_index is Some");
+            for entry in entries
+                .iter()
+                .take(cut_point.first_kept_entry_index)
+                .skip(turn_start)
+            {
                 if let SessionEntry::Message { message: msg, .. } = entry {
                     turn_prefix_messages.push(msg.clone());
                 }
@@ -333,13 +361,10 @@ impl CompactionActor {
         }
 
         // 7. Extract file operations
-        let file_ops = self
-            .file_op_extractor
-            .extract(&messages_to_summarize);
+        let file_ops = self.file_op_extractor.extract(&messages_to_summarize);
 
         // 8. Get the ID of the first kept message entry
-        let first_kept_entry_id = entries[cut_point.first_kept_entry_index]
-            .id();
+        let first_kept_entry_id = entries[cut_point.first_kept_entry_index].id();
 
         Ok(CompactionPreparation {
             first_kept_entry_id,
@@ -380,8 +405,7 @@ impl CompactionActor {
                 signal.child_token(),
             );
 
-            let (history_result, prefix_result) =
-                tokio::try_join!(history_future, prefix_future)?;
+            let (history_result, prefix_result) = tokio::try_join!(history_future, prefix_future)?;
 
             format!(
                 "{}\n\n---\n\n**Turn Context (split turn):**\n\n{}",
@@ -486,7 +510,10 @@ async fn generate_history_summary(
 
     let mut prompt_text = format!("<conversation>\n{}\n</conversation>\n\n", conversation_text);
     if let Some(prev) = previous_summary {
-        prompt_text.push_str(&format!("<previous-summary>\n{}\n</previous-summary>\n\n", prev));
+        prompt_text.push_str(&format!(
+            "<previous-summary>\n{}\n</previous-summary>\n\n",
+            prev
+        ));
     }
     prompt_text.push_str(base_prompt);
 
@@ -537,7 +564,9 @@ async fn generate_history_summary(
                 break;
             }
             ai_provider::AssistantMessageEvent::Error { error } => {
-                let msg = error.error_message.unwrap_or_else(|| "LLM error".to_string());
+                let msg = error
+                    .error_message
+                    .unwrap_or_else(|| "LLM error".to_string());
                 return Err(CompactionError::LlmError(msg));
             }
             _ => {}
@@ -613,7 +642,9 @@ async fn generate_turn_prefix_summary(
                 break;
             }
             ai_provider::AssistantMessageEvent::Error { error } => {
-                let msg = error.error_message.unwrap_or_else(|| "LLM error".to_string());
+                let msg = error
+                    .error_message
+                    .unwrap_or_else(|| "LLM error".to_string());
                 return Err(CompactionError::LlmError(msg));
             }
             _ => {}

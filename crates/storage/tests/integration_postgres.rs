@@ -16,13 +16,13 @@
 
 use std::sync::Arc;
 
-use agent_core::{
-    CompactionActor, CompactionConfig, DefaultFileOperationExtractor,
-    SessionActor, SessionConfig, SessionEntry, SessionStore,
-};
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
-use storage::session::postgres::PgSessionStore;
+use agent_core::{
+    Compactor, CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
+    SessionEntry, SessionStore,
+};
 use sqlx::PgPool;
+use storage::session::postgres::PgSessionStore;
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 
@@ -32,7 +32,10 @@ use testcontainers_modules::testcontainers::runners::AsyncRunner;
 /// instead of starting a Docker container via testcontainers. When using a local
 /// DB, tests **must** run with `--test-threads=1` because all tests share the
 /// same database and concurrent `CREATE TABLE IF NOT EXISTS` calls race.
-async fn start_pg() -> (PgPool, Option<testcontainers_modules::testcontainers::ContainerAsync<Postgres>>) {
+async fn start_pg() -> (
+    PgPool,
+    Option<testcontainers_modules::testcontainers::ContainerAsync<Postgres>>,
+) {
     if let Ok(url) = std::env::var("PANDARIA_TEST_PG_URL") {
         let pool = PgPool::connect(&url)
             .await
@@ -40,9 +43,18 @@ async fn start_pg() -> (PgPool, Option<testcontainers_modules::testcontainers::C
         return (pool, None);
     }
 
-    let container = Postgres::default().start().await.expect("failed to start postgres container");
-    let host = container.get_host().await.expect("failed to get container host");
-    let port = container.get_host_port_ipv4(5432).await.expect("failed to get container port");
+    let container = Postgres::default()
+        .start()
+        .await
+        .expect("failed to start postgres container");
+    let host = container
+        .get_host()
+        .await
+        .expect("failed to get container host");
+    let port = container
+        .get_host_port_ipv4(5432)
+        .await
+        .expect("failed to get container port");
     let url = format!("postgres://postgres:postgres@{}:{}/postgres", host, port);
 
     let pool = PgPool::connect(&url)
@@ -52,9 +64,8 @@ async fn start_pg() -> (PgPool, Option<testcontainers_modules::testcontainers::C
     (pool, Some(container))
 }
 
-
-fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<CompactionActor> {
-    Arc::new(CompactionActor::new(
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Arc<Compactor> {
+    Arc::new(Compactor::new(
         CompactionConfig::default(),
         provider,
         "test".to_string(),
@@ -71,27 +82,33 @@ async fn test_pg_store_roundtrip() {
 
     let tenant = "roundtrip_t";
     let session = "roundtrip_s";
-    let entries = vec![
-        SessionEntry::Message {
-            id: uuid::Uuid::new_v4(),
-            message: agent_core::AgentMessage::User(ai_provider::UserMessage {
-                content: vec![ai_provider::Content::Text {
-                    text: "hello".to_string(),
-                    text_signature: None,
-                }],
-                timestamp: std::time::SystemTime::now(),
-            }),
-        },
-    ];
+    let entries = vec![SessionEntry::Message {
+        id: uuid::Uuid::new_v4(),
+        message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
+                text: "hello".to_string(),
+                text_signature: None,
+            }],
+            timestamp: std::time::SystemTime::now(),
+        }),
+    }];
 
-    store.save_session(tenant, session, &entries).await.expect("save failed");
-    let loaded = store.load_session(tenant, session).await.expect("load failed");
+    store
+        .save_session(tenant, session, &entries)
+        .await
+        .expect("save failed");
+    let loaded = store
+        .load_session(tenant, session)
+        .await
+        .expect("load failed");
 
     assert_eq!(loaded.len(), 1);
     match &loaded[0] {
         SessionEntry::Message { message, .. } => match message {
             agent_core::AgentMessage::User(u) => {
-                assert!(u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "hello")));
+                assert!(u.content.iter().any(
+                    |c| matches!(c, ai_provider::Content::Text { text, .. } if text == "hello")
+                ));
             }
             _ => panic!("expected user message"),
         },
@@ -139,7 +156,10 @@ async fn test_pg_store_overwrite() {
                 }],
                 provider: "test".to_string(),
                 model: "test".to_string(),
-                api: ai_provider::Api { provider: "test".to_string(), model: "test".to_string() },
+                api: ai_provider::Api {
+                    provider: "test".to_string(),
+                    model: "test".to_string(),
+                },
                 usage: ai_provider::Usage {
                     input_tokens: 1,
                     output_tokens: 1,
@@ -155,15 +175,26 @@ async fn test_pg_store_overwrite() {
         },
     ];
 
-    store.save_session(tenant, session, &entries_v1).await.expect("save v1 failed");
-    store.save_session(tenant, session, &entries_v2).await.expect("save v2 failed");
+    store
+        .save_session(tenant, session, &entries_v1)
+        .await
+        .expect("save v1 failed");
+    store
+        .save_session(tenant, session, &entries_v2)
+        .await
+        .expect("save v2 failed");
 
-    let loaded = store.load_session(tenant, session).await.expect("load failed");
+    let loaded = store
+        .load_session(tenant, session)
+        .await
+        .expect("load failed");
     assert_eq!(loaded.len(), 2);
     match &loaded[1] {
         SessionEntry::Message { message, .. } => match message {
             agent_core::AgentMessage::Assistant(a) => {
-                assert!(a.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "second")));
+                assert!(a.content.iter().any(
+                    |c| matches!(c, ai_provider::Content::Text { text, .. } if text == "second")
+                ));
             }
             _ => panic!("expected assistant message"),
         },
@@ -200,36 +231,48 @@ async fn test_pg_store_tenant_isolation() {
         }),
     }];
 
-    store.save_session("tenant_a", "session_1", &entries_a)
+    store
+        .save_session("tenant_a", "session_1", &entries_a)
         .await
         .expect("save a failed");
-    store.save_session("tenant_b", "session_1", &entries_b)
+    store
+        .save_session("tenant_b", "session_1", &entries_b)
         .await
         .expect("save b failed");
 
-    let loaded_a = store.load_session("tenant_a", "session_1").await.expect("load a failed");
-    let loaded_b = store.load_session("tenant_b", "session_1").await.expect("load b failed");
+    let loaded_a = store
+        .load_session("tenant_a", "session_1")
+        .await
+        .expect("load a failed");
+    let loaded_b = store
+        .load_session("tenant_b", "session_1")
+        .await
+        .expect("load b failed");
 
     assert_eq!(loaded_a.len(), 1);
     assert_eq!(loaded_b.len(), 1);
 
     match &loaded_a[0] {
-        SessionEntry::Message { message, .. } => match message {
-            agent_core::AgentMessage::User(u) => {
-                assert!(u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "tenant_a")));
+        SessionEntry::Message { message, .. } => {
+            match message {
+                agent_core::AgentMessage::User(u) => {
+                    assert!(u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "tenant_a")));
+                }
+                _ => panic!("expected user message"),
             }
-            _ => panic!("expected user message"),
-        },
+        }
         _ => panic!("expected Message entry"),
     }
 
     match &loaded_b[0] {
-        SessionEntry::Message { message, .. } => match message {
-            agent_core::AgentMessage::User(u) => {
-                assert!(u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "tenant_b")));
+        SessionEntry::Message { message, .. } => {
+            match message {
+                agent_core::AgentMessage::User(u) => {
+                    assert!(u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "tenant_b")));
+                }
+                _ => panic!("expected user message"),
             }
-            _ => panic!("expected user message"),
-        },
+        }
         _ => panic!("expected Message entry"),
     }
 }
@@ -262,7 +305,10 @@ async fn test_session_actor_persistence_loop() {
             skills: vec![],
         });
 
-        session_actor.prompt("ping".to_string()).await.expect("prompt failed");
+        session_actor
+            .prompt("ping".to_string())
+            .await
+            .expect("prompt failed");
         session_actor.flush().await.expect("flush failed");
     }
 
@@ -284,12 +330,17 @@ async fn test_session_actor_persistence_loop() {
     assert!(restored > 0, "expected restored entries > 0");
 
     let msgs = session2.messages();
-    assert!(msgs.len() >= 2, "expected at least user + assistant messages");
+    assert!(
+        msgs.len() >= 2,
+        "expected at least user + assistant messages"
+    );
 
     // Verify the user message survived roundtrip
     assert!(msgs.iter().any(|m| {
         if let agent_core::AgentMessage::User(u) = m {
-            u.content.iter().any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "ping"))
+            u.content
+                .iter()
+                .any(|c| matches!(c, ai_provider::Content::Text { text, .. } if text == "ping"))
         } else {
             false
         }
@@ -316,12 +367,24 @@ async fn test_pg_store_delete() {
         }),
     }];
 
-    store.save_session(tenant, session, &entries).await.expect("save failed");
-    let loaded_before = store.load_session(tenant, session).await.expect("load before failed");
+    store
+        .save_session(tenant, session, &entries)
+        .await
+        .expect("save failed");
+    let loaded_before = store
+        .load_session(tenant, session)
+        .await
+        .expect("load before failed");
     assert_eq!(loaded_before.len(), 1);
 
-    store.delete_session(tenant, session).await.expect("delete failed");
-    let loaded_after = store.load_session(tenant, session).await.expect("load after failed");
+    store
+        .delete_session(tenant, session)
+        .await
+        .expect("delete failed");
+    let loaded_after = store
+        .load_session(tenant, session)
+        .await
+        .expect("load after failed");
     assert!(loaded_after.is_empty(), "expected session to be deleted");
 }
 
@@ -344,9 +407,18 @@ async fn test_pg_store_list() {
         }),
     }];
 
-    store.save_session(tenant, "s1", &entries).await.expect("save s1 failed");
-    store.save_session(tenant, "s2", &entries).await.expect("save s2 failed");
-    store.save_session(tenant, "s3", &entries).await.expect("save s3 failed");
+    store
+        .save_session(tenant, "s1", &entries)
+        .await
+        .expect("save s1 failed");
+    store
+        .save_session(tenant, "s2", &entries)
+        .await
+        .expect("save s2 failed");
+    store
+        .save_session(tenant, "s3", &entries)
+        .await
+        .expect("save s3 failed");
 
     let mut sids = store.list_sessions(tenant).await.expect("list failed");
     sids.sort();
@@ -371,15 +443,30 @@ async fn test_pg_store_tenant_list_isolation() {
         }),
     }];
 
-    store.save_session("tenant_x", "sx1", &entries).await.expect("save x failed");
-    store.save_session("tenant_x", "sx2", &entries).await.expect("save x2 failed");
-    store.save_session("tenant_y", "sy1", &entries).await.expect("save y failed");
+    store
+        .save_session("tenant_x", "sx1", &entries)
+        .await
+        .expect("save x failed");
+    store
+        .save_session("tenant_x", "sx2", &entries)
+        .await
+        .expect("save x2 failed");
+    store
+        .save_session("tenant_y", "sy1", &entries)
+        .await
+        .expect("save y failed");
 
-    let list_x = store.list_sessions("tenant_x").await.expect("list x failed");
+    let list_x = store
+        .list_sessions("tenant_x")
+        .await
+        .expect("list x failed");
     let mut list_x_sorted = list_x.clone();
     list_x_sorted.sort();
     assert_eq!(list_x_sorted, vec!["sx1", "sx2"]);
 
-    let list_y = store.list_sessions("tenant_y").await.expect("list y failed");
+    let list_y = store
+        .list_sessions("tenant_y")
+        .await
+        .expect("list y failed");
     assert_eq!(list_y, vec!["sy1"]);
 }

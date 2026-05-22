@@ -7,21 +7,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use agent_core::{
-    CompactionActor, CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
-};
 use agent_core::test_utils::AllowAllDispatcher;
-use ai_provider::{
-    LlmProvider, StreamOptions,
-    providers::openai::OpenAiProvider,
+use agent_core::{
+    Compactor, CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
 };
+use ai_provider::{LlmProvider, StreamOptions, providers::openai::OpenAiProvider};
 use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Arc<CompactionActor> {
-    Arc::new(CompactionActor::new(
+fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Arc<Compactor> {
+    Arc::new(Compactor::new(
         CompactionConfig::default(),
         provider,
         "test".to_string(),
@@ -63,12 +60,10 @@ data: [DONE]
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        OpenAiProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(OpenAiProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let mut session = SessionActor::new(SessionConfig {
         tenant_id: "t1".to_string(),
@@ -113,7 +108,10 @@ data: [DONE]
     let entries = session.entries();
     assert_eq!(entries.len(), 2);
     assert!(
-        entries.iter().all(|e| matches!(e, agent_core::persistence::entry::SessionEntry::Message { .. })),
+        entries.iter().all(|e| matches!(
+            e,
+            agent_core::persistence::entry::SessionEntry::Message { .. }
+        )),
         "no compaction entry should appear when retry succeeds"
     );
 }
@@ -132,18 +130,15 @@ async fn test_non_retryable_error_no_retry() {
         .respond_with(move |_req: &wiremock::Request| {
             call_count_clone.fetch_add(1, Ordering::SeqCst);
             // 401 is non-retryable — RequestBuilder should fail immediately
-            ResponseTemplate::new(401)
-                .set_body_string(r#"{"error":{"message":"invalid key"}}"#)
+            ResponseTemplate::new(401).set_body_string(r#"{"error":{"message":"invalid key"}}"#)
         })
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        OpenAiProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(OpenAiProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let mut session = SessionActor::new(SessionConfig {
         tenant_id: "t1".to_string(),

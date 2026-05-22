@@ -25,7 +25,7 @@ pub fn build_test_app(provider: Arc<dyn ai_provider::LlmProvider>) -> Router {
     );
     registry.register(test_tenant).unwrap();
 
-    let runtime_config = Arc::new(agent_core::RuntimeConfig {
+    let runtime_config = Arc::new(agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "gpt-4".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
@@ -34,9 +34,10 @@ pub fn build_test_app(provider: Arc<dyn ai_provider::LlmProvider>) -> Router {
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
-        hook_config: agent_core::DefaultHookConfig::default(),
+        hook_config: agent_core::HookConfig::default(),
         memory_store: None,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
@@ -56,7 +57,7 @@ pub fn build_test_app_with_registry(
     provider: Arc<dyn ai_provider::LlmProvider>,
     registry: Arc<tenant::TenantRegistry>,
 ) -> Router {
-    let runtime_config = Arc::new(agent_core::RuntimeConfig {
+    let runtime_config = Arc::new(agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "gpt-4".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
@@ -65,9 +66,10 @@ pub fn build_test_app_with_registry(
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
-        hook_config: agent_core::DefaultHookConfig::default(),
+        hook_config: agent_core::HookConfig::default(),
         memory_store: None,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
@@ -104,7 +106,7 @@ pub fn build_test_app_with_client(
     );
     registry.register(test_tenant).unwrap();
 
-    let runtime_config = Arc::new(agent_core::RuntimeConfig {
+    let runtime_config = Arc::new(agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "gpt-4".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
@@ -113,9 +115,10 @@ pub fn build_test_app_with_client(
         media_provider: None,
         media_registry: None,
         http_client: client,
+        available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
-        hook_config: agent_core::DefaultHookConfig::default(),
+        hook_config: agent_core::HookConfig::default(),
         memory_store: None,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
@@ -166,7 +169,9 @@ pub fn make_token(tenant_id: &str) -> String {
 
 /// Start a wiremock server that responds with the given SSE body for OpenAI
 /// chat completions, and return the provider + base URL.
-pub async fn start_wiremock_openai(body: &str) -> (wiremock::MockServer, Arc<dyn ai_provider::LlmProvider>) {
+pub async fn start_wiremock_openai(
+    body: &str,
+) -> (wiremock::MockServer, Arc<dyn ai_provider::LlmProvider>) {
     let server = wiremock::MockServer::start().await;
 
     wiremock::Mock::given(wiremock::matchers::method("POST"))
@@ -179,14 +184,16 @@ pub async fn start_wiremock_openai(body: &str) -> (wiremock::MockServer, Arc<dyn
         ai_provider::providers::openai::OpenAiProvider::with_base_url(
             Some(secrecy::SecretString::from("sk-test")),
             &server.uri(),
-        )
+        ),
     );
 
     (server, provider)
 }
 
 /// Start a wiremock server with a dynamic responder and return the provider.
-pub async fn start_wiremock_openai_dynamic<F>(responder: F) -> (wiremock::MockServer, Arc<dyn ai_provider::LlmProvider>)
+pub async fn start_wiremock_openai_dynamic<F>(
+    responder: F,
+) -> (wiremock::MockServer, Arc<dyn ai_provider::LlmProvider>)
 where
     F: Fn(&wiremock::Request) -> wiremock::ResponseTemplate + Send + Sync + 'static,
 {
@@ -202,7 +209,7 @@ where
         ai_provider::providers::openai::OpenAiProvider::with_base_url(
             Some(secrecy::SecretString::from("sk-test")),
             &server.uri(),
-        )
+        ),
     );
 
     (server, provider)
@@ -239,7 +246,7 @@ pub async fn collect_sse_events_with_timeout(
     timeout: std::time::Duration,
 ) -> Vec<api_gateway::types::ServerEvent> {
     use futures::StreamExt;
-    use tokio::time::{timeout as tokio_timeout, Instant};
+    use tokio::time::{Instant, timeout as tokio_timeout};
 
     let mut body_stream = response.into_body().into_data_stream();
     let mut buffer = String::new();
@@ -266,8 +273,10 @@ pub async fn collect_sse_events_with_timeout(
                             if let Ok(event) =
                                 serde_json::from_str::<api_gateway::types::ServerEvent>(json)
                             {
-                                let is_end =
-                                    matches!(event, api_gateway::types::ServerEvent::TurnEnd { .. });
+                                let is_end = matches!(
+                                    event,
+                                    api_gateway::types::ServerEvent::TurnEnd { .. }
+                                );
                                 events.push(event);
                                 if is_end {
                                     return events;

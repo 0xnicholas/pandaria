@@ -144,10 +144,7 @@ impl SessionCtx {
     /// Create a new `SessionCtx` with the given identifiers.
     ///
     /// `system_prompt` defaults to empty, `tools` to empty.
-    pub fn new(
-        tenant_id: impl Into<String>,
-        session_id: impl Into<String>,
-    ) -> Self {
+    pub fn new(tenant_id: impl Into<String>, session_id: impl Into<String>) -> Self {
         Self {
             tenant_id: tenant_id.into(),
             session_id: session_id.into(),
@@ -407,10 +404,7 @@ impl CompactEndCtx {
     ///
     /// `compacted_messages` defaults to empty, `token_savings` to `0`,
     /// `result` to `None`.
-    pub fn new(
-        tenant_id: impl Into<String>,
-        session_id: impl Into<String>,
-    ) -> Self {
+    pub fn new(tenant_id: impl Into<String>, session_id: impl Into<String>) -> Self {
         Self {
             tenant_id: tenant_id.into(),
             session_id: session_id.into(),

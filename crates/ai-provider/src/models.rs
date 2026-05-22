@@ -285,7 +285,12 @@ mod tests {
 
     #[test]
     fn test_modality_video_audio_serde() {
-        let modalities = vec![Modality::Text, Modality::Image, Modality::Video, Modality::Audio];
+        let modalities = vec![
+            Modality::Text,
+            Modality::Image,
+            Modality::Video,
+            Modality::Audio,
+        ];
         let json = serde_json::to_string(&modalities).unwrap();
         let back: Vec<Modality> = serde_json::from_str(&json).unwrap();
         assert_eq!(modalities, back);

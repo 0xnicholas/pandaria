@@ -1,11 +1,12 @@
 use axum::{
+    Json,
     extract::{Extension, Path, State},
     http::StatusCode,
-    Json,
 };
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::server::AppState;
 use crate::{
     error::GatewayError,
     middleware::TenantId,
@@ -14,7 +15,6 @@ use crate::{
         ResetSessionResponse, SessionInfo, SessionStateResponse, UpdateSessionRequest,
     },
 };
-use crate::server::AppState;
 
 pub async fn create(
     State(state): State<Arc<AppState>>,
@@ -24,14 +24,18 @@ pub async fn create(
     let params = tenant::CreateSessionParams {
         title: req.title,
         system_prompt: req.system_prompt,
-        tools: req.tools.into_iter().map(|t| agent_core::ToolConfig {
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters,
-            endpoint: t.endpoint,
-            timeout_ms: t.timeout_ms,
-            headers: t.headers,
-        }).collect(),
+        tools: req
+            .tools
+            .into_iter()
+            .map(|t| agent_core::ToolConfig {
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+                endpoint: t.endpoint,
+                timeout_ms: t.timeout_ms,
+                headers: t.headers,
+            })
+            .collect(),
         webhook: req.webhook.map(|w| tenant::WebhookConfig {
             url: w.url,
             events: w.events,
@@ -51,10 +55,7 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     Extension(tenant_id): Extension<TenantId>,
 ) -> Result<Json<Vec<SessionInfo>>, GatewayError> {
-    let infos = state
-        .tenant_manager
-        .list_sessions(&tenant_id.0)
-        .await?;
+    let infos = state.tenant_manager.list_sessions(&tenant_id.0).await?;
 
     let sessions: Vec<SessionInfo> = infos
         .into_iter()
@@ -69,10 +70,7 @@ pub async fn get(
     Extension(tenant_id): Extension<TenantId>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<SessionInfo>, GatewayError> {
-    let info = state
-        .tenant_manager
-        .get_session(&tenant_id.0, &id)
-        .await?;
+    let info = state.tenant_manager.get_session(&tenant_id.0, &id).await?;
 
     Ok(Json(state.enrich_session_info(info)))
 }
@@ -166,14 +164,19 @@ pub async fn batch_create(
     let template = tenant::CreateSessionParams {
         title: req.template.title,
         system_prompt: req.template.system_prompt,
-        tools: req.template.tools.into_iter().map(|t| agent_core::ToolConfig {
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters,
-            endpoint: t.endpoint,
-            timeout_ms: t.timeout_ms,
-            headers: t.headers,
-        }).collect(),
+        tools: req
+            .template
+            .tools
+            .into_iter()
+            .map(|t| agent_core::ToolConfig {
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+                endpoint: t.endpoint,
+                timeout_ms: t.timeout_ms,
+                headers: t.headers,
+            })
+            .collect(),
         webhook: req.template.webhook.map(|w| tenant::WebhookConfig {
             url: w.url,
             events: w.events,
@@ -196,7 +199,11 @@ pub async fn batch_create(
         StatusCode::CREATED,
         Json(BatchCreateResult {
             created,
-            failed: result.failed.into_iter().map(|f| crate::types::BatchFailure { reason: f.reason }).collect(),
+            failed: result
+                .failed
+                .into_iter()
+                .map(|f| crate::types::BatchFailure { reason: f.reason })
+                .collect(),
         }),
     ))
 }
@@ -207,7 +214,10 @@ pub async fn clone(
     Path(id): Path<Uuid>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<(StatusCode, Json<SessionInfo>), GatewayError> {
-    let title = body.get("title").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let title = body
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
 
     let info = state
         .tenant_manager

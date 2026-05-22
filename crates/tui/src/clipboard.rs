@@ -4,7 +4,9 @@ use arboard::Clipboard;
 /// Returns an error description string on failure.
 pub fn copy_text(text: &str) -> Result<(), String> {
     let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard init failed: {e}"))?;
-    clipboard.set_text(text).map_err(|e| format!("clipboard set failed: {e}"))?;
+    clipboard
+        .set_text(text)
+        .map_err(|e| format!("clipboard set failed: {e}"))?;
     Ok(())
 }
 

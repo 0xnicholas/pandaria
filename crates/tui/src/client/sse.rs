@@ -27,10 +27,12 @@ pub async fn connect(
                     error = %e,
                     "SSE connection lost, reconnecting..."
                 );
-                let _ = tx.send(ServerEvent::Error {
-                    code: "sse_reconnecting".to_string(),
-                    message: format!("Reconnecting in {}s...", delay.as_secs()),
-                }).await;
+                let _ = tx
+                    .send(ServerEvent::Error {
+                        code: "sse_reconnecting".to_string(),
+                        message: format!("Reconnecting in {}s...", delay.as_secs()),
+                    })
+                    .await;
                 tokio::time::sleep(delay).await;
             }
         }
@@ -43,12 +45,18 @@ async fn connect_once(
     token: &str,
     tx: mpsc::Sender<ServerEvent>,
 ) -> Result<(), String> {
-    let resp = client.get(url)
+    let resp = client
+        .get(url)
         .header("Authorization", format!("Bearer {}", token))
         .header("Accept", "text/event-stream")
-        .send().await.map_err(|e| e.to_string())?;
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("SSE connection failed: HTTP {}", resp.status().as_u16()));
+        return Err(format!(
+            "SSE connection failed: HTTP {}",
+            resp.status().as_u16()
+        ));
     }
     let byte_stream = resp.bytes_stream();
     let mut event_stream = eventsource_stream::EventStream::new(byte_stream);
@@ -62,10 +70,12 @@ async fn connect_once(
                 }
             }
             Err(_) => {
-                let _ = tx.send(ServerEvent::Error {
-                    code: "sse_parse_error".to_string(),
-                    message: "failed to parse SSE event".to_string(),
-                }).await;
+                let _ = tx
+                    .send(ServerEvent::Error {
+                        code: "sse_parse_error".to_string(),
+                        message: "failed to parse SSE event".to_string(),
+                    })
+                    .await;
             }
         }
     }

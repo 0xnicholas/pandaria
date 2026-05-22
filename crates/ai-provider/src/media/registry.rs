@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::media::MediaTaskType;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct MediaModel {

@@ -31,7 +31,8 @@ mod tests {
     async fn test_catch_panic_converts_panic_to_error() {
         let result = catch_panic(async {
             panic!("deliberate panic");
-        }).await;
+        })
+        .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(

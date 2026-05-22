@@ -101,7 +101,7 @@ pub fn format_facts(facts: &[MemoryFact]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ai_provider::{AssistantMessage, Content, ToolResultMessage, UserMessage, Usage};
+    use ai_provider::{AssistantMessage, Content, ToolResultMessage, Usage, UserMessage};
 
     fn text_msg(text: impl Into<String>) -> AgentMessage {
         AgentMessage::Assistant(AssistantMessage {
@@ -110,9 +110,18 @@ mod tests {
                 text_signature: None,
             }],
             provider: "test".to_string(),
-            api: ai_provider::Api { provider: "test".to_string(), model: "test".to_string() },
+            api: ai_provider::Api {
+                provider: "test".to_string(),
+                model: "test".to_string(),
+            },
             model: "test".to_string(),
-            usage: Usage { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: None, cache_read_input_tokens: None, total_tokens: 0 },
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                total_tokens: 0,
+            },
             stop_reason: ai_provider::StopReason::Stop,
             response_id: None,
             error_message: None,
@@ -143,7 +152,9 @@ mod tests {
 
     #[test]
     fn test_extract_facts_extracts_assistant() {
-        let messages = vec![text_msg("This is a longer assistant reply that should be remembered.")];
+        let messages = vec![text_msg(
+            "This is a longer assistant reply that should be remembered.",
+        )];
         let facts = extract_facts(&messages);
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].category, Some("assistant_response".to_string()));

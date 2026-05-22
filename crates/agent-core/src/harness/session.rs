@@ -1,20 +1,19 @@
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 
 use ai_provider::{Content, StopReason};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, instrument, warn};
 
-use crate::harness::compaction::{
-    should_compact, CompactionActor, CompactionResult,
-    estimate_context_tokens,
-};
-use crate::hook::context::{CompactCtx, CompactReason, SessionCtx};
 use crate::error::AgentError;
-use crate::harness::error_recovery::{RecoveryAction, RecoveryStateMachine};
 use crate::events::{AgentEvent, AgentEventListener};
-use crate::hook::dispatcher::HookDispatcher;
 use crate::harness::agent_loop::{AgentLoop, AgentLoopConfig};
+use crate::harness::compaction::{
+    CompactionResult, Compactor, estimate_context_tokens, should_compact,
+};
+use crate::harness::error_recovery::{RecoveryAction, RecoveryStateMachine};
+use crate::hook::context::{CompactCtx, CompactReason, SessionCtx};
+use crate::hook::dispatcher::HookDispatcher;
 use crate::persistence::entry::{SessionContextBuilder, SessionEntry};
 use crate::persistence::store::SessionStore;
 use crate::prompt::{FragmentKind, FragmentSource, PromptBuilder, PromptFragment};
@@ -49,7 +48,7 @@ pub struct SessionActor {
     max_retries: u32,
     provider: Arc<dyn ai_provider::LlmProvider>,
     hook_dispatcher: Arc<dyn HookDispatcher>,
-    compaction_actor: Arc<CompactionActor>,
+    compaction_actor: Arc<Compactor>,
     tools: Vec<AgentToolRef>,
     entries: Vec<SessionEntry>,
     /// Messages queued for injection before the next LLM call
@@ -85,7 +84,7 @@ pub struct SessionConfig {
     pub model: String,
     pub provider: Arc<dyn ai_provider::LlmProvider>,
     pub hook_dispatcher: Arc<dyn HookDispatcher>,
-    pub compaction_actor: Arc<CompactionActor>,
+    pub compaction_actor: Arc<Compactor>,
     pub tools: Vec<AgentToolRef>,
     pub store: Option<Arc<dyn SessionStore>>,
     pub skills: Vec<crate::skills::Skill>,
@@ -100,7 +99,7 @@ impl std::fmt::Debug for SessionConfig {
             .field("model", &self.model)
             .field("provider", &"<dyn LlmProvider>")
             .field("hook_dispatcher", &"<dyn HookDispatcher>")
-            .field("compaction_actor", &"<CompactionActor>")
+            .field("compaction_actor", &"<Compactor>")
             .field("tools", &format!("{} tools", self.tools.len()))
             .field("store", &self.store.is_some())
             .field("skills", &format!("{} skills", self.skills.len()))
@@ -120,7 +119,8 @@ impl SessionActor {
     /// to load message history before the first prompt.
     pub fn new(config: SessionConfig) -> Self {
         // Emit session_start (fire-and-forget, per ADR-003)
-        let tool_defs: Vec<serde_json::Value> = config.tools
+        let tool_defs: Vec<serde_json::Value> = config
+            .tools
             .iter()
             .map(|t| {
                 serde_json::json!({
@@ -155,7 +155,8 @@ impl SessionActor {
                 100,
                 (),
                 "on_session_start",
-            ).await;
+            )
+            .await;
         });
 
         info!(
@@ -203,7 +204,12 @@ impl SessionActor {
         let handle = tokio::spawn(async move {
             while let Some(queued) = rx.recv().await {
                 let ls: Vec<_> = {
-                    listeners.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+                    listeners
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .iter()
+                        .cloned()
+                        .collect()
                 };
                 for listener in &ls {
                     let _ = listener.on_event(&queued.event).await;
@@ -221,7 +227,9 @@ impl SessionActor {
     /// or the store has no data for this session.
     pub async fn restore(&mut self) -> Result<usize, AgentError> {
         if let Some(ref store) = self.store {
-            let entries = store.load_session(&self.tenant_id, &self.session_id).await?;
+            let entries = store
+                .load_session(&self.tenant_id, &self.session_id)
+                .await?;
             let count = entries.len();
             if count > 0 {
                 info!(
@@ -252,10 +260,7 @@ impl SessionActor {
             session_id = %self.session_id,
         )
     )]
-    pub async fn prompt(
-        &mut self,
-        text: String,
-    ) -> Result<Vec<AgentMessage>, AgentError> {
+    pub async fn prompt(&mut self, text: String) -> Result<Vec<AgentMessage>, AgentError> {
         self.prompt_with_content(vec![Content::Text {
             text,
             text_signature: None,
@@ -268,7 +273,12 @@ impl SessionActor {
         content: Vec<Content>,
     ) -> Result<Vec<AgentMessage>, AgentError> {
         if self.state.load(Ordering::SeqCst) == 2 {
-            let reason = self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+            let reason = self
+                .error_reason
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+                .unwrap_or_default();
             return Err(AgentError::SessionInError { reason });
         }
         // Handle /skill:name invocation only when there's exactly one Text part
@@ -276,12 +286,14 @@ impl SessionActor {
             if let Content::Text { ref text, .. } = content[0] {
                 if let Some(skill_name) = crate::skills::parse_skill_invocation(text) {
                     if let Some(skill) = self.skills.iter().find(|s| s.name == skill_name) {
-                        let skill_content = tokio::fs::read_to_string(&skill.file_path).await.map_err(|e| {
-                            AgentError::SkillLoadFailed(format!(
-                                "failed to read skill {}: {}",
-                                skill.name, e
-                            ))
-                        })?;
+                        let skill_content = tokio::fs::read_to_string(&skill.file_path)
+                            .await
+                            .map_err(|e| {
+                                AgentError::SkillLoadFailed(format!(
+                                    "failed to read skill {}: {}",
+                                    skill.name, e
+                                ))
+                            })?;
 
                         let skill_msg = AgentMessage::User(ai_provider::UserMessage {
                             content: vec![Content::Text {
@@ -309,20 +321,36 @@ impl SessionActor {
 
     pub async fn complete(&mut self, text: String) -> Result<String, AgentError> {
         let messages = self.prompt(text).await?;
-        let text_content: Vec<String> = messages.iter().filter_map(|m| {
-            if let AgentMessage::Assistant(a) = m {
-                Some(a.content.iter().filter_map(|c| match c {
-                    ai_provider::Content::Text { text, .. } => Some(text.clone()),
-                    _ => None,
-                }).collect::<Vec<_>>().join(" "))
-            } else { None }
-        }).collect();
+        let text_content: Vec<String> = messages
+            .iter()
+            .filter_map(|m| {
+                if let AgentMessage::Assistant(a) = m {
+                    Some(
+                        a.content
+                            .iter()
+                            .filter_map(|c| match c {
+                                ai_provider::Content::Text { text, .. } => Some(text.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect();
         Ok(text_content.join("\n"))
     }
 
     pub async fn continue_(&mut self) -> Result<Vec<AgentMessage>, AgentError> {
         if self.state.load(Ordering::SeqCst) == 2 {
-            let reason = self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default();
+            let reason = self
+                .error_reason
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+                .unwrap_or_default();
             return Err(AgentError::SessionInError { reason });
         }
         self.run_with_messages(None).await
@@ -341,7 +369,10 @@ impl SessionActor {
     }
 
     pub fn error_reason(&self) -> Option<String> {
-        self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.error_reason
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub async fn reset(&mut self) -> Result<CancellationToken, AgentError> {
@@ -355,7 +386,10 @@ impl SessionActor {
     }
 
     pub fn add_event_listener(&mut self, listener: Arc<dyn AgentEventListener>) {
-        self.event_listeners.lock().unwrap_or_else(|e| e.into_inner()).push(listener);
+        self.event_listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(listener);
     }
 
     fn emit_event(&self, event: AgentEvent) {
@@ -378,14 +412,22 @@ impl SessionActor {
         }
         self.prompt_builder = builder;
     }
-    pub fn set_model(&mut self, model: String) { self.model = model; }
-    pub fn set_tools(&mut self, tools: Vec<AgentToolRef>) { self.tools = tools; }
-    pub fn set_stream_options(&mut self, options: ai_provider::StreamOptions) { self.stream_options = options; }
+    pub fn set_model(&mut self, model: String) {
+        self.model = model;
+    }
+    pub fn set_tools(&mut self, tools: Vec<AgentToolRef>) {
+        self.tools = tools;
+    }
+    pub fn set_stream_options(&mut self, options: ai_provider::StreamOptions) {
+        self.stream_options = options;
+    }
     pub fn set_max_retries(&mut self, max_retries: u32) {
         self.max_retries = max_retries;
         self.stream_options.max_retries = max_retries;
     }
-    pub fn system_prompt(&self) -> String { self.prompt_builder.render() }
+    pub fn system_prompt(&self) -> String {
+        self.prompt_builder.render()
+    }
 
     #[instrument(
         skip(self),
@@ -402,24 +444,30 @@ impl SessionActor {
 
         loop {
             self.state.store(1, Ordering::SeqCst);
-            self.emit_event(AgentEvent::StateChanged { state: SessionState::Running });
+            self.emit_event(AgentEvent::StateChanged {
+                state: SessionState::Running,
+            });
             self.abort_token = CancellationToken::new();
 
             let messages = SessionContextBuilder::build_context(&self.entries);
 
             let event_tx = self.event_tx.clone();
-            let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static> = Arc::new(move |event| {
-                if let Some(tx) = &event_tx
-                    && tx.try_send(QueuedEvent { event }).is_err()
-                {
-                    tracing::warn!("event queue full, dropping event");
-                }
-            });
+            let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static> =
+                Arc::new(move |event| {
+                    if let Some(tx) = &event_tx
+                        && tx.try_send(QueuedEvent { event }).is_err()
+                    {
+                        tracing::warn!("event queue full, dropping event");
+                    }
+                });
 
             let config = AgentLoopConfig {
-                tenant_id: self.tenant_id.clone(), session_id: self.session_id.clone(),
-                model: self.model.clone(), provider: self.provider.clone(),
-                hook_dispatcher: self.hook_dispatcher.clone(), tools: self.tools.clone(),
+                tenant_id: self.tenant_id.clone(),
+                session_id: self.session_id.clone(),
+                model: self.model.clone(),
+                provider: self.provider.clone(),
+                hook_dispatcher: self.hook_dispatcher.clone(),
+                tools: self.tools.clone(),
                 prompt_builder: self.prompt_builder.clone(),
                 stream_options: self.stream_options.clone(),
                 event_sink,
@@ -429,7 +477,10 @@ impl SessionActor {
                 skills: self.skills.clone(),
             };
 
-            match AgentLoop::new(config).run(messages, self.abort_token.child_token()).await {
+            match AgentLoop::new(config)
+                .run(messages, self.abort_token.child_token())
+                .await
+            {
                 Ok(msgs) => {
                     self.state.store(0, Ordering::SeqCst);
                     if let Some(AgentMessage::Assistant(assistant)) = msgs.iter().rfind(|m| matches!(m, AgentMessage::Assistant(a) if a.stop_reason != StopReason::ToolUse)) {
@@ -463,7 +514,9 @@ impl SessionActor {
                             RecoveryAction::Continue => { self.recovery.mark_success(); }
                         }
                     }
-                    for msg in &msgs { self.push_message(msg.clone()); }
+                    for msg in &msgs {
+                        self.push_message(msg.clone());
+                    }
                     all_new_msgs.extend(msgs);
                 }
                 Err(e) => {
@@ -477,13 +530,17 @@ impl SessionActor {
                             match action {
                                 RecoveryAction::RetryAfterCompaction { .. } => {
                                     self.recovery.mark_success();
-                                    self.run_auto_compaction(CompactReason::Overflow, true).await?;
+                                    self.run_auto_compaction(CompactReason::Overflow, true)
+                                        .await?;
                                     continue;
                                 }
                                 RecoveryAction::Abort { reason } => {
                                     self.state.store(2, Ordering::SeqCst);
-                                    *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason.clone());
-                                    self.emit_event(AgentEvent::StateChanged { state: SessionState::Error });
+                                    *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) =
+                                        Some(reason.clone());
+                                    self.emit_event(AgentEvent::StateChanged {
+                                        state: SessionState::Error,
+                                    });
                                     return Err(AgentError::CompactionFailed(reason));
                                 }
                                 RecoveryAction::RetryAfterBackoff { delay_ms } => {
@@ -501,16 +558,22 @@ impl SessionActor {
                                 }
                                 RecoveryAction::Continue => {
                                     self.state.store(2, Ordering::SeqCst);
-                                    *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg.clone());
-                                    self.emit_event(AgentEvent::StateChanged { state: SessionState::Error });
+                                    *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) =
+                                        Some(msg.clone());
+                                    self.emit_event(AgentEvent::StateChanged {
+                                        state: SessionState::Error,
+                                    });
                                     return Err(AgentError::ContextOverflow(msg));
                                 }
                             }
                         }
                         other => {
                             self.state.store(2, Ordering::SeqCst);
-                            *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(other.to_string());
-                            self.emit_event(AgentEvent::StateChanged { state: SessionState::Error });
+                            *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(other.to_string());
+                            self.emit_event(AgentEvent::StateChanged {
+                                state: SessionState::Error,
+                            });
                             return Err(other);
                         }
                     }
@@ -521,8 +584,13 @@ impl SessionActor {
             if self.compaction_actor.config.enabled {
                 let context_tokens = estimate_context_tokens(&self.entries);
                 let context_window = self.model_context_window();
-                if should_compact(context_tokens, context_window, &self.compaction_actor.config) {
-                    self.run_auto_compaction(CompactReason::Threshold, false).await?;
+                if should_compact(
+                    context_tokens,
+                    context_window,
+                    &self.compaction_actor.config,
+                ) {
+                    self.run_auto_compaction(CompactReason::Threshold, false)
+                        .await?;
                 }
             }
 
@@ -531,8 +599,13 @@ impl SessionActor {
 
         // Emit final Idle event and clear any stale error reason.
         // State is already Idle set by the Ok(msgs) branch above.
-        self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).take();
-        self.emit_event(AgentEvent::StateChanged { state: SessionState::Idle });
+        self.error_reason
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        self.emit_event(AgentEvent::StateChanged {
+            state: SessionState::Idle,
+        });
 
         info!(
             tenant_id = %self.tenant_id,
@@ -543,8 +616,9 @@ impl SessionActor {
         );
 
         // Check for threshold compaction after successful turn
-        if let Some(AgentMessage::Assistant(last_assistant)) = all_new_msgs.iter().rfind(|m| matches!(m, AgentMessage::Assistant(a) if a.stop_reason != StopReason::ToolUse))
-            && let Err(e) = self.check_compaction(last_assistant).await
+        if let Some(AgentMessage::Assistant(last_assistant)) = all_new_msgs.iter().rfind(
+            |m| matches!(m, AgentMessage::Assistant(a) if a.stop_reason != StopReason::ToolUse),
+        ) && let Err(e) = self.check_compaction(last_assistant).await
         {
             warn!(
                 tenant_id = %self.tenant_id,
@@ -561,11 +635,7 @@ impl SessionActor {
         // newer ones.
         if let Some(ref store) = self.store {
             if let Some(handle) = self.last_save.take() {
-                let _ = tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    handle,
-                )
-                .await;
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
             }
             let entries = self.entries.clone();
             let tenant_id = self.tenant_id.clone();
@@ -601,12 +671,18 @@ impl SessionActor {
         // Emit compaction_start
         if let Some(tx) = &self.event_tx {
             tx.send(QueuedEvent {
-                event: AgentEvent::CompactionStart { reason: reason.clone() },
-            }).await.ok();
+                event: AgentEvent::CompactionStart {
+                    reason: reason.clone(),
+                },
+            })
+            .await
+            .ok();
         }
 
         // 1. Extension hook
-        let preparation = self.compaction_actor.prepare(&self.entries)
+        let preparation = self
+            .compaction_actor
+            .prepare(&self.entries)
             .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
 
         let compact_ctx = CompactCtx {
@@ -622,11 +698,14 @@ impl SessionActor {
             500,
             crate::mutations::CompactDecision::Continue,
             "on_before_compact",
-        ).await;
+        )
+        .await;
         let original_reason = reason.clone();
 
         let (from_extension, result) = match decision {
-            crate::mutations::CompactDecision::Block { reason: block_reason } => {
+            crate::mutations::CompactDecision::Block {
+                reason: block_reason,
+            } => {
                 if let Some(tx) = &self.event_tx {
                     tx.send(QueuedEvent {
                         event: AgentEvent::CompactionEnd {
@@ -636,15 +715,18 @@ impl SessionActor {
                             will_retry: false,
                             error_message: Some(block_reason),
                         },
-                    }).await.ok();
+                    })
+                    .await
+                    .ok();
                 }
                 return Ok(());
             }
-            crate::mutations::CompactDecision::Replace { result } => {
-                (true, result)
-            }
+            crate::mutations::CompactDecision::Replace { result } => (true, result),
             crate::mutations::CompactDecision::Continue => {
-                let result = self.compaction_actor.compact(&self.entries, &self.abort_token.child_token()).await
+                let result = self
+                    .compaction_actor
+                    .compact(&self.entries, &self.abort_token.child_token())
+                    .await
                     .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
                 (false, result)
             }
@@ -677,7 +759,9 @@ impl SessionActor {
                     will_retry,
                     error_message: None,
                 },
-            }).await.ok();
+            })
+            .await
+            .ok();
         }
 
         // 5. Trigger on_compact_end hook
@@ -693,7 +777,8 @@ impl SessionActor {
             500,
             (),
             "on_compact_end",
-        ).await;
+        )
+        .await;
 
         Ok(())
     }
@@ -706,7 +791,10 @@ impl SessionActor {
             })
     }
 
-    async fn check_compaction(&mut self, last_assistant: &ai_provider::AssistantMessage) -> Result<(), AgentError> {
+    async fn check_compaction(
+        &mut self,
+        last_assistant: &ai_provider::AssistantMessage,
+    ) -> Result<(), AgentError> {
         let config = &self.compaction_actor.config;
         if !config.enabled {
             return Ok(());
@@ -717,7 +805,10 @@ impl SessionActor {
         }
 
         // Skip if assistant message is from before last compaction
-        if let Some(SessionEntry::Compaction { timestamp, .. }) = self.entries.iter().rfind(|e| matches!(e, SessionEntry::Compaction { .. }))
+        if let Some(SessionEntry::Compaction { timestamp, .. }) = self
+            .entries
+            .iter()
+            .rfind(|e| matches!(e, SessionEntry::Compaction { .. }))
             && last_assistant.timestamp <= *timestamp
         {
             return Ok(());
@@ -727,11 +818,12 @@ impl SessionActor {
         if Self::is_context_overflow(last_assistant) {
             if self.recovery.overflow_attempted {
                 return Err(AgentError::CompactionFailed(
-                    "Context overflow recovery failed after one compact-and-retry attempt".into()
+                    "Context overflow recovery failed after one compact-and-retry attempt".into(),
                 ));
             }
             self.recovery.overflow_attempted = true;
-            self.run_auto_compaction(CompactReason::Overflow, false).await?;
+            self.run_auto_compaction(CompactReason::Overflow, false)
+                .await?;
             return Ok(());
         }
 
@@ -740,18 +832,25 @@ impl SessionActor {
         let context_window = self.model_context_window();
 
         if should_compact(context_tokens, context_window, config) {
-            self.run_auto_compaction(CompactReason::Threshold, false).await?;
+            self.run_auto_compaction(CompactReason::Threshold, false)
+                .await?;
         }
 
         Ok(())
     }
 
     /// Manually trigger compaction with optional custom instructions.
-    pub async fn compact(&mut self, _custom_instructions: Option<String>) -> Result<CompactionResult, AgentError> {
+    pub async fn compact(
+        &mut self,
+        _custom_instructions: Option<String>,
+    ) -> Result<CompactionResult, AgentError> {
         // For manual compaction, we always use Continue decision (no extension override)
-        let result = self.compaction_actor.compact(&self.entries, &self.abort_token.child_token()).await
+        let result = self
+            .compaction_actor
+            .compact(&self.entries, &self.abort_token.child_token())
+            .await
             .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
-        
+
         let compaction_entry = SessionEntry::Compaction {
             id: uuid::Uuid::new_v4(),
             summary: result.summary.clone(),
@@ -793,11 +892,17 @@ impl SessionActor {
 
     /// Queue a steering message (injected before next LLM call in current run)
     pub fn steer(&mut self, message: AgentMessage) {
-        self.steer_queue.lock().expect("steer queue poisoned").push(message);
+        self.steer_queue
+            .lock()
+            .expect("steer queue poisoned")
+            .push(message);
     }
 
     pub fn follow_up(&mut self, message: AgentMessage) {
-        self.follow_up_queue.lock().expect("follow_up queue poisoned").push(message);
+        self.follow_up_queue
+            .lock()
+            .expect("follow_up queue poisoned")
+            .push(message);
     }
 
     /// Flush pending persistence writes.
@@ -815,7 +920,9 @@ impl SessionActor {
             let _ = handle.await;
         }
         if let Some(ref store) = self.store {
-            store.save_session(&self.tenant_id, &self.session_id, &self.entries).await?;
+            store
+                .save_session(&self.tenant_id, &self.session_id, &self.entries)
+                .await?;
             info!(
                 tenant_id = %self.tenant_id,
                 session_id = %self.session_id,
@@ -934,17 +1041,17 @@ impl Drop for SessionActor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::file_ops::DefaultFileOperationExtractor;
     use crate::harness::compaction::CompactionConfig;
     use crate::hook::context::AgentEndCtx;
-    use crate::file_ops::DefaultFileOperationExtractor;
     use crate::test_utils::{AllowAllDispatcher, TestProvider};
     use async_trait::async_trait;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
-    use tokio::time::{sleep, Duration};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::time::{Duration, sleep};
 
-    fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> CompactionActor {
-        CompactionActor::new(
+    fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Compactor {
+        Compactor::new(
             CompactionConfig::default(),
             provider,
             "test".to_string(),
@@ -959,7 +1066,9 @@ mod tests {
 
     impl MemoryStore {
         fn new() -> Self {
-            Self { data: Mutex::new(Vec::new()) }
+            Self {
+                data: Mutex::new(Vec::new()),
+            }
         }
     }
 
@@ -1009,10 +1118,7 @@ mod tests {
             Ok(())
         }
 
-        async fn list_sessions(
-            &self,
-            tenant_id: &str,
-        ) -> Result<Vec<String>, AgentError> {
+        async fn list_sessions(&self, tenant_id: &str) -> Result<Vec<String>, AgentError> {
             let data = self.data.lock().unwrap();
             let mut sids: Vec<String> = data
                 .iter()
@@ -1032,16 +1138,16 @@ mod tests {
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "prompt".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         let restored = session.restore().await.unwrap();
@@ -1054,21 +1160,24 @@ mod tests {
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "You are helpful.".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         // Queue a steer message
         session.steer(AgentMessage::User(ai_provider::UserMessage {
-            content: vec![Content::Text { text: "steer note".to_string(), text_signature: None }],
+            content: vec![Content::Text {
+                text: "steer note".to_string(),
+                text_signature: None,
+            }],
             timestamp: std::time::SystemTime::now(),
         }));
 
@@ -1098,21 +1207,24 @@ mod tests {
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "You are helpful.".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         // Queue a follow_up message
         session.follow_up(AgentMessage::User(ai_provider::UserMessage {
-            content: vec![Content::Text { text: "follow up".to_string(), text_signature: None }],
+            content: vec![Content::Text {
+                text: "follow up".to_string(),
+                text_signature: None,
+            }],
             timestamp: std::time::SystemTime::now(),
         }));
 
@@ -1131,16 +1243,16 @@ mod tests {
         let provider = TestProvider::cancel();
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "prompt".to_string(),
-        model: "cancellable".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "cancellable".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         // Test that abort() works by verifying the token propagates cancellation.
@@ -1153,15 +1265,16 @@ mod tests {
         assert!(session.abort_token.is_cancelled());
 
         // 2. Start a prompt — it creates a new token
-        let prompt_handle = tokio::spawn(async move {
-            session.prompt("hello".to_string()).await
-        });
+        let prompt_handle = tokio::spawn(async move { session.prompt("hello".to_string()).await });
 
         // The provider waits for cancellation, so the prompt will hang until
         // cancelled or timed out. Since we can't call abort() (session moved),
         // we rely on the timeout to verify the prompt was actually running.
         let result = tokio::time::timeout(Duration::from_secs(5), prompt_handle).await;
-        assert!(result.is_err(), "prompt should still be running (not yet cancelled)");
+        assert!(
+            result.is_err(),
+            "prompt should still be running (not yet cancelled)"
+        );
     }
 
     #[tokio::test]
@@ -1172,16 +1285,16 @@ mod tests {
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "prompt".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: Some(store.clone()),
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: Some(store.clone()),
+            skills: vec![],
         });
 
         // No messages yet, flush should save empty
@@ -1201,34 +1314,34 @@ mod tests {
 
         // Create session and add some messages
         {
-        let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "prompt".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher.clone(),
-        compaction_actor: Arc::new(make_compaction_actor(provider.clone())),
-        tools: vec![],
-        store: Some(store.clone()),
-        skills: vec![],
-        });
+            let mut session = SessionActor::new(SessionConfig {
+                tenant_id: "t1".to_string(),
+                session_id: "s1".to_string(),
+                system_prompt: "prompt".to_string(),
+                model: "echo".to_string(),
+                provider: provider.clone(),
+                hook_dispatcher: dispatcher.clone(),
+                compaction_actor: Arc::new(make_compaction_actor(provider.clone())),
+                tools: vec![],
+                store: Some(store.clone()),
+                skills: vec![],
+            });
             session.prompt("hello".to_string()).await.unwrap();
             session.flush().await.unwrap();
         }
 
         // Create new session with same store, restore should get messages back
         let mut session2 = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "prompt".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: Some(store.clone()),
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: Some(store.clone()),
+            skills: vec![],
         });
 
         let restored = session2.restore().await.unwrap();
@@ -1245,16 +1358,16 @@ mod tests {
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "prompt".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: Some(store.clone()),
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: Some(store.clone()),
+            skills: vec![],
         });
 
         // Two consecutive prompts — each triggers a fire-and-forget save.
@@ -1278,16 +1391,16 @@ mod tests {
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "prompt".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         // Add a compaction entry manually
@@ -1303,7 +1416,11 @@ mod tests {
 
         // entries() should include compaction
         let all_entries = session.entries();
-        assert!(all_entries.iter().any(|e| matches!(e, SessionEntry::Compaction { .. })));
+        assert!(
+            all_entries
+                .iter()
+                .any(|e| matches!(e, SessionEntry::Compaction { .. }))
+        );
 
         // messages() should filter out compaction
         let msgs = session.messages();
@@ -1317,25 +1434,31 @@ mod tests {
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "You are helpful.".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         // Queue both steer and follow-up
         session.steer(AgentMessage::User(ai_provider::UserMessage {
-            content: vec![Content::Text { text: "steer note".to_string(), text_signature: None }],
+            content: vec![Content::Text {
+                text: "steer note".to_string(),
+                text_signature: None,
+            }],
             timestamp: std::time::SystemTime::now(),
         }));
         session.follow_up(AgentMessage::User(ai_provider::UserMessage {
-            content: vec![Content::Text { text: "follow up".to_string(), text_signature: None }],
+            content: vec![Content::Text {
+                text: "follow up".to_string(),
+                text_signature: None,
+            }],
             timestamp: std::time::SystemTime::now(),
         }));
 
@@ -1351,7 +1474,9 @@ mod tests {
         let msgs = session.messages();
         assert!(msgs.iter().any(|m| {
             if let AgentMessage::User(u) = m {
-                u.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text == "steer note"))
+                u.content
+                    .iter()
+                    .any(|c| matches!(c, Content::Text { text, .. } if text == "steer note"))
             } else {
                 false
             }
@@ -1360,7 +1485,9 @@ mod tests {
         // Verify follow-up was consumed
         assert!(msgs.iter().any(|m| {
             if let AgentMessage::User(u) = m {
-                u.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text == "follow up"))
+                u.content
+                    .iter()
+                    .any(|c| matches!(c, Content::Text { text, .. } if text == "follow up"))
             } else {
                 false
             }
@@ -1374,15 +1501,11 @@ mod tests {
 
     #[async_trait]
     impl HookDispatcher for CountingDispatcher {
-        async fn on_session_start(&self,
-            _ctx: &SessionCtx,
-        ) {
+        async fn on_session_start(&self, _ctx: &SessionCtx) {
             self.session_start_count.fetch_add(1, Ordering::SeqCst);
         }
 
-        async fn on_agent_end(&self,
-            _ctx: &AgentEndCtx,
-        ) {
+        async fn on_agent_end(&self, _ctx: &AgentEndCtx) {
             self.agent_end_count.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -1400,16 +1523,16 @@ mod tests {
         let provider = TestProvider::text("response");
 
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "prompt".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "prompt".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         session.prompt("hello".to_string()).await.unwrap();
@@ -1435,16 +1558,16 @@ mod tests {
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "You are helpful.".to_string(),
-        model: "echo".to_string(),
-        provider: provider.clone(),
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(provider)),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(provider)),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         let result1 = session.prompt("hello".to_string()).await.unwrap();
@@ -1514,7 +1637,9 @@ mod tests {
         // s1 不包含 "world"
         assert!(!msgs1.iter().any(|m| {
             if let AgentMessage::User(u) = m {
-                u.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text == "world"))
+                u.content
+                    .iter()
+                    .any(|c| matches!(c, Content::Text { text, .. } if text == "world"))
             } else {
                 false
             }
@@ -1523,7 +1648,9 @@ mod tests {
         // s2 不包含 "hello"
         assert!(!msgs2.iter().any(|m| {
             if let AgentMessage::User(u) = m {
-                u.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text == "hello"))
+                u.content
+                    .iter()
+                    .any(|c| matches!(c, Content::Text { text, .. } if text == "hello"))
             } else {
                 false
             }
@@ -1535,20 +1662,23 @@ mod tests {
         let router = Arc::new(ai_provider::RouterProvider::new());
         let dispatcher = Arc::new(AllowAllDispatcher);
         let session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "You are helpful.".into(),
-        model: "openai/gpt-5.2".to_string(),
-        provider: router.clone(),
-        hook_dispatcher: dispatcher.clone(),
-        compaction_actor: Arc::new(make_compaction_actor(router.clone())),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".into(),
+            model: "openai/gpt-5.2".to_string(),
+            provider: router.clone(),
+            hook_dispatcher: dispatcher.clone(),
+            compaction_actor: Arc::new(make_compaction_actor(router.clone())),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         let cw = session.model_context_window();
-        assert!(cw > 0, "model_context_window should be > 0 for openai/gpt-5.2");
+        assert!(
+            cw > 0,
+            "model_context_window should be > 0 for openai/gpt-5.2"
+        );
     }
 
     #[tokio::test]
@@ -1556,16 +1686,16 @@ mod tests {
         let router = Arc::new(ai_provider::RouterProvider::new());
         let dispatcher = Arc::new(AllowAllDispatcher);
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "You are helpful.".into(),
-        model: "openai/gpt-5.2".to_string(),
-        provider: router.clone(),
-        hook_dispatcher: dispatcher.clone(),
-        compaction_actor: Arc::new(make_compaction_actor(router.clone())),
-        tools: vec![],
-        store: None,
-        skills: vec![],
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".into(),
+            model: "openai/gpt-5.2".to_string(),
+            provider: router.clone(),
+            hook_dispatcher: dispatcher.clone(),
+            compaction_actor: Arc::new(make_compaction_actor(router.clone())),
+            tools: vec![],
+            store: None,
+            skills: vec![],
         });
 
         let cw_openai = session.model_context_window();
@@ -1591,21 +1721,28 @@ mod tests {
             disable_model_invocation: false,
         }];
         let session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "You are helpful.".to_string(),
-        model: "echo".to_string(),
-        provider: provider,
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
-        tools: vec![],
-        store: None,
-        skills: skills,
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider,
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
+            tools: vec![],
+            store: None,
+            skills: skills,
         });
 
         let prompt = session.system_prompt();
-        assert!(prompt.contains("<available_skills>"), "expected skills XML in system prompt, got: {}", prompt);
-        assert!(prompt.contains("test-skill"), "expected skill name in system prompt");
+        assert!(
+            prompt.contains("<available_skills>"),
+            "expected skills XML in system prompt, got: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("test-skill"),
+            "expected skill name in system prompt"
+        );
     }
 
     #[tokio::test]
@@ -1621,22 +1758,30 @@ mod tests {
             disable_model_invocation: false,
         }];
         let mut session = SessionActor::new(SessionConfig {
-        tenant_id: "t1".to_string(),
-        session_id: "s1".to_string(),
-        system_prompt: "You are helpful.".to_string(),
-        model: "echo".to_string(),
-        provider: provider,
-        hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
-        tools: vec![],
-        store: None,
-        skills: skills,
+            tenant_id: "t1".to_string(),
+            session_id: "s1".to_string(),
+            system_prompt: "You are helpful.".to_string(),
+            model: "echo".to_string(),
+            provider: provider,
+            hook_dispatcher: dispatcher,
+            compaction_actor: Arc::new(make_compaction_actor(TestProvider::text("response"))),
+            tools: vec![],
+            store: None,
+            skills: skills,
         });
 
         session.set_system_prompt("New persona.".to_string());
         let prompt = session.system_prompt();
-        assert!(prompt.starts_with("New persona."), "expected new base persona, got: {}", prompt);
-        assert!(prompt.contains("<available_skills>"), "expected skills XML preserved after set_system_prompt, got: {}", prompt);
+        assert!(
+            prompt.starts_with("New persona."),
+            "expected new base persona, got: {}",
+            prompt
+        );
+        assert!(
+            prompt.contains("<available_skills>"),
+            "expected skills XML preserved after set_system_prompt, got: {}",
+            prompt
+        );
     }
 
     #[tokio::test]

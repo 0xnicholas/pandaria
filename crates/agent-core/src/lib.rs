@@ -28,12 +28,11 @@ pub mod events;
 pub mod file_ops;
 pub mod memory;
 pub mod prompt;
-pub mod runtime;
 pub mod skills;
-pub mod tools;
+pub mod space;
 #[cfg(any(test, feature = "testing"))]
 pub mod test_utils;
-pub mod space;
+pub mod tools;
 pub mod types;
 
 // ═══ Compatibility re-exports ═══
@@ -41,19 +40,15 @@ pub mod types;
 
 pub use harness::{
     compaction,
-    compaction::{CompactionActor, CompactionConfig, CompactionPreparation, CompactionResult},
+    compaction::{CompactionConfig, CompactionPreparation, CompactionResult, Compactor},
     session::{SessionActor, SessionConfig, SessionState},
+    BuiltSession, HarnessConfig, HookConfig, SessionBuilder,
 };
-
-pub use runtime::{RuntimeConfig, SessionBuilder, BuiltSession, DefaultHookConfig};
 
 pub use harness::agent_loop::{AgentLoop, AgentLoopConfig, TurnResult};
 
 pub use hook::{
-    context,
-    default_dispatcher::DefaultHookDispatcher,
-    dispatcher::HookDispatcher,
-    mutations,
+    context, default_dispatcher::DefaultHookDispatcher, dispatcher::HookDispatcher, mutations,
     timeout::with_timeout,
 };
 

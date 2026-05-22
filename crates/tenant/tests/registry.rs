@@ -35,10 +35,13 @@ fn test_registry_unknown_tenant() {
 #[tokio::test]
 async fn test_registry_concurrent_sessions() {
     let registry = TenantRegistry::new();
-    let tenant = Tenant::new("t1", TenantQuota {
-        max_concurrent_sessions: 100,
-        ..TenantQuota::default()
-    });
+    let tenant = Tenant::new(
+        "t1",
+        TenantQuota {
+            max_concurrent_sessions: 100,
+            ..TenantQuota::default()
+        },
+    );
     registry.register(tenant).unwrap();
 
     let sv = registry.get("t1").unwrap();

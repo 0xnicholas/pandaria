@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
-use crate::space::AgentSpace;
 use super::scanner::scan_skill_dirs;
 use super::types::{LoadSkillsResult, SkillSource};
+use crate::space::AgentSpace;
 
 /// Abstract loader for skills.  Implementations may load from the file system,
 /// a database, an in-memory cache, etc.

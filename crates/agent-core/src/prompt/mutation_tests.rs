@@ -89,7 +89,9 @@ mod tests {
             upsert_fragments: vec![PromptFragment {
                 id: "safety".into(),
                 kind: FragmentKind::SafetyGuard,
-                source: FragmentSource::Extension { name: "guard".into() },
+                source: FragmentSource::Extension {
+                    name: "guard".into(),
+                },
                 content: "Be safe.".into(),
                 priority: -100,
             }],

@@ -29,12 +29,16 @@ pub trait Component {
 
     /// Whether this overlay captures all input (true) or passes through
     /// printable characters to dismiss (false). Default: true (capturing).
-    fn is_capturing(&self) -> bool { true }
+    fn is_capturing(&self) -> bool {
+        true
+    }
 
     /// If the overlay has completed (confirmed or dismissed), return the result.
     /// Called by the framework after each handle_input to check if the overlay
     /// should be popped. Default: always Pending.
-    fn take_result(&mut self) -> OverlayResult { OverlayResult::Pending }
+    fn take_result(&mut self) -> OverlayResult {
+        OverlayResult::Pending
+    }
 }
 
 /// Result of a component's input handling.

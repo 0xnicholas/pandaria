@@ -95,7 +95,8 @@ mod tests {
 
     #[test]
     fn test_openai_error_schema() {
-        let body = r#"{"error":{"message":"The model does not exist","type":"invalid_request_error"}}"#;
+        let body =
+            r#"{"error":{"message":"The model does not exist","type":"invalid_request_error"}}"#;
         let msg = sanitize_http_error_body(400, body);
         assert_eq!(msg, "The model does not exist");
     }
@@ -109,7 +110,8 @@ mod tests {
 
     #[test]
     fn test_google_error_schema() {
-        let body = r#"{"error":{"code":400,"message":"API key expired","status":"INVALID_ARGUMENT"}}"#;
+        let body =
+            r#"{"error":{"code":400,"message":"API key expired","status":"INVALID_ARGUMENT"}}"#;
         let msg = sanitize_http_error_body(400, body);
         assert_eq!(msg, "API key expired");
     }

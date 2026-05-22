@@ -1,15 +1,15 @@
 use axum::{
-    extract::{ws::{Message, WebSocket}, Extension, Path, State, WebSocketUpgrade},
+    extract::{
+        Extension, Path, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
     response::Response,
 };
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{
-    error::GatewayError,
-    middleware::TenantId,
-};
 use crate::server::AppState;
+use crate::{error::GatewayError, middleware::TenantId};
 
 pub async fn session_ws(
     ws: WebSocketUpgrade,
@@ -32,7 +32,11 @@ async fn handle_socket(
     session_id: Uuid,
     state: Arc<AppState>,
 ) {
-    let mut rx = match state.tenant_manager.subscribe_events(&tenant_id, &session_id).await {
+    let mut rx = match state
+        .tenant_manager
+        .subscribe_events(&tenant_id, &session_id)
+        .await
+    {
         Ok(rx) => rx,
         Err(e) => {
             tracing::error!(error = %e, "failed to subscribe to session events");
@@ -107,12 +111,10 @@ async fn handle_client_message(
                 .content
                 .into_iter()
                 .map(|p| match p {
-                    crate::types::MessageContentPart::Text { text } => {
-                        ai_provider::Content::Text {
-                            text,
-                            text_signature: None,
-                        }
-                    }
+                    crate::types::MessageContentPart::Text { text } => ai_provider::Content::Text {
+                        text,
+                        text_signature: None,
+                    },
                     crate::types::MessageContentPart::Image { data, mime_type } => {
                         ai_provider::Content::Image { data, mime_type }
                     }
@@ -130,7 +132,10 @@ async fn handle_client_message(
                 .await?;
         }
         "interrupt" => {
-            state.tenant_manager.interrupt(tenant_id, session_id).await?;
+            state
+                .tenant_manager
+                .interrupt(tenant_id, session_id)
+                .await?;
         }
         "pong" => {}
         _ => {}
@@ -143,22 +148,24 @@ fn map_agent_event(event: agent_core::AgentEvent) -> crate::types::ServerEvent {
     use agent_core::AgentEvent;
 
     match event {
-        AgentEvent::TurnStart { turn_index } => {
-            crate::types::ServerEvent::TurnStart { turn_index }
-        }
+        AgentEvent::TurnStart { turn_index } => crate::types::ServerEvent::TurnStart { turn_index },
         AgentEvent::MessageStart { message_index } => {
             crate::types::ServerEvent::MessageStart { message_index }
         }
-        AgentEvent::MessageUpdate { content_delta, .. } => {
-            crate::types::ServerEvent::TextDelta { delta: content_delta }
-        }
-        AgentEvent::ToolExecutionStart { tool_call_id, tool_name } => {
-            crate::types::ServerEvent::ToolCallStarted {
-                call_id: tool_call_id,
-                name: tool_name,
-            }
-        }
-        AgentEvent::ToolExecutionEnd { tool_call_id, result } => {
+        AgentEvent::MessageUpdate { content_delta, .. } => crate::types::ServerEvent::TextDelta {
+            delta: content_delta,
+        },
+        AgentEvent::ToolExecutionStart {
+            tool_call_id,
+            tool_name,
+        } => crate::types::ServerEvent::ToolCallStarted {
+            call_id: tool_call_id,
+            name: tool_name,
+        },
+        AgentEvent::ToolExecutionEnd {
+            tool_call_id,
+            result,
+        } => {
             let result_text = extract_tool_result_text(&result.content);
             crate::types::ServerEvent::ToolCallDone {
                 call_id: tool_call_id,
@@ -168,18 +175,17 @@ fn map_agent_event(event: agent_core::AgentEvent) -> crate::types::ServerEvent {
         }
         AgentEvent::TurnEnd { messages, .. } => {
             let (stop_reason, usage) = extract_turn_end_info(&messages);
-            crate::types::ServerEvent::TurnEnd {
-                stop_reason,
-                usage,
-            }
+            crate::types::ServerEvent::TurnEnd { stop_reason, usage }
         }
-        AgentEvent::AutoRetryStart { attempt, max_attempts, delay_ms } => {
-            crate::types::ServerEvent::AutoRetryStart {
-                attempt,
-                max_attempts,
-                delay_ms,
-            }
-        }
+        AgentEvent::AutoRetryStart {
+            attempt,
+            max_attempts,
+            delay_ms,
+        } => crate::types::ServerEvent::AutoRetryStart {
+            attempt,
+            max_attempts,
+            delay_ms,
+        },
         AgentEvent::AutoRetryEnd { success, error } => {
             crate::types::ServerEvent::AutoRetryEnd { success, error }
         }

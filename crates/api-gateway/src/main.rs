@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use api_gateway::config::ServerConfig;
-use api_gateway::server::{serve, AppState};
+use api_gateway::server::{AppState, serve};
 use secrecy::ExposeSecret;
 use tracing::info;
 
@@ -26,8 +26,7 @@ fn generate_test_token(secret: &str, tenant_id: &str) -> String {
         &payload_json,
     );
 
-    let mut mac =
-        Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("hmac key");
     mac.update(&payload_json);
     let signature = mac.finalize().into_bytes();
     let sig_b64 = base64::Engine::encode(
@@ -59,8 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!(root = %agent_space.root().display(), "agent space ready");
 
     // --- 1. LLM Provider (RouterProvider auto-routes by model name) ---
-    let provider: Arc<dyn ai_provider::LlmProvider> =
-        Arc::new(ai_provider::RouterProvider::new());
+    let provider: Arc<dyn ai_provider::LlmProvider> = Arc::new(ai_provider::RouterProvider::new());
 
     // --- 2. Tenant Registry ---
     let registry = Arc::new(tenant::TenantRegistry::new());
@@ -77,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("registered test tenant: test-tenant");
 
     // --- 3. Runtime Config ---
-    let runtime_config = Arc::new(agent_core::RuntimeConfig {
+    let runtime_config = Arc::new(agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "deepseek/deepseek-v4-pro".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
@@ -86,13 +84,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        available_models: vec!["deepseek/deepseek-v4-pro".to_string()],
         compaction_config: agent_core::CompactionConfig {
             enabled: true,
             reserve_tokens: 4096,
             keep_recent_tokens: 8192,
         },
         agent_space: agent_core::AgentSpace::from_env_or_default(),
-        hook_config: agent_core::DefaultHookConfig::default(),
+        hook_config: agent_core::HookConfig::default(),
         memory_store: None,
     });
 

@@ -17,12 +17,15 @@ fn test_tenant_creation() {
 
 #[test]
 fn test_supervisor_tool_call_rate_limit() {
-    use tenant::{TenantSupervisor, QuotaCheck, TenantError};
+    use tenant::{QuotaCheck, TenantError, TenantSupervisor};
 
-    let tenant = Tenant::new("t1", TenantQuota {
-        max_tool_calls_per_minute: 3,
-        ..TenantQuota::default()
-    });
+    let tenant = Tenant::new(
+        "t1",
+        TenantQuota {
+            max_tool_calls_per_minute: 3,
+            ..TenantQuota::default()
+        },
+    );
     let supervisor = TenantSupervisor::new(tenant);
 
     // 3 calls within limit
@@ -38,18 +41,23 @@ fn test_supervisor_tool_call_rate_limit() {
 
 #[test]
 fn test_supervisor_session_creation_quota() {
-    use tenant::{TenantSupervisor, QuotaCheck, TenantError};
     use std::sync::Arc;
+    use tenant::{QuotaCheck, TenantError, TenantSupervisor};
 
-    let tenant = Tenant::new("t1", TenantQuota {
-        max_concurrent_sessions: 1,
-        ..TenantQuota::default()
-    });
+    let tenant = Tenant::new(
+        "t1",
+        TenantQuota {
+            max_concurrent_sessions: 1,
+            ..TenantQuota::default()
+        },
+    );
     let supervisor = Arc::new(TenantSupervisor::new(tenant));
 
     let _guard = supervisor.reserve_session().unwrap();
 
     // Another session creation should fail at quota check
-    let err = supervisor.check_quota(QuotaCheck::SessionCreation).unwrap_err();
+    let err = supervisor
+        .check_quota(QuotaCheck::SessionCreation)
+        .unwrap_err();
     assert!(matches!(err, TenantError::SessionLimitExceeded { .. }));
 }

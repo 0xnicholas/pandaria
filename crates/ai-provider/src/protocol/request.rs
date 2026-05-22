@@ -116,9 +116,8 @@ impl RequestBuilder {
 
         // This path is only reachable when max_retries = 0 and try_send_once fails,
         // or if the loop logic has a bug. Return the last captured error.
-        Err(last_error.unwrap_or_else(|| {
-            LlmError::ProviderError("request failed after retries".to_string())
-        }))
+        Err(last_error
+            .unwrap_or_else(|| LlmError::ProviderError("request failed after retries".to_string())))
     }
 
     /// Calculate exponential backoff delay for the given attempt.
@@ -256,7 +255,14 @@ mod tests {
 
     #[test]
     fn test_fallback_model() {
-        let m = fallback_model("openai", "gpt-4", "openai-completions", "https://api.openai.com", 128_000, 4096);
+        let m = fallback_model(
+            "openai",
+            "gpt-4",
+            "openai-completions",
+            "https://api.openai.com",
+            128_000,
+            4096,
+        );
         assert_eq!(m.id, "gpt-4");
         assert_eq!(m.provider, "openai");
         assert_eq!(m.context_window, 128_000);
@@ -265,17 +271,35 @@ mod tests {
     #[test]
     fn test_retry_delay_exponential() {
         let max = std::time::Duration::from_secs(60);
-        assert_eq!(RequestBuilder::retry_delay(0, max), std::time::Duration::from_secs(1));
-        assert_eq!(RequestBuilder::retry_delay(1, max), std::time::Duration::from_secs(2));
-        assert_eq!(RequestBuilder::retry_delay(2, max), std::time::Duration::from_secs(4));
-        assert_eq!(RequestBuilder::retry_delay(3, max), std::time::Duration::from_secs(8));
+        assert_eq!(
+            RequestBuilder::retry_delay(0, max),
+            std::time::Duration::from_secs(1)
+        );
+        assert_eq!(
+            RequestBuilder::retry_delay(1, max),
+            std::time::Duration::from_secs(2)
+        );
+        assert_eq!(
+            RequestBuilder::retry_delay(2, max),
+            std::time::Duration::from_secs(4)
+        );
+        assert_eq!(
+            RequestBuilder::retry_delay(3, max),
+            std::time::Duration::from_secs(8)
+        );
     }
 
     #[test]
     fn test_retry_delay_capped() {
         let max = std::time::Duration::from_secs(5);
-        assert_eq!(RequestBuilder::retry_delay(0, max), std::time::Duration::from_secs(1));
-        assert_eq!(RequestBuilder::retry_delay(3, max), std::time::Duration::from_secs(5)); // 8s capped to 5s
+        assert_eq!(
+            RequestBuilder::retry_delay(0, max),
+            std::time::Duration::from_secs(1)
+        );
+        assert_eq!(
+            RequestBuilder::retry_delay(3, max),
+            std::time::Duration::from_secs(5)
+        ); // 8s capped to 5s
     }
 
     #[test]

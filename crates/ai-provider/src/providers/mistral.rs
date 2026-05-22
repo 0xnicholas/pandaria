@@ -129,16 +129,15 @@ impl MistralProvider {
             128_000,
         );
 
-        let response = crate::protocol::request::RequestBuilder::new(
-            client,
-            base_url,
-            fallback,
-            options,
-        )
-        .body(body)
-        .header("Authorization", format!("Bearer {}", api_key.expose_secret()))
-        .send()
-        .await?;
+        let response =
+            crate::protocol::request::RequestBuilder::new(client, base_url, fallback, options)
+                .body(body)
+                .header(
+                    "Authorization",
+                    format!("Bearer {}", api_key.expose_secret()),
+                )
+                .send()
+                .await?;
 
         // Process SSE stream (OpenAI-compatible format)
         use futures::StreamExt;
@@ -198,9 +197,7 @@ impl MistralProvider {
                             .send(AssistantMessageEvent::ToolCallEnd {
                                 content_index: *ci,
                                 tool_call: crate::ToolCall {
-                                    id: id
-                                        .clone()
-                                        .unwrap_or_else(|| format!("call_{}", ci)),
+                                    id: id.clone().unwrap_or_else(|| format!("call_{}", ci)),
                                     name: name.clone().unwrap_or_default(),
                                     arguments: args,
                                     thought_signature: None,

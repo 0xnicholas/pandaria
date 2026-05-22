@@ -23,9 +23,9 @@ use crate::widgets::status_bar::render_status_bar;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::widgets::Widget;
-use ratatui::Frame;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
@@ -37,7 +37,9 @@ fn temp_dir_for_pandaria() -> std::path::PathBuf {
         return dir;
     }
     if let Ok(home) = std::env::var("HOME") {
-        let dir = std::path::PathBuf::from(home).join(".pandaria").join("temp");
+        let dir = std::path::PathBuf::from(home)
+            .join(".pandaria")
+            .join("temp");
         let _ = std::fs::create_dir_all(&dir);
         return dir;
     }
@@ -47,10 +49,18 @@ fn temp_dir_for_pandaria() -> std::path::PathBuf {
 /// Action sent from background tasks back to the main event loop.
 pub enum TaskAction {
     SessionCreated(SessionInfo),
-    ConnectionTested { url: String, ok: bool },
+    ConnectionTested {
+        url: String,
+        ok: bool,
+    },
     SessionFetched(SessionInfo),
-    SessionDeleted { id: String },
-    HistoryLoaded { id: String, messages: Vec<HistoricalMessage> },
+    SessionDeleted {
+        id: String,
+    },
+    HistoryLoaded {
+        id: String,
+        messages: Vec<HistoricalMessage>,
+    },
     BashCompleted {
         command: String,
         stdout: String,
@@ -221,7 +231,9 @@ impl App {
         if kb.matches(&key, Keybinding::AppToggleToolCalls) {
             for msg in &mut self.data.active_session_mut().messages {
                 for block in &mut msg.blocks {
-                    if let MessageBlock::ToolCall(tc) = block { tc.toggle(); }
+                    if let MessageBlock::ToolCall(tc) = block {
+                        tc.toggle();
+                    }
                 }
             }
             return;
@@ -229,7 +241,9 @@ impl App {
         if kb.matches(&key, Keybinding::AppToggleThinking) {
             for msg in &mut self.data.active_session_mut().messages {
                 for block in &mut msg.blocks {
-                    if let MessageBlock::Thinking(tb) = block { tb.toggle(); }
+                    if let MessageBlock::Thinking(tb) = block {
+                        tb.toggle();
+                    }
                 }
             }
             return;
@@ -239,8 +253,19 @@ impl App {
             return;
         }
         if kb.matches(&key, Keybinding::AppListSessions) {
-            let sessions: Vec<_> = self.data.sessions.iter()
-                .map(|(id, s)| (id.clone(), s.info.title.clone().unwrap_or_else(|| id.chars().take(8).collect())))
+            let sessions: Vec<_> = self
+                .data
+                .sessions
+                .iter()
+                .map(|(id, s)| {
+                    (
+                        id.clone(),
+                        s.info
+                            .title
+                            .clone()
+                            .unwrap_or_else(|| id.chars().take(8).collect()),
+                    )
+                })
                 .collect();
             self.overlays.push(Box::new(
                 crate::overlays::session_list::SessionListOverlay::new(sessions),
@@ -294,24 +319,78 @@ impl App {
             self.editor.set_char_jump_target('\0'); // placeholder, will be overwritten by next char
             return;
         }
-        if kb.matches(&key, Keybinding::EditorCursorLeft) { self.editor.cursor_left(); return; }
-        if kb.matches(&key, Keybinding::EditorCursorRight) { self.editor.cursor_right(); return; }
-        if kb.matches(&key, Keybinding::EditorCursorWordLeft) { self.editor.cursor_word_left(); return; }
-        if kb.matches(&key, Keybinding::EditorCursorWordRight) { self.editor.cursor_word_right(); return; }
-        if kb.matches(&key, Keybinding::EditorCursorLineStart) { self.editor.cursor_line_start(); return; }
-        if kb.matches(&key, Keybinding::EditorCursorLineEnd) { self.editor.cursor_line_end(); return; }
-        if kb.matches(&key, Keybinding::EditorPageUp) { self.editor.page_up(); return; }
-        if kb.matches(&key, Keybinding::EditorPageDown) { self.editor.page_down(); return; }
-        if kb.matches(&key, Keybinding::EditorDeleteCharBackward) { self.editor.delete_char_backward(); return; }
-        if kb.matches(&key, Keybinding::EditorDeleteCharForward) { self.editor.delete_char_forward(); return; }
-        if kb.matches(&key, Keybinding::EditorDeleteWordBackward) { self.editor.delete_word_backward(); return; }
-        if kb.matches(&key, Keybinding::EditorDeleteWordForward) { self.editor.delete_word_forward(); return; }
-        if kb.matches(&key, Keybinding::EditorDeleteToLineStart) { self.editor.delete_to_line_start(); return; }
-        if kb.matches(&key, Keybinding::EditorDeleteToLineEnd) { self.editor.delete_to_line_end(); return; }
-        if kb.matches(&key, Keybinding::EditorYank) { self.editor.kill_ring_yank(); return; }
-        if kb.matches(&key, Keybinding::EditorYankPop) { self.editor.kill_ring_yank_pop(); return; }
-        if kb.matches(&key, Keybinding::EditorUndo) { self.editor.undo(); return; }
-        if kb.matches(&key, Keybinding::EditorRedo) { self.editor.redo(); return; }
+        if kb.matches(&key, Keybinding::EditorCursorLeft) {
+            self.editor.cursor_left();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCursorRight) {
+            self.editor.cursor_right();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCursorWordLeft) {
+            self.editor.cursor_word_left();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCursorWordRight) {
+            self.editor.cursor_word_right();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCursorLineStart) {
+            self.editor.cursor_line_start();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorCursorLineEnd) {
+            self.editor.cursor_line_end();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorPageUp) {
+            self.editor.page_up();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorPageDown) {
+            self.editor.page_down();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorDeleteCharBackward) {
+            self.editor.delete_char_backward();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorDeleteCharForward) {
+            self.editor.delete_char_forward();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorDeleteWordBackward) {
+            self.editor.delete_word_backward();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorDeleteWordForward) {
+            self.editor.delete_word_forward();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorDeleteToLineStart) {
+            self.editor.delete_to_line_start();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorDeleteToLineEnd) {
+            self.editor.delete_to_line_end();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorYank) {
+            self.editor.kill_ring_yank();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorYankPop) {
+            self.editor.kill_ring_yank_pop();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorUndo) {
+            self.editor.undo();
+            return;
+        }
+        if kb.matches(&key, Keybinding::EditorRedo) {
+            self.editor.redo();
+            return;
+        }
         if kb.matches(&key, Keybinding::AutocompleteTrigger) {
             let ctx = self.build_autocomplete_context();
             for provider in &self.autocomplete_providers {
@@ -430,7 +509,9 @@ impl App {
                             }
                             match rest.get_session_messages(&sid, &token).await {
                                 Ok(messages) => {
-                                    let _ = task_tx.send(TaskAction::HistoryLoaded { id: sid, messages }).await;
+                                    let _ = task_tx
+                                        .send(TaskAction::HistoryLoaded { id: sid, messages })
+                                        .await;
                                 }
                                 Err(e) => tracing::warn!("fetch history failed: {e}"),
                             }
@@ -493,17 +574,30 @@ impl App {
                     let task_tx = self.task_tx.clone();
                     tokio::spawn(async move {
                         let ok = rest.list_sessions(&token).await.is_ok();
-                        let _ = task_tx.send(TaskAction::ConnectionTested { url: "(auth)".to_string(), ok }).await;
+                        let _ = task_tx
+                            .send(TaskAction::ConnectionTested {
+                                url: "(auth)".to_string(),
+                                ok,
+                            })
+                            .await;
                     });
                 }
                 Command::Tokens => {
                     let input = self.input_tokens;
                     let window = self.context_window;
-                    let pct = window.map(|w| if w > 0 { (input * 100 / w).min(100) } else { 0 }).unwrap_or(0);
+                    let pct = window
+                        .map(|w| if w > 0 { (input * 100 / w).min(100) } else { 0 })
+                        .unwrap_or(0);
                     let msg = RenderedMessage {
                         role: MessageRole::Assistant,
                         blocks: vec![MessageBlock::Text(vec![ratatui::text::Line::from(
-                            format!("Tokens: {input} / {} ({}%)", window.map(|w| w.to_string()).unwrap_or_else(|| "?".to_string()), pct)
+                            format!(
+                                "Tokens: {input} / {} ({}%)",
+                                window
+                                    .map(|w| w.to_string())
+                                    .unwrap_or_else(|| "?".to_string()),
+                                pct
+                            ),
                         )])],
                         timestamp: std::time::SystemTime::now(),
                         status: MessageStatus::Complete,
@@ -515,7 +609,18 @@ impl App {
                     let last_user_text = session.messages.iter().rev().find_map(|m| {
                         if m.role == MessageRole::User {
                             m.blocks.iter().find_map(|b| match b {
-                                MessageBlock::Text(lines) => Some(lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n")),
+                                MessageBlock::Text(lines) => Some(
+                                    lines
+                                        .iter()
+                                        .map(|l| {
+                                            l.spans
+                                                .iter()
+                                                .map(|s| s.content.as_ref())
+                                                .collect::<String>()
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("\n"),
+                                ),
                                 _ => None,
                             })
                         } else {
@@ -528,17 +633,36 @@ impl App {
                 }
                 Command::Copy => {
                     let session = self.data.active_session();
-                    let last_assistant_text: Option<String> = session.messages.iter().rev().find_map(|m| {
-                        if m.role == MessageRole::Assistant && m.status == MessageStatus::Complete {
-                            let text: String = m.blocks.iter().filter_map(|b| match b {
-                                MessageBlock::Text(lines) => Some(lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n")),
-                                _ => None,
-                            }).collect::<Vec<_>>().join("\n");
-                            Some(text)
-                        } else {
-                            None
-                        }
-                    });
+                    let last_assistant_text: Option<String> =
+                        session.messages.iter().rev().find_map(|m| {
+                            if m.role == MessageRole::Assistant
+                                && m.status == MessageStatus::Complete
+                            {
+                                let text: String = m
+                                    .blocks
+                                    .iter()
+                                    .filter_map(|b| match b {
+                                        MessageBlock::Text(lines) => Some(
+                                            lines
+                                                .iter()
+                                                .map(|l| {
+                                                    l.spans
+                                                        .iter()
+                                                        .map(|s| s.content.as_ref())
+                                                        .collect::<String>()
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n"),
+                                        ),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                Some(text)
+                            } else {
+                                None
+                            }
+                        });
                     if let Some(text) = last_assistant_text {
                         if let Err(e) = crate::clipboard::copy_text(&text) {
                             self.data.last_error = Some(e);
@@ -556,12 +680,24 @@ impl App {
                                 for block in &msg.blocks {
                                     match block {
                                         MessageBlock::Text(lines) => {
-                                            let text = lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+                                            let text = lines
+                                                .iter()
+                                                .map(|l| {
+                                                    l.spans
+                                                        .iter()
+                                                        .map(|s| s.content.as_ref())
+                                                        .collect::<String>()
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
                                             md.push_str(&text);
                                             md.push('\n');
                                         }
                                         MessageBlock::BashExecution(be) => {
-                                            md.push_str(&format!("```bash\n$ {}\n{}\n```\n", be.command, be.stdout));
+                                            md.push_str(&format!(
+                                                "```bash\n$ {}\n{}\n```\n",
+                                                be.command, be.stdout
+                                            ));
                                         }
                                         _ => {}
                                     }
@@ -573,21 +709,42 @@ impl App {
                                 for block in &msg.blocks {
                                     match block {
                                         MessageBlock::Text(lines) => {
-                                            let text = lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+                                            let text = lines
+                                                .iter()
+                                                .map(|l| {
+                                                    l.spans
+                                                        .iter()
+                                                        .map(|s| s.content.as_ref())
+                                                        .collect::<String>()
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
                                             md.push_str(&text);
                                             md.push('\n');
                                         }
                                         MessageBlock::ToolCall(tc) => {
-                                            md.push_str(&format!("```tool\n{}: {}\n```\n", tc.name, tc.call_id));
+                                            md.push_str(&format!(
+                                                "```tool\n{}: {}\n```\n",
+                                                tc.name, tc.call_id
+                                            ));
                                         }
                                         MessageBlock::Thinking(tb) => {
-                                            md.push_str(&format!("```thinking\n{}\n```\n", tb.thinking_text));
+                                            md.push_str(&format!(
+                                                "```thinking\n{}\n```\n",
+                                                tb.thinking_text
+                                            ));
                                         }
                                         MessageBlock::BashExecution(be) => {
-                                            md.push_str(&format!("```bash\n$ {}\n{}\n```\n", be.command, be.stdout));
+                                            md.push_str(&format!(
+                                                "```bash\n$ {}\n{}\n```\n",
+                                                be.command, be.stdout
+                                            ));
                                         }
                                         MessageBlock::CompactionSummary(cs) => {
-                                            md.push_str(&format!("```compaction\n{}\n```\n", cs.summary));
+                                            md.push_str(&format!(
+                                                "```compaction\n{}\n```\n",
+                                                cs.summary
+                                            ));
                                         }
                                     }
                                 }
@@ -595,7 +752,8 @@ impl App {
                             }
                         }
                     }
-                    let filename = filename.unwrap_or_else(|| format!("session_{}.md", session.info.id));
+                    let filename =
+                        filename.unwrap_or_else(|| format!("session_{}.md", session.info.id));
                     if let Err(e) = std::fs::write(&filename, md) {
                         self.data.last_error = Some(format!("dump failed: {e}"));
                     }
@@ -669,21 +827,42 @@ impl App {
                                 for block in &msg.blocks {
                                     match block {
                                         MessageBlock::Text(lines) => {
-                                            let text = lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+                                            let text = lines
+                                                .iter()
+                                                .map(|l| {
+                                                    l.spans
+                                                        .iter()
+                                                        .map(|s| s.content.as_ref())
+                                                        .collect::<String>()
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
                                             md.push_str(&text);
                                             md.push('\n');
                                         }
                                         MessageBlock::ToolCall(tc) => {
-                                            md.push_str(&format!("```tool\n{}: {}\n```\n", tc.name, tc.call_id));
+                                            md.push_str(&format!(
+                                                "```tool\n{}: {}\n```\n",
+                                                tc.name, tc.call_id
+                                            ));
                                         }
                                         MessageBlock::Thinking(tb) => {
-                                            md.push_str(&format!("```thinking\n{}\n```\n", tb.thinking_text));
+                                            md.push_str(&format!(
+                                                "```thinking\n{}\n```\n",
+                                                tb.thinking_text
+                                            ));
                                         }
                                         MessageBlock::BashExecution(be) => {
-                                            md.push_str(&format!("```bash\n$ {}\n{}\n```\n", be.command, be.stdout));
+                                            md.push_str(&format!(
+                                                "```bash\n$ {}\n{}\n```\n",
+                                                be.command, be.stdout
+                                            ));
                                         }
                                         MessageBlock::CompactionSummary(cs) => {
-                                            md.push_str(&format!("```compaction\n{}\n```\n", cs.summary));
+                                            md.push_str(&format!(
+                                                "```compaction\n{}\n```\n",
+                                                cs.summary
+                                            ));
                                         }
                                     }
                                 }
@@ -694,21 +873,42 @@ impl App {
                                 for block in &msg.blocks {
                                     match block {
                                         MessageBlock::Text(lines) => {
-                                            let text = lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>().join("\n");
+                                            let text = lines
+                                                .iter()
+                                                .map(|l| {
+                                                    l.spans
+                                                        .iter()
+                                                        .map(|s| s.content.as_ref())
+                                                        .collect::<String>()
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join("\n");
                                             md.push_str(&text);
                                             md.push('\n');
                                         }
                                         MessageBlock::ToolCall(tc) => {
-                                            md.push_str(&format!("```tool\n{}: {}\n```\n", tc.name, tc.call_id));
+                                            md.push_str(&format!(
+                                                "```tool\n{}: {}\n```\n",
+                                                tc.name, tc.call_id
+                                            ));
                                         }
                                         MessageBlock::Thinking(tb) => {
-                                            md.push_str(&format!("```thinking\n{}\n```\n", tb.thinking_text));
+                                            md.push_str(&format!(
+                                                "```thinking\n{}\n```\n",
+                                                tb.thinking_text
+                                            ));
                                         }
                                         MessageBlock::BashExecution(be) => {
-                                            md.push_str(&format!("```bash\n$ {}\n{}\n```\n", be.command, be.stdout));
+                                            md.push_str(&format!(
+                                                "```bash\n$ {}\n{}\n```\n",
+                                                be.command, be.stdout
+                                            ));
                                         }
                                         MessageBlock::CompactionSummary(cs) => {
-                                            md.push_str(&format!("```compaction\n{}\n```\n", cs.summary));
+                                            md.push_str(&format!(
+                                                "```compaction\n{}\n```\n",
+                                                cs.summary
+                                            ));
                                         }
                                     }
                                 }
@@ -716,29 +916,28 @@ impl App {
                             }
                         }
                     }
-                    let filename = filename.unwrap_or_else(|| format!("session_{}.md", session.info.id));
+                    let filename =
+                        filename.unwrap_or_else(|| format!("session_{}.md", session.info.id));
                     if let Err(e) = std::fs::write(&filename, md) {
                         self.data.last_error = Some(format!("export failed: {e}"));
                     }
                 }
-                Command::Import { filename } => {
-                    match std::fs::read_to_string(&filename) {
-                        Ok(content) => {
-                            let msg = RenderedMessage {
-                                role: MessageRole::Assistant,
-                                blocks: vec![MessageBlock::Text(vec![ratatui::text::Line::from(
-                                    format!("Imported {} ({} bytes)", filename, content.len()),
-                                )])],
-                                timestamp: std::time::SystemTime::now(),
-                                status: MessageStatus::Complete,
-                            };
-                            self.data.active_session_mut().messages.push(msg);
-                        }
-                        Err(e) => {
-                            self.data.last_error = Some(format!("import failed: {e}"));
-                        }
+                Command::Import { filename } => match std::fs::read_to_string(&filename) {
+                    Ok(content) => {
+                        let msg = RenderedMessage {
+                            role: MessageRole::Assistant,
+                            blocks: vec![MessageBlock::Text(vec![ratatui::text::Line::from(
+                                format!("Imported {} ({} bytes)", filename, content.len()),
+                            )])],
+                            timestamp: std::time::SystemTime::now(),
+                            status: MessageStatus::Complete,
+                        };
+                        self.data.active_session_mut().messages.push(msg);
                     }
-                }
+                    Err(e) => {
+                        self.data.last_error = Some(format!("import failed: {e}"));
+                    }
+                },
                 Command::DeleteSession => {
                     let id = self.data.active_session.clone();
                     let rest = self.rest.clone();
@@ -959,7 +1158,13 @@ impl App {
         self.start_streaming_turn(text_to_send);
     }
 
-    fn perform_steer(&mut self, text: String, is_bash: bool, bash_command: Option<String>, show_command: bool) {
+    fn perform_steer(
+        &mut self,
+        text: String,
+        is_bash: bool,
+        bash_command: Option<String>,
+        show_command: bool,
+    ) {
         // Interrupt current turn
         let rest = self.rest.clone();
         let token = self.config.auth.token.clone().unwrap_or_default();
@@ -1018,20 +1223,22 @@ impl App {
                 if let Some(last) = session.messages.last_mut()
                     && let Some(ref buf) = session.streaming
                 {
-                        let line = ratatui::text::Line::from(buf.text_content.clone());
-                        let mut found = false;
-                        for block in &mut last.blocks {
-                            if let MessageBlock::Text(lines) = block {
-                                *lines = vec![line.clone()];
-                                found = true;
-                                break;
-                            }
+                    let line = ratatui::text::Line::from(buf.text_content.clone());
+                    let mut found = false;
+                    for block in &mut last.blocks {
+                        if let MessageBlock::Text(lines) = block {
+                            *lines = vec![line.clone()];
+                            found = true;
+                            break;
                         }
+                    }
                     if !found {
                         last.blocks.push(MessageBlock::Text(vec![line]));
                     }
                 }
-                if !self.user_scrolled_up { self.scroll_offset = 0; }
+                if !self.user_scrolled_up {
+                    self.scroll_offset = 0;
+                }
             }
             ServerEvent::ThinkingDelta {
                 content_index: _,
@@ -1062,7 +1269,9 @@ impl App {
                         }));
                     }
                 }
-                if !self.user_scrolled_up { self.scroll_offset = 0; }
+                if !self.user_scrolled_up {
+                    self.scroll_offset = 0;
+                }
             }
             ServerEvent::ToolCallStarted { call_id, name } => {
                 let tc = ToolCallWidget {
@@ -1078,7 +1287,9 @@ impl App {
                 if let Some(last) = session.messages.last_mut() {
                     last.blocks.push(MessageBlock::ToolCall(tc));
                 }
-                if !self.user_scrolled_up { self.scroll_offset = 0; }
+                if !self.user_scrolled_up {
+                    self.scroll_offset = 0;
+                }
             }
             ServerEvent::ToolCallDelta { call_id, delta } => {
                 if let Some(ref mut buf) = session.streaming {
@@ -1098,16 +1309,15 @@ impl App {
                         if let MessageBlock::ToolCall(tc) = block
                             && tc.call_id == call_id
                         {
-                                tc.state = if is_error {
-                                    ToolCallState::Error
-                                } else {
-                                    ToolCallState::Success
-                                };
-                                if let Some(ref r) = result {
-                                    tc.content =
-                                        vec![ratatui::text::Line::from(r.clone())];
-                                }
-                                break;
+                            tc.state = if is_error {
+                                ToolCallState::Error
+                            } else {
+                                ToolCallState::Success
+                            };
+                            if let Some(ref r) = result {
+                                tc.content = vec![ratatui::text::Line::from(r.clone())];
+                            }
+                            break;
                         }
                     }
                 }
@@ -1155,7 +1365,9 @@ impl App {
         match action {
             TaskAction::SessionCreated(info) => {
                 let id = info.id.clone();
-                self.data.sessions.insert(id.clone(), SessionState::new(info));
+                self.data
+                    .sessions
+                    .insert(id.clone(), SessionState::new(info));
                 self.data.active_session = id;
                 if let Some(s) = self.data.sessions.get(&self.data.active_session) {
                     self.context_window = s.info.context_window;
@@ -1198,7 +1410,13 @@ impl App {
             TaskAction::SessionDeleted { id } => {
                 self.data.sessions.remove(&id);
                 if self.data.active_session == id {
-                    self.data.active_session = self.data.sessions.keys().next().cloned().unwrap_or_default();
+                    self.data.active_session = self
+                        .data
+                        .sessions
+                        .keys()
+                        .next()
+                        .cloned()
+                        .unwrap_or_default();
                     if let Some(s) = self.data.sessions.get(&self.data.active_session) {
                         self.context_window = s.info.context_window;
                     }
@@ -1219,12 +1437,16 @@ impl App {
             .map(|m| {
                 let (role, blocks) = match m {
                     HistoricalMessage::User(u) => {
-                        let lines: Vec<ratatui::text::Line> = u.content.into_iter().filter_map(|c| {
-                            match c {
-                                HistoricalContent::Text { text } => Some(ratatui::text::Line::from(text)),
+                        let lines: Vec<ratatui::text::Line> = u
+                            .content
+                            .into_iter()
+                            .filter_map(|c| match c {
+                                HistoricalContent::Text { text } => {
+                                    Some(ratatui::text::Line::from(text))
+                                }
                                 _ => None,
-                            }
-                        }).collect();
+                            })
+                            .collect();
                         (MessageRole::User, vec![MessageBlock::Text(lines)])
                     }
                     HistoricalMessage::Assistant(a) => {
@@ -1237,7 +1459,9 @@ impl App {
                                 }
                                 HistoricalContent::Thinking { thinking } => {
                                     if !text_lines.is_empty() {
-                                        blocks.push(MessageBlock::Text(std::mem::take(&mut text_lines)));
+                                        blocks.push(MessageBlock::Text(std::mem::take(
+                                            &mut text_lines,
+                                        )));
                                     }
                                     blocks.push(MessageBlock::Thinking(ThinkingBlock {
                                         thinking_text: thinking,
@@ -1245,16 +1469,26 @@ impl App {
                                         is_redacted: false,
                                     }));
                                 }
-                                HistoricalContent::ToolCall { id, name, arguments } => {
+                                HistoricalContent::ToolCall {
+                                    id,
+                                    name,
+                                    arguments,
+                                } => {
                                     if !text_lines.is_empty() {
-                                        blocks.push(MessageBlock::Text(std::mem::take(&mut text_lines)));
+                                        blocks.push(MessageBlock::Text(std::mem::take(
+                                            &mut text_lines,
+                                        )));
                                     }
-                                    let json_text = serde_json::to_string_pretty(&arguments).unwrap_or_default();
+                                    let json_text = serde_json::to_string_pretty(&arguments)
+                                        .unwrap_or_default();
                                     blocks.push(MessageBlock::ToolCall(ToolCallWidget {
                                         call_id: id,
                                         name,
                                         state: ToolCallState::Pending,
-                                        content: json_text.lines().map(|l| ratatui::text::Line::from(l.to_string())).collect(),
+                                        content: json_text
+                                            .lines()
+                                            .map(|l| ratatui::text::Line::from(l.to_string()))
+                                            .collect(),
                                         is_expanded: false,
                                     }));
                                 }
@@ -1271,14 +1505,20 @@ impl App {
                         (MessageRole::Assistant, blocks)
                     }
                     HistoricalMessage::ToolResult(t) => {
-                        let text = t.content.into_iter().filter_map(|c| {
-                            match c {
+                        let text = t
+                            .content
+                            .into_iter()
+                            .filter_map(|c| match c {
                                 HistoricalContent::Text { text } => Some(text),
                                 _ => None,
-                            }
-                        }).collect::<Vec<_>>().join("\n");
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         let display = format!("ToolResult({}): {}", t.tool_name, text);
-                        (MessageRole::Assistant, vec![MessageBlock::Text(vec![ratatui::text::Line::from(display)])])
+                        (
+                            MessageRole::Assistant,
+                            vec![MessageBlock::Text(vec![ratatui::text::Line::from(display)])],
+                        )
                     }
                 };
                 RenderedMessage {
@@ -1297,7 +1537,8 @@ impl App {
             .unwrap_or_else(|_| "vi".to_string());
 
         let current_text = self.editor.lines.join("\n");
-        let temp_file = temp_dir_for_pandaria().join(format!("pandaria_edit_{}.md", std::process::id()));
+        let temp_file =
+            temp_dir_for_pandaria().join(format!("pandaria_edit_{}.md", std::process::id()));
 
         if let Err(e) = std::fs::write(&temp_file, &current_text) {
             self.data.last_error = Some(format!("Failed to write temp file: {}", e));
@@ -1313,17 +1554,15 @@ impl App {
         let _ = crossterm::terminal::enable_raw_mode();
 
         match status {
-            Ok(s) if s.success() => {
-                match std::fs::read_to_string(&temp_file) {
-                    Ok(content) => {
-                        self.editor.clear();
-                        self.editor.insert_text(content.trim_end());
-                    }
-                    Err(e) => {
-                        self.data.last_error = Some(format!("Failed to read temp file: {}", e));
-                    }
+            Ok(s) if s.success() => match std::fs::read_to_string(&temp_file) {
+                Ok(content) => {
+                    self.editor.clear();
+                    self.editor.insert_text(content.trim_end());
                 }
-            }
+                Err(e) => {
+                    self.data.last_error = Some(format!("Failed to read temp file: {}", e));
+                }
+            },
             Ok(s) => {
                 self.data.last_error = Some(format!("Editor exited with status: {}", s));
             }
@@ -1397,7 +1636,8 @@ impl App {
             .split(f.area());
 
         // HeaderBar
-        self.header.update(session.info.id.clone(), session.info.model.clone());
+        self.header
+            .update(session.info.id.clone(), session.info.model.clone());
         self.header.render(chunks[0], f.buffer_mut());
 
         // SessionTabs
@@ -1407,7 +1647,8 @@ impl App {
             .keys()
             .map(|id| (id.clone(), id.chars().take(8).collect()))
             .collect();
-        self.session_tabs.update(tabs_data, self.data.active_session.clone());
+        self.session_tabs
+            .update(tabs_data, self.data.active_session.clone());
         self.session_tabs.render(chunks[1], f.buffer_mut());
 
         // ChatView
@@ -1449,7 +1690,9 @@ mod tests {
     use super::*;
     use crate::client::model::{SessionInfo, UsageInfo};
     use crate::config::{AuthConfig, Config, ServerConfig, UiConfig};
-    use crate::state::{MessageBlock, MessageRole, MessageStatus, RenderedMessage, StreamingBuffer, ToolCallState};
+    use crate::state::{
+        MessageBlock, MessageRole, MessageStatus, RenderedMessage, StreamingBuffer, ToolCallState,
+    };
 
     fn make_test_config() -> Config {
         Config {
@@ -1531,10 +1774,11 @@ mod tests {
             "thinking..."
         );
         let last = session.messages.last().unwrap();
-        assert!(last
-            .blocks
-            .iter()
-            .any(|b| matches!(b, MessageBlock::Thinking(_))));
+        assert!(
+            last.blocks
+                .iter()
+                .any(|b| matches!(b, MessageBlock::Thinking(_)))
+        );
     }
 
     #[test]
@@ -1582,10 +1826,11 @@ mod tests {
             })
             .expect("tool call block");
         assert_eq!(tc.state, ToolCallState::Success);
-        assert!(tc.content.iter().any(|l| l
-            .spans
-            .iter()
-            .any(|s| s.content == "content")));
+        assert!(
+            tc.content
+                .iter()
+                .any(|l| l.spans.iter().any(|s| s.content == "content"))
+        );
     }
 
     #[test]
@@ -1622,7 +1867,10 @@ mod tests {
         });
         let session = app.data.active_session();
         assert!(session.streaming.is_none());
-        assert_eq!(session.messages.last().unwrap().status, MessageStatus::Complete);
+        assert_eq!(
+            session.messages.last().unwrap().status,
+            MessageStatus::Complete
+        );
         assert_eq!(app.state, AppState::Connected);
     }
 
@@ -1647,7 +1895,10 @@ mod tests {
             message: "bad".to_string(),
         });
         let session = app.data.active_session();
-        assert_eq!(session.messages.last().unwrap().status, MessageStatus::Error);
+        assert_eq!(
+            session.messages.last().unwrap().status,
+            MessageStatus::Error
+        );
         assert!(session.error.is_some());
         assert_eq!(app.state, AppState::Connected);
     }

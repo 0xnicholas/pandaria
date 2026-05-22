@@ -17,7 +17,12 @@ pub struct AutocompleteOverlay {
 
 impl AutocompleteOverlay {
     pub fn new(suggestions: Vec<Suggestion>) -> Self {
-        Self { suggestions, selected: 0, confirmed: None, dismissed: false }
+        Self {
+            suggestions,
+            selected: 0,
+            confirmed: None,
+            dismissed: false,
+        }
     }
 }
 
@@ -35,41 +40,75 @@ impl Component for AutocompleteOverlay {
             height,
         );
 
-        let items: Vec<ListItem> = self.suggestions.iter().enumerate().map(|(i, s)| {
-            let style = if i == self.selected {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.text)
-            };
-            let desc = s.description.as_ref()
-                .map(|d| Span::styled(format!(" — {}", d), Style::default().fg(theme.muted)))
-                .unwrap_or_default();
-            ListItem::new(Line::from(vec![
-                Span::styled(&s.label, style),
-                desc,
-            ]))
-        }).collect();
+        let items: Vec<ListItem> = self
+            .suggestions
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let style = if i == self.selected {
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(theme.text)
+                };
+                let desc = s
+                    .description
+                    .as_ref()
+                    .map(|d| Span::styled(format!(" — {}", d), Style::default().fg(theme.muted)))
+                    .unwrap_or_default();
+                ListItem::new(Line::from(vec![Span::styled(&s.label, style), desc]))
+            })
+            .collect();
 
-        let block = Block::default().borders(Borders::ALL).title("Suggestions").style(Style::default().fg(theme.text));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Suggestions")
+            .style(Style::default().fg(theme.text));
         Clear.render(overlay_area, buf);
         List::new(items).block(block).render(overlay_area, buf);
     }
 
-    fn is_capturing(&self) -> bool { false }
+    fn is_capturing(&self) -> bool {
+        false
+    }
 
     fn handle_input(&mut self, key: KeyEvent) -> InputResult {
         match key.code {
-            KeyCode::Up => { if self.selected > 0 { self.selected -= 1; } InputResult::Consumed }
-            KeyCode::Down => { if self.selected + 1 < self.suggestions.len() { self.selected += 1; } InputResult::Consumed }
-            KeyCode::Enter => { self.confirmed = self.suggestions.get(self.selected).map(|s| s.value.clone()); InputResult::Consumed }
-            KeyCode::Esc => { self.dismissed = true; InputResult::Consumed }
+            KeyCode::Up => {
+                if self.selected > 0 {
+                    self.selected -= 1;
+                }
+                InputResult::Consumed
+            }
+            KeyCode::Down => {
+                if self.selected + 1 < self.suggestions.len() {
+                    self.selected += 1;
+                }
+                InputResult::Consumed
+            }
+            KeyCode::Enter => {
+                self.confirmed = self.suggestions.get(self.selected).map(|s| s.value.clone());
+                InputResult::Consumed
+            }
+            KeyCode::Esc => {
+                self.dismissed = true;
+                InputResult::Consumed
+            }
             // Any other key dismisses the overlay so it continues to the editor.
-            _ => { self.dismissed = true; InputResult::Consumed }
+            _ => {
+                self.dismissed = true;
+                InputResult::Consumed
+            }
         }
     }
 
     fn take_result(&mut self) -> OverlayResult {
-        if self.dismissed { return OverlayResult::Dismissed; }
-        self.confirmed.take().map_or(OverlayResult::Pending, OverlayResult::Confirmed)
+        if self.dismissed {
+            return OverlayResult::Dismissed;
+        }
+        self.confirmed
+            .take()
+            .map_or(OverlayResult::Pending, OverlayResult::Confirmed)
     }
 }

@@ -77,7 +77,14 @@ impl DoubaoMediaProvider {
         signal: CancellationToken,
     ) -> Result<MediaResponse, MediaError> {
         let task = self
-            .create_video_task(model, &prompt, duration, resolution.as_deref(), aspect_ratio.as_deref(), &image_refs)
+            .create_video_task(
+                model,
+                &prompt,
+                duration,
+                resolution.as_deref(),
+                aspect_ratio.as_deref(),
+                &image_refs,
+            )
             .await?;
 
         let mut interval = std::time::Duration::from_secs(1);
@@ -132,7 +139,10 @@ impl DoubaoMediaProvider {
         }
         if !image_refs.is_empty() {
             body["image_refs"] = serde_json::json!(
-                image_refs.iter().map(|r| serde_json::json!({"url": r.url, "mime_type": r.mime_type})).collect::<Vec<_>>()
+                image_refs
+                    .iter()
+                    .map(|r| serde_json::json!({"url": r.url, "mime_type": r.mime_type}))
+                    .collect::<Vec<_>>()
             );
         }
 
@@ -243,7 +253,10 @@ impl MediaProvider for DoubaoMediaProvider {
     }
 
     fn supported_tasks(&self) -> Vec<MediaTaskType> {
-        vec![MediaTaskType::ImageGeneration, MediaTaskType::VideoGeneration]
+        vec![
+            MediaTaskType::ImageGeneration,
+            MediaTaskType::VideoGeneration,
+        ]
     }
 
     async fn generate(

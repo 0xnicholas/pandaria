@@ -7,10 +7,7 @@ use crate::types::AgentMessage;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SessionEntry {
     /// A standard message (user, assistant, tool result)
-    Message {
-        id: Uuid,
-        message: AgentMessage,
-    },
+    Message { id: Uuid, message: AgentMessage },
     /// A compaction boundary — marks where old messages were summarized.
     /// Entries before this boundary are not sent to LLM context.
     Compaction {

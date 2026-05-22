@@ -1,16 +1,15 @@
 use api_gateway::{AppState, ServerConfig};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
-use tenant::{
-    CreateSessionParams, SessionInfo, SessionUpdates, TenantError, TenantManager,
-};
+use tenant::{CreateSessionParams, SessionInfo, SessionUpdates, TenantError, TenantManager};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 /// Mock TenantManager for integration tests.
 pub struct MockTenantManager {
     pub sessions: Mutex<std::collections::HashMap<String, SessionInfo>>,
-    pub event_senders: Mutex<std::collections::HashMap<String, Vec<mpsc::Sender<agent_core::AgentEvent>>>>,
+    pub event_senders:
+        Mutex<std::collections::HashMap<String, Vec<mpsc::Sender<agent_core::AgentEvent>>>>,
 }
 
 impl MockTenantManager {
@@ -81,11 +80,7 @@ impl TenantManager for MockTenantManager {
         Ok(1)
     }
 
-    async fn interrupt(
-        &self,
-        _tenant_id: &str,
-        _session_id: &Uuid,
-    ) -> Result<(), TenantError> {
+    async fn interrupt(&self, _tenant_id: &str, _session_id: &Uuid) -> Result<(), TenantError> {
         Ok(())
     }
 
@@ -104,11 +99,7 @@ impl TenantManager for MockTenantManager {
         Ok(rx)
     }
 
-    async fn delete_session(
-        &self,
-        _tenant_id: &str,
-        session_id: &Uuid,
-    ) -> Result<(), TenantError> {
+    async fn delete_session(&self, _tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError> {
         self.sessions
             .lock()
             .unwrap()
@@ -198,10 +189,14 @@ impl TenantManager for MockTenantManager {
         _session_id: &Uuid,
         title: Option<String>,
     ) -> Result<SessionInfo, TenantError> {
-        self.create_session(tenant_id, CreateSessionParams {
-            title,
-            ..Default::default()
-        }).await
+        self.create_session(
+            tenant_id,
+            CreateSessionParams {
+                title,
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     async fn reset_session(

@@ -3,15 +3,15 @@
 //! Gated behind the `test-utils` feature. Use this when writing integration
 //! tests that need a deterministic `LlmProvider` implementation.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content,
-    LlmContext, LlmError, LlmProvider, StopReason, StreamOptions, ToolCall, Usage,
+    Api, AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Content, LlmContext,
+    LlmError, LlmProvider, StopReason, StreamOptions, ToolCall, Usage,
     providers::shared::ProviderConfig,
 };
 
@@ -37,7 +37,11 @@ pub struct MockToolCall {
 }
 
 impl MockToolCall {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, arguments: serde_json::Value) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
@@ -126,10 +130,13 @@ impl MockProvider {
         let responses = Arc::new(responses);
         Self {
             factory: Arc::new(move |n| {
-                responses.get(n).map(|r| build_events(r)).unwrap_or_else(|| {
-                    // Once exhausted, default to empty text response.
-                    build_text_events("")
-                })
+                responses
+                    .get(n)
+                    .map(|r| build_events(r))
+                    .unwrap_or_else(|| {
+                        // Once exhausted, default to empty text response.
+                        build_text_events("")
+                    })
             }),
             call_count: AtomicUsize::new(0),
         }
@@ -325,9 +332,7 @@ fn build_error_events(msg: &str) -> Vec<AssistantMessageEvent> {
         timestamp: std::time::SystemTime::now(),
     };
 
-    vec![AssistantMessageEvent::Error {
-        error: partial,
-    }]
+    vec![AssistantMessageEvent::Error { error: partial }]
 }
 
 fn make_partial(text: &str) -> AssistantMessage {

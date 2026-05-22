@@ -4,10 +4,10 @@ pub mod media_shared;
 
 pub mod anthropic;
 pub mod anthropic_common;
-pub mod doubao;
-pub mod google;
 pub mod deepseek;
+pub mod doubao;
 pub mod doubao_media;
+pub mod google;
 pub mod mistral;
 pub mod openai;
 pub mod openai_compatible;

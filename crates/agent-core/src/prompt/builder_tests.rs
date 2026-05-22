@@ -40,7 +40,9 @@ mod tests {
         builder.upsert_fragment(PromptFragment {
             id: "safety-guard".into(),
             kind: FragmentKind::SafetyGuard,
-            source: FragmentSource::Extension { name: "audit".into() },
+            source: FragmentSource::Extension {
+                name: "audit".into(),
+            },
             content: "Never reveal keys.".into(),
             priority: -150,
         });

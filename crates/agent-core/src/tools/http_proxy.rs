@@ -120,7 +120,8 @@ impl AgentTool for HttpProxyTool {
             });
         }
 
-        self.execute_inner(tool_call_id, params, on_progress, signal).await
+        self.execute_inner(tool_call_id, params, on_progress, signal)
+            .await
     }
 }
 
@@ -268,10 +269,7 @@ mod tests {
             .unwrap();
 
         assert!(result.is_error);
-        assert_eq!(
-            content_text(&result),
-            "SSRF: internal endpoint forbidden"
-        );
+        assert_eq!(content_text(&result), "SSRF: internal endpoint forbidden");
     }
 
     #[tokio::test]
@@ -309,10 +307,7 @@ mod tests {
         assert!(!result.is_error);
         assert!(!result.terminate);
         assert_eq!(content_text(&result), "result");
-        assert_eq!(
-            result.details,
-            Some(serde_json::json!({ "extra": 42 }))
-        );
+        assert_eq!(result.details, Some(serde_json::json!({ "extra": 42 })));
     }
 
     #[tokio::test]
@@ -357,13 +352,7 @@ mod tests {
         let token_clone = token.clone();
 
         let handle = tokio::spawn(async move {
-            tool
-                .execute_inner(
-                    "call_001",
-                    serde_json::json!({}),
-                    None,
-                    token_clone,
-                )
+            tool.execute_inner("call_001", serde_json::json!({}), None, token_clone)
                 .await
         });
 
@@ -396,7 +385,12 @@ mod tests {
         });
 
         let result = tool
-            .execute_inner("call_001", serde_json::json!({}), None, CancellationToken::new())
+            .execute_inner(
+                "call_001",
+                serde_json::json!({}),
+                None,
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
 
@@ -420,7 +414,12 @@ mod tests {
 
         let tool = make_tool(server.uri() + "/invoke");
         let result = tool
-            .execute_inner("call_001", serde_json::json!({}), None, CancellationToken::new())
+            .execute_inner(
+                "call_001",
+                serde_json::json!({}),
+                None,
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
 

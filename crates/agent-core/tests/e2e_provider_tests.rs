@@ -3,11 +3,11 @@
 
 use std::sync::Arc;
 
-use agent_core::{
-    CompactionActor, CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
-};
 use agent_core::test_utils::AllowAllDispatcher;
 use agent_core::types::AgentMessage;
+use agent_core::{
+    Compactor, CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
+};
 use ai_provider::{
     Content, LlmProvider,
     providers::{anthropic::AnthropicProvider, openai::OpenAiProvider},
@@ -16,8 +16,8 @@ use secrecy::SecretString;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Arc<CompactionActor> {
-    Arc::new(CompactionActor::new(
+fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Arc<Compactor> {
+    Arc::new(Compactor::new(
         CompactionConfig::default(),
         provider,
         "test".to_string(),
@@ -61,12 +61,10 @@ data: {"type":"message_stop"}
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        AnthropicProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(AnthropicProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let mut session = SessionActor::new(SessionConfig {
         tenant_id: "t1".to_string(),
@@ -96,18 +94,20 @@ data: {"type":"message_stop"}
     }
 
     match &entries[1] {
-        agent_core::persistence::entry::SessionEntry::Message { message, .. } => {
-            match message {
-                AgentMessage::Assistant(a) => {
-                    let text: String = a.content.iter().filter_map(|c| match c {
+        agent_core::persistence::entry::SessionEntry::Message { message, .. } => match message {
+            AgentMessage::Assistant(a) => {
+                let text: String = a
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
                         Content::Text { text, .. } => Some(text.as_str()),
                         _ => None,
-                    }).collect();
-                    assert_eq!(text, "Hello from Anthropic");
-                }
-                _ => panic!("expected assistant message"),
+                    })
+                    .collect();
+                assert_eq!(text, "Hello from Anthropic");
             }
-        }
+            _ => panic!("expected assistant message"),
+        },
         _ => panic!("expected assistant message entry"),
     }
 }
@@ -138,12 +138,10 @@ data: [DONE]
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        OpenAiProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(OpenAiProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let mut session = SessionActor::new(SessionConfig {
         tenant_id: "t1".to_string(),
@@ -165,18 +163,20 @@ data: [DONE]
     assert_eq!(entries.len(), 2);
 
     match &entries[1] {
-        agent_core::persistence::entry::SessionEntry::Message { message, .. } => {
-            match message {
-                AgentMessage::Assistant(a) => {
-                    let text: String = a.content.iter().filter_map(|c| match c {
+        agent_core::persistence::entry::SessionEntry::Message { message, .. } => match message {
+            AgentMessage::Assistant(a) => {
+                let text: String = a
+                    .content
+                    .iter()
+                    .filter_map(|c| match c {
                         Content::Text { text, .. } => Some(text.as_str()),
                         _ => None,
-                    }).collect();
-                    assert_eq!(text, "Hello from OpenAI");
-                }
-                _ => panic!("expected assistant message"),
+                    })
+                    .collect();
+                assert_eq!(text, "Hello from OpenAI");
             }
-        }
+            _ => panic!("expected assistant message"),
+        },
         _ => panic!("expected assistant message entry"),
     }
 }
@@ -220,22 +220,16 @@ data: [DONE]
         .and(path("/"))
         .respond_with(move |req: &wiremock::Request| {
             let count = body_counter_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let body = if count == 0 {
-                sse_body_1
-            } else {
-                sse_body_2
-            };
+            let body = if count == 0 { sse_body_1 } else { sse_body_2 };
             ResponseTemplate::new(200).set_body_string(body)
         })
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        OpenAiProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(OpenAiProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let mut session = SessionActor::new(SessionConfig {
         tenant_id: "t1".to_string(),
@@ -253,7 +247,10 @@ data: [DONE]
     let turn1 = session.prompt("Say something".to_string()).await.unwrap();
     assert!(!turn1.is_empty());
 
-    let turn2 = session.prompt("My name is Alice".to_string()).await.unwrap();
+    let turn2 = session
+        .prompt("My name is Alice".to_string())
+        .await
+        .unwrap();
     assert!(!turn2.is_empty());
 
     // Total entries: system prompt (implicit) + 4 messages (user1, assistant1, user2, assistant2)

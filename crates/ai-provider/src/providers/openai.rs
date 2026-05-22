@@ -153,8 +153,7 @@ pub(crate) async fn openai_compatible_stream(
 
     // Reasoning / thinking_format
     // Step 1: XHigh clamp check
-    let effective_reasoning = if options.reasoning
-        == Some(crate::provider::ReasoningLevel::XHigh)
+    let effective_reasoning = if options.reasoning == Some(crate::provider::ReasoningLevel::XHigh)
         && !crate::models::supports_xhigh(model)
     {
         Some(crate::provider::ReasoningLevel::High)
@@ -206,24 +205,24 @@ pub(crate) async fn openai_compatible_stream(
         }
     }
 
-    let fallback = crate::models::get_model(provider_name, model)
-        .unwrap_or_else(|| crate::protocol::request::fallback_model(
+    let fallback = crate::models::get_model(provider_name, model).unwrap_or_else(|| {
+        crate::protocol::request::fallback_model(
             provider_name,
             model,
             "openai-completions",
             &base_url,
             272_000,
             128_000,
-        ));
+        )
+    });
 
-    let mut builder = crate::protocol::request::RequestBuilder::new(
-        client,
-        base_url,
-        fallback,
-        options.clone(),
-    )
-    .body(body)
-    .header("Authorization", format!("Bearer {}", api_key.expose_secret()));
+    let mut builder =
+        crate::protocol::request::RequestBuilder::new(client, base_url, fallback, options.clone())
+            .body(body)
+            .header(
+                "Authorization",
+                format!("Bearer {}", api_key.expose_secret()),
+            );
 
     // Session affinity headers for cache (OpenAI-only)
     if provider_name == "openai"
@@ -295,9 +294,7 @@ pub(crate) async fn openai_compatible_stream(
                         .send(AssistantMessageEvent::ToolCallEnd {
                             content_index: *ci,
                             tool_call: crate::ToolCall {
-                                id: id
-                                    .clone()
-                                    .unwrap_or_else(|| format!("call_{}", ci)),
+                                id: id.clone().unwrap_or_else(|| format!("call_{}", ci)),
                                 name: name.clone().unwrap_or_default(),
                                 arguments: args,
                                 thought_signature: None,

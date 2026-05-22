@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use tenant::{Tenant, TenantQuota, TenantSupervisor, QuotaCheck};
 use tenant::meter::SlidingWindowMeter;
+use tenant::{QuotaCheck, Tenant, TenantQuota, TenantSupervisor};
 
 #[test]
 fn test_sliding_window_count() {
@@ -26,10 +26,13 @@ fn test_supervisor_session_tracking() {
     use std::sync::Arc;
     use tenant::TenantError;
 
-    let tenant = Tenant::new("t1", TenantQuota {
-        max_concurrent_sessions: 2,
-        ..TenantQuota::default()
-    });
+    let tenant = Tenant::new(
+        "t1",
+        TenantQuota {
+            max_concurrent_sessions: 2,
+            ..TenantQuota::default()
+        },
+    );
     let supervisor = Arc::new(TenantSupervisor::new(tenant));
 
     // Reserve 2 sessions
@@ -57,10 +60,13 @@ fn test_supervisor_token_metering() {
     use std::sync::Arc;
     use tenant::TenantError;
 
-    let tenant = Tenant::new("t1", TenantQuota {
-        max_tokens_per_day: 100,
-        ..TenantQuota::default()
-    });
+    let tenant = Tenant::new(
+        "t1",
+        TenantQuota {
+            max_tokens_per_day: 100,
+            ..TenantQuota::default()
+        },
+    );
     let supervisor = Arc::new(TenantSupervisor::new(tenant));
 
     supervisor.record_usage(&ai_provider::Usage {
@@ -75,7 +81,12 @@ fn test_supervisor_token_metering() {
     assert_eq!(status.tokens_consumed, 50);
 
     // Exceed budget
-    let err = supervisor.check_quota(QuotaCheck::TokenUsage { input: 30, output: 30 }).unwrap_err();
+    let err = supervisor
+        .check_quota(QuotaCheck::TokenUsage {
+            input: 30,
+            output: 30,
+        })
+        .unwrap_err();
     assert!(matches!(err, TenantError::TokenBudgetExceeded { .. }));
 }
 

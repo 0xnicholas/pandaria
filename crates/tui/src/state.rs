@@ -1,7 +1,7 @@
 use crate::client::model::{ApiError, SessionInfo};
+use ratatui::text::Line;
 use std::collections::HashMap;
 use std::time::SystemTime;
-use ratatui::text::Line;
 
 pub type SessionId = String;
 
@@ -17,13 +17,22 @@ impl State {
     pub fn new(session_id: SessionId, info: SessionInfo) -> Self {
         let mut sessions = HashMap::new();
         sessions.insert(session_id.clone(), SessionState::new(info));
-        Self { sessions, active_session: session_id, connection_status: ConnectionStatus::Connected, last_error: None }
+        Self {
+            sessions,
+            active_session: session_id,
+            connection_status: ConnectionStatus::Connected,
+            last_error: None,
+        }
     }
     pub fn active_session(&self) -> &SessionState {
-        self.sessions.get(&self.active_session).expect("active session must exist")
+        self.sessions
+            .get(&self.active_session)
+            .expect("active session must exist")
     }
     pub fn active_session_mut(&mut self) -> &mut SessionState {
-        self.sessions.get_mut(&self.active_session).expect("active session must exist")
+        self.sessions
+            .get_mut(&self.active_session)
+            .expect("active session must exist")
     }
 }
 
@@ -37,7 +46,12 @@ pub struct SessionState {
 
 impl SessionState {
     pub fn new(info: SessionInfo) -> Self {
-        Self { info, messages: Vec::new(), streaming: None, error: None }
+        Self {
+            info,
+            messages: Vec::new(),
+            streaming: None,
+            error: None,
+        }
     }
 }
 
@@ -50,10 +64,18 @@ pub struct RenderedMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageRole { User, Assistant }
+pub enum MessageRole {
+    User,
+    Assistant,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageStatus { Streaming, Complete, Aborted, Error }
+pub enum MessageStatus {
+    Streaming,
+    Complete,
+    Aborted,
+    Error,
+}
 
 #[derive(Debug, Clone)]
 pub enum MessageBlock {
@@ -74,7 +96,11 @@ pub struct ToolCallWidget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ToolCallState { Pending, Success, Error }
+pub enum ToolCallState {
+    Pending,
+    Success,
+    Error,
+}
 
 #[derive(Debug, Clone)]
 pub struct ThinkingBlock {
@@ -109,13 +135,23 @@ pub struct StreamingBuffer {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConnectionStatus { Disconnected, Connected, Reconnecting }
+pub enum ConnectionStatus {
+    Disconnected,
+    Connected,
+    Reconnecting,
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     fn make_session_info(id: &str) -> SessionInfo {
-        SessionInfo { id: id.to_string(), title: None, model: "gpt-4o".to_string(), context_window: Some(200000), created_at: None }
+        SessionInfo {
+            id: id.to_string(),
+            title: None,
+            model: "gpt-4o".to_string(),
+            context_window: Some(200000),
+            created_at: None,
+        }
     }
     #[test]
     fn test_state_creation() {
@@ -134,8 +170,14 @@ mod tests {
     }
     #[test]
     fn test_streaming_buffer_tool_arg_accumulation() {
-        let mut buf = StreamingBuffer { text_content: String::new(), thinking_content: String::new(), pending_tool_calls: Vec::new(), tool_arg_buffers: HashMap::new() };
-        buf.tool_arg_buffers.insert("c1".to_string(), r#"{"path":"/tmp/foo"}"#.to_string());
+        let mut buf = StreamingBuffer {
+            text_content: String::new(),
+            thinking_content: String::new(),
+            pending_tool_calls: Vec::new(),
+            tool_arg_buffers: HashMap::new(),
+        };
+        buf.tool_arg_buffers
+            .insert("c1".to_string(), r#"{"path":"/tmp/foo"}"#.to_string());
         assert!(buf.tool_arg_buffers.contains_key("c1"));
     }
 }

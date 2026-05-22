@@ -86,21 +86,17 @@ impl AnthropicProvider {
             8192,
         );
 
-        let response = crate::protocol::request::RequestBuilder::new(
-            client,
-            base_url,
-            fallback,
-            options,
-        )
-        .body(body)
-        .header("x-api-key", api_key.expose_secret())
-        .header("anthropic-version", "2023-06-01")
-        .header(
-            "anthropic-beta",
-            "interleaved-thinking-2025-05-14, fine-grained-tool-streaming-2025-05-14",
-        )
-        .send()
-        .await?;
+        let response =
+            crate::protocol::request::RequestBuilder::new(client, base_url, fallback, options)
+                .body(body)
+                .header("x-api-key", api_key.expose_secret())
+                .header("anthropic-version", "2023-06-01")
+                .header(
+                    "anthropic-beta",
+                    "interleaved-thinking-2025-05-14, fine-grained-tool-streaming-2025-05-14",
+                )
+                .send()
+                .await?;
 
         // Process SSE stream with full event mapping per spec §9.1
         use futures::StreamExt;

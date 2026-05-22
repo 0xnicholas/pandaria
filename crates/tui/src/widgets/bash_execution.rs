@@ -38,7 +38,10 @@ impl Widget for BashExecutionWidget<'_> {
             None => Style::default().fg(self.theme.warning),
         };
 
-        lines.push(Line::from(Span::styled(header, exit_style.add_modifier(Modifier::BOLD))));
+        lines.push(Line::from(Span::styled(
+            header,
+            exit_style.add_modifier(Modifier::BOLD),
+        )));
 
         if self.block.expanded {
             if !self.block.stdout.is_empty() {
@@ -52,7 +55,9 @@ impl Widget for BashExecutionWidget<'_> {
             if !self.block.stderr.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "    ── stderr ──",
-                    Style::default().fg(self.theme.error).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(self.theme.error)
+                        .add_modifier(Modifier::BOLD),
                 )));
                 for l in self.block.stderr.lines() {
                     lines.push(Line::from(Span::styled(
@@ -64,7 +69,11 @@ impl Widget for BashExecutionWidget<'_> {
             if let Some(code) = self.block.exit_code {
                 lines.push(Line::from(Span::styled(
                     format!("    [exit code: {}]", code),
-                    Style::default().fg(if code == 0 { self.theme.success } else { self.theme.error }),
+                    Style::default().fg(if code == 0 {
+                        self.theme.success
+                    } else {
+                        self.theme.error
+                    }),
                 )));
             }
         }

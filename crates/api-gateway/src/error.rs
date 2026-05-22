@@ -1,9 +1,7 @@
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde_json::json;
-
-
 
 /// Gateway 错误类型。
 #[derive(Debug, thiserror::Error)]
@@ -34,9 +32,11 @@ impl IntoResponse for GatewayError {
                 tenant::TenantError::TenantNotFound(_) => {
                     (StatusCode::NOT_FOUND, "not_found", tenant_err.to_string())
                 }
-                tenant::TenantError::SessionNotFound(_) => {
-                    (StatusCode::NOT_FOUND, "not_found", "session not found".into())
-                }
+                tenant::TenantError::SessionNotFound(_) => (
+                    StatusCode::NOT_FOUND,
+                    "not_found",
+                    "session not found".into(),
+                ),
                 tenant::TenantError::TenantAlreadyExists(_) => {
                     (StatusCode::CONFLICT, "conflict", tenant_err.to_string())
                 }
@@ -74,12 +74,14 @@ impl IntoResponse for GatewayError {
                     )
                 }
             },
-            Self::InvalidSessionId => (
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                self.to_string(),
+            Self::InvalidSessionId => {
+                (StatusCode::BAD_REQUEST, "invalid_request", self.to_string())
+            }
+            Self::SessionNotFound => (
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "session not found".into(),
             ),
-            Self::SessionNotFound => (StatusCode::NOT_FOUND, "not_found", "session not found".into()),
             Self::RateLimited { retry_after: _ } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "rate_limit.http",
@@ -109,7 +111,10 @@ impl IntoResponse for GatewayError {
         if let Self::RateLimited { retry_after } = self {
             response.headers_mut().insert(
                 "Retry-After",
-                retry_after.to_string().parse().expect("u64 to string is valid header value"),
+                retry_after
+                    .to_string()
+                    .parse()
+                    .expect("u64 to string is valid header value"),
             );
         }
 
@@ -131,10 +136,7 @@ mod tests {
     fn test_rate_limited_response() {
         let response = GatewayError::RateLimited { retry_after: 3 }.into_response();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-        assert_eq!(
-            response.headers().get("Retry-After").unwrap(),
-            "3"
-        );
+        assert_eq!(response.headers().get("Retry-After").unwrap(), "3");
     }
 
     #[test]

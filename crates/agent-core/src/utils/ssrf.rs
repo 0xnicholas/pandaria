@@ -121,11 +121,7 @@ mod tests {
             "http://203.0.113.1/",
         ];
         for url in allowed {
-            assert!(
-                !is_internal_endpoint(url),
-                "expected {} to be allowed",
-                url
-            );
+            assert!(!is_internal_endpoint(url), "expected {} to be allowed", url);
         }
     }
 
@@ -138,11 +134,7 @@ mod tests {
             "https://localhost/",
         ];
         for url in blocked {
-            assert!(
-                is_internal_endpoint(url),
-                "expected {} to be blocked",
-                url
-            );
+            assert!(is_internal_endpoint(url), "expected {} to be blocked", url);
         }
     }
 
@@ -154,11 +146,7 @@ mod tests {
             "https://127.1.2.3:8080/",
         ];
         for url in blocked {
-            assert!(
-                is_internal_endpoint(url),
-                "expected {} to be blocked",
-                url
-            );
+            assert!(is_internal_endpoint(url), "expected {} to be blocked", url);
         }
     }
 
@@ -173,11 +161,7 @@ mod tests {
             "http://192.168.255.255/",
         ];
         for url in blocked {
-            assert!(
-                is_internal_endpoint(url),
-                "expected {} to be blocked",
-                url
-            );
+            assert!(is_internal_endpoint(url), "expected {} to be blocked", url);
         }
     }
 
@@ -189,11 +173,7 @@ mod tests {
             "http://169.254.255.255/",
         ];
         for url in blocked {
-            assert!(
-                is_internal_endpoint(url),
-                "expected {} to be blocked",
-                url
-            );
+            assert!(is_internal_endpoint(url), "expected {} to be blocked", url);
         }
     }
 
@@ -211,11 +191,7 @@ mod tests {
             "http://[::ffff:127.0.0.1]/",
         ];
         for url in blocked {
-            assert!(
-                is_internal_endpoint(url),
-                "expected {} to be blocked",
-                url
-            );
+            assert!(is_internal_endpoint(url), "expected {} to be blocked", url);
         }
     }
 
@@ -256,11 +232,7 @@ mod tests {
             "http://[::ffff:0.0.0.0]/",
         ];
         for url in blocked {
-            assert!(
-                is_internal_endpoint(url),
-                "expected {} to be blocked",
-                url
-            );
+            assert!(is_internal_endpoint(url), "expected {} to be blocked", url);
         }
     }
 

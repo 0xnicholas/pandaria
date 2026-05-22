@@ -5,9 +5,9 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 
 use crate::hook::context::{
-    AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx,
-    ProviderRequestCtx, ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx,
-    ToolExecutionStartCtx, ToolResultCtx, TurnEndCtx,
+    AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx, ProviderRequestCtx,
+    ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx, ToolExecutionStartCtx,
+    ToolResultCtx, TurnEndCtx,
 };
 use crate::hook::dispatcher::HookDispatcher;
 use crate::hook::mutations::{
@@ -84,6 +84,20 @@ impl DefaultHookDispatcher {
             max_turns_per_session: 0,
             session_turn_counts: DashMap::new(),
             cost_callback: None,
+        }
+    }
+
+    /// Create a dispatcher from a `HookConfig` and an `AgentSpace`.
+    pub fn from_config(space: AgentSpace, config: &crate::harness::config::HookConfig) -> Self {
+        Self {
+            space,
+            denied_tools: config.denied_tools.clone(),
+            allowed_tools: config.allowed_tools.clone(),
+            path_guard_fields: config.path_guard_fields.clone(),
+            path_guard_scan_unknown: config.path_guard_scan_unknown,
+            max_turns_per_session: config.max_turns_per_session,
+            session_turn_counts: DashMap::new(),
+            cost_callback: config.cost_callback.clone(),
         }
     }
 

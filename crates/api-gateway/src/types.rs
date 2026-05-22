@@ -69,10 +69,17 @@ pub enum ServerEvent {
     StateChanged { state: String },
 
     #[serde(rename = "auto_retry_start")]
-    AutoRetryStart { attempt: u32, max_attempts: u32, delay_ms: u64 },
+    AutoRetryStart {
+        attempt: u32,
+        max_attempts: u32,
+        delay_ms: u64,
+    },
 
     #[serde(rename = "auto_retry_end")]
-    AutoRetryEnd { success: bool, error: Option<String> },
+    AutoRetryEnd {
+        success: bool,
+        error: Option<String>,
+    },
 }
 
 /// Token 使用量统计。api-gateway 独立定义，不依赖 ai-provider 的 Usage 类型。
@@ -225,14 +232,16 @@ pub struct SendMessageResponse {
 
 #[cfg(test)]
 mod tests {
-    use uuid::Uuid;
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_server_event_serde_roundtrip() {
         let events = vec![
             ServerEvent::MessageStart { message_index: 0 },
-            ServerEvent::TextDelta { delta: "hello".into() },
+            ServerEvent::TextDelta {
+                delta: "hello".into(),
+            },
             ServerEvent::TurnEnd {
                 stop_reason: "stop".into(),
                 usage: Some(UsageInfo {
@@ -265,7 +274,10 @@ mod tests {
         let json = r#"{"title": "test", "system_prompt": "you are a helpful assistant"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, Some("test".into()));
-        assert_eq!(req.system_prompt, Some("you are a helpful assistant".into()));
+        assert_eq!(
+            req.system_prompt,
+            Some("you are a helpful assistant".into())
+        );
     }
 
     #[test]

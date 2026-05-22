@@ -6,24 +6,21 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use agent_core::{
-    AgentTool, AgentToolProgressUpdate, AgentToolRef, AgentToolResult, CompactionActor,
-    CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
-};
 use agent_core::test_utils::AllowAllDispatcher;
 use agent_core::types::AgentMessage;
-use ai_provider::{
-    Content, LlmProvider,
-    providers::openai::OpenAiProvider,
+use agent_core::{
+    AgentTool, AgentToolProgressUpdate, AgentToolRef, AgentToolResult, Compactor,
+    CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
 };
+use ai_provider::{Content, LlmProvider, providers::openai::OpenAiProvider};
 use async_trait::async_trait;
 use secrecy::SecretString;
 use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Arc<CompactionActor> {
-    Arc::new(CompactionActor::new(
+fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Arc<Compactor> {
+    Arc::new(Compactor::new(
         CompactionConfig::default(),
         provider,
         "test".to_string(),
@@ -126,9 +123,9 @@ data: [DONE]
                 // Second call should contain the tool_result message
                 let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
                 let messages = body["messages"].as_array().unwrap();
-                let has_tool_result = messages.iter().any(|m| {
-                    m["role"] == "tool" && m["tool_call_id"] == "call_abc"
-                });
+                let has_tool_result = messages
+                    .iter()
+                    .any(|m| m["role"] == "tool" && m["tool_call_id"] == "call_abc");
                 turn2_has_tool_result_clone.store(has_tool_result, Ordering::SeqCst);
                 ResponseTemplate::new(200).set_body_string(turn2_body)
             } else {
@@ -138,12 +135,10 @@ data: [DONE]
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        OpenAiProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(OpenAiProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let tools: Vec<AgentToolRef> = vec![Arc::new(EchoTool)];
 
@@ -160,7 +155,10 @@ data: [DONE]
         skills: vec![],
     });
 
-    let results = session.prompt("Call the echo tool with hello".to_string()).await.unwrap();
+    let results = session
+        .prompt("Call the echo tool with hello".to_string())
+        .await
+        .unwrap();
 
     // We expect 3 messages: user, assistant (tool call), assistant (final text)
     // Actually prompt() returns all new messages generated in this turn.

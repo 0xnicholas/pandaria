@@ -612,7 +612,12 @@ fn build_models() -> HashMap<String, Model> {
         "google-generative-ai",
         "https://generativelanguage.googleapis.com/v1beta",
         true,
-        vec![Modality::Text, Modality::Image, Modality::Video, Modality::Audio],
+        vec![
+            Modality::Text,
+            Modality::Image,
+            Modality::Video,
+            Modality::Audio
+        ],
         TokenCost {
             input: 1.25,
             output: 10.0,
@@ -630,7 +635,12 @@ fn build_models() -> HashMap<String, Model> {
         "google-generative-ai",
         "https://generativelanguage.googleapis.com/v1beta",
         true,
-        vec![Modality::Text, Modality::Image, Modality::Video, Modality::Audio],
+        vec![
+            Modality::Text,
+            Modality::Image,
+            Modality::Video,
+            Modality::Audio
+        ],
         TokenCost {
             input: 0.15,
             output: 0.6,
@@ -648,7 +658,12 @@ fn build_models() -> HashMap<String, Model> {
         "google-generative-ai",
         "https://generativelanguage.googleapis.com/v1beta",
         true,
-        vec![Modality::Text, Modality::Image, Modality::Video, Modality::Audio],
+        vec![
+            Modality::Text,
+            Modality::Image,
+            Modality::Video,
+            Modality::Audio
+        ],
         TokenCost {
             input: 0.1,
             output: 0.4,
@@ -666,7 +681,12 @@ fn build_models() -> HashMap<String, Model> {
         "google-generative-ai",
         "https://generativelanguage.googleapis.com/v1beta",
         false,
-        vec![Modality::Text, Modality::Image, Modality::Video, Modality::Audio],
+        vec![
+            Modality::Text,
+            Modality::Image,
+            Modality::Video,
+            Modality::Audio
+        ],
         TokenCost {
             input: 0.15,
             output: 0.6,

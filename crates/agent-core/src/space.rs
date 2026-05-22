@@ -120,11 +120,17 @@ mod tests {
     fn test_agent_space_paths() {
         let space = AgentSpace::new("/tmp/pandaria-test");
         assert_eq!(space.root(), Path::new("/tmp/pandaria-test"));
-        assert_eq!(space.config_dir(), PathBuf::from("/tmp/pandaria-test/config"));
+        assert_eq!(
+            space.config_dir(),
+            PathBuf::from("/tmp/pandaria-test/config")
+        );
         assert_eq!(space.cache_dir(), PathBuf::from("/tmp/pandaria-test/cache"));
         assert_eq!(space.logs_dir(), PathBuf::from("/tmp/pandaria-test/logs"));
         assert_eq!(space.temp_dir(), PathBuf::from("/tmp/pandaria-test/temp"));
-        assert_eq!(space.skills_dir(), PathBuf::from("/tmp/pandaria-test/skills"));
+        assert_eq!(
+            space.skills_dir(),
+            PathBuf::from("/tmp/pandaria-test/skills")
+        );
         assert_eq!(
             space.workspace_for("tenant-42"),
             PathBuf::from("/tmp/pandaria-test/workspaces/tenant-42")
@@ -142,10 +148,7 @@ mod tests {
 
     #[test]
     fn test_agent_space_ensure_dirs() {
-        let temp = std::env::temp_dir().join(format!(
-            "pandaria-space-test-{}",
-            std::process::id()
-        ));
+        let temp = std::env::temp_dir().join(format!("pandaria-space-test-{}", std::process::id()));
         let space = AgentSpace::new(&temp);
         space.ensure_dirs().expect("ensure_dirs should succeed");
 

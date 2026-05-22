@@ -13,7 +13,7 @@ pub mod sse;
 pub mod types;
 
 pub use config::{RateLimitConfig, ServerConfig};
-pub use server::{serve, AppState, build_router};
+pub use server::{AppState, build_router, serve};
 pub use types::{
     ApiError, CreateSessionRequest, ErrorBody, SendMessageRequest, SendMessageResponse,
     ServerEvent, SessionInfo, UpdateSessionRequest, UsageInfo,

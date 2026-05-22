@@ -8,7 +8,12 @@ use tower::ServiceExt;
 async fn test_healthz_no_auth() {
     let app = common::test_router();
     let response = app
-        .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -143,7 +148,9 @@ async fn test_send_message() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"hello"}]}"#,
+                ))
                 .unwrap(),
         )
         .await

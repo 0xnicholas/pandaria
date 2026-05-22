@@ -7,11 +7,11 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use agent_core::{
-    CompactionActor, CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
-};
 use agent_core::test_utils::AllowAllDispatcher;
 use agent_core::types::AgentMessage;
+use agent_core::{
+    Compactor, CompactionConfig, DefaultFileOperationExtractor, SessionActor, SessionConfig,
+};
 use ai_provider::{
     AssistantMessage, Content, LlmProvider, Message, StopReason, Usage,
     providers::{anthropic::AnthropicProvider, openai::OpenAiProvider},
@@ -21,8 +21,8 @@ use tokio_util::sync::CancellationToken;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Arc<CompactionActor> {
-    Arc::new(CompactionActor::new(
+fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Arc<Compactor> {
+    Arc::new(Compactor::new(
         CompactionConfig::default(),
         provider,
         "test".to_string(),
@@ -114,11 +114,7 @@ data: [DONE]
             let content = user_msg["content"].as_array().unwrap();
             // Image should be downgraded to a text placeholder
             let has_image_placeholder = content.iter().any(|c| {
-                c["type"] == "text"
-                    && c["text"]
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("image omitted")
+                c["type"] == "text" && c["text"].as_str().unwrap_or("").contains("image omitted")
             });
             assert!(
                 has_image_placeholder,
@@ -144,12 +140,10 @@ data: [DONE]
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        OpenAiProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(OpenAiProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let mut session = SessionActor::new(SessionConfig {
         tenant_id: "t1".to_string(),
@@ -168,9 +162,15 @@ data: [DONE]
     session.push_message(AgentMessage::from(user_msg_with_image()));
     session.push_message(AgentMessage::from(assistant_msg_with_thinking()));
 
-    let result: String = session.complete("What do you see?".to_string()).await.unwrap();
+    let result: String = session
+        .complete("What do you see?".to_string())
+        .await
+        .unwrap();
     assert_eq!(result, "ok");
-    assert!(body_valid.load(Ordering::SeqCst), "request body assertions should have run");
+    assert!(
+        body_valid.load(Ordering::SeqCst),
+        "request body assertions should have run"
+    );
 }
 
 // ============================================================================
@@ -215,11 +215,7 @@ data: {"type":"message_stop"}
             let user_msg = messages.iter().find(|m| m["role"] == "user").unwrap();
             let content = user_msg["content"].as_array().unwrap();
             let has_image_placeholder = content.iter().any(|c| {
-                c["type"] == "text"
-                    && c["text"]
-                        .as_str()
-                        .unwrap_or("")
-                        .contains("image omitted")
+                c["type"] == "text" && c["text"].as_str().unwrap_or("").contains("image omitted")
             });
             assert!(
                 has_image_placeholder,
@@ -245,12 +241,10 @@ data: {"type":"message_stop"}
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        AnthropicProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(AnthropicProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let mut session = SessionActor::new(SessionConfig {
         tenant_id: "t1".to_string(),
@@ -269,9 +263,15 @@ data: {"type":"message_stop"}
     session.push_message(AgentMessage::from(user_msg_with_image()));
     session.push_message(AgentMessage::from(assistant_msg_with_thinking()));
 
-    let result: String = session.complete("What do you see?".to_string()).await.unwrap();
+    let result: String = session
+        .complete("What do you see?".to_string())
+        .await
+        .unwrap();
     assert_eq!(result, "ok");
-    assert!(body_valid.load(Ordering::SeqCst), "request body assertions should have run");
+    assert!(
+        body_valid.load(Ordering::SeqCst),
+        "request body assertions should have run"
+    );
 }
 
 // ============================================================================
@@ -315,12 +315,10 @@ data: [DONE]
         .mount(&server)
         .await;
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(
-        OpenAiProvider::with_base_url(
-            Some(SecretString::new("sk-test".into())),
-            &server.uri(),
-        )
-    );
+    let provider: Arc<dyn LlmProvider> = Arc::new(OpenAiProvider::with_base_url(
+        Some(SecretString::new("sk-test".into())),
+        &server.uri(),
+    ));
 
     let mut session = SessionActor::new(SessionConfig {
         tenant_id: "t1".to_string(),
@@ -340,5 +338,8 @@ data: [DONE]
 
     let result: String = session.complete("Describe it".to_string()).await.unwrap();
     assert_eq!(result, "ok");
-    assert!(body_valid.load(Ordering::SeqCst), "request body assertions should have run");
+    assert!(
+        body_valid.load(Ordering::SeqCst),
+        "request body assertions should have run"
+    );
 }

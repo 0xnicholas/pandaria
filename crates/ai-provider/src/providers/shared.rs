@@ -68,9 +68,7 @@ impl ProviderConfig {
         if let Ok(key) = std::env::var(self.env_key) {
             return Ok(SecretString::new(key.into_boxed_str()));
         }
-        Err(LlmError::AuthError(
-            format!("{} not set", self.env_key),
-        ))
+        Err(LlmError::AuthError(format!("{} not set", self.env_key)))
     }
 }
 

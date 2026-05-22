@@ -51,12 +51,19 @@ async fn test_websocket_receives_events() {
         base_url.trim_start_matches("http://"),
         session_id
     );
-    let host = ws_url.trim_start_matches("ws://").split('/').next().unwrap();
+    let host = ws_url
+        .trim_start_matches("ws://")
+        .split('/')
+        .next()
+        .unwrap();
     let mut req = tokio_tungstenite::tungstenite::http::Request::builder()
         .uri(&ws_url)
         .header("Host", host)
         .header("Authorization", format!("Bearer {}", token))
-        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+        .header(
+            "Sec-WebSocket-Key",
+            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+        )
         .header("Sec-WebSocket-Version", "13")
         .header("Upgrade", "websocket")
         .header("Connection", "Upgrade")
@@ -79,12 +86,7 @@ async fn test_websocket_receives_events() {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
 
     while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            ws_stream.next(),
-        )
-        .await
-        {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), ws_stream.next()).await {
             Ok(Some(Ok(msg))) => {
                 if let tokio_tungstenite::tungstenite::Message::Text(text) = msg {
                     if let Ok(event) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -106,9 +108,9 @@ async fn test_websocket_receives_events() {
         "expected at least one event via websocket"
     );
 
-    let has_turn_end = events.iter().any(|e| {
-        e.get("type").and_then(|v| v.as_str()) == Some("turn_end")
-    });
+    let has_turn_end = events
+        .iter()
+        .any(|e| e.get("type").and_then(|v| v.as_str()) == Some("turn_end"));
     assert!(has_turn_end, "expected turn_end event via websocket");
 
     // Close websocket gracefully
@@ -187,12 +189,19 @@ data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"delta":{"
         base_url.trim_start_matches("http://"),
         session_id
     );
-    let host = ws_url.trim_start_matches("ws://").split('/').next().unwrap();
+    let host = ws_url
+        .trim_start_matches("ws://")
+        .split('/')
+        .next()
+        .unwrap();
     let req = tokio_tungstenite::tungstenite::http::Request::builder()
         .uri(&ws_url)
         .header("Host", host)
         .header("Authorization", format!("Bearer {}", token))
-        .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key())
+        .header(
+            "Sec-WebSocket-Key",
+            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+        )
         .header("Sec-WebSocket-Version", "13")
         .header("Upgrade", "websocket")
         .header("Connection", "Upgrade")

@@ -5,7 +5,9 @@ use crate::types::AgentMessage;
 pub enum HookDecision {
     #[default]
     Continue,
-    Block { reason: String },
+    Block {
+        reason: String,
+    },
 }
 
 /// Mutation returned by chain hooks for tool results
@@ -37,8 +39,12 @@ pub struct ToolCallMutation {
 pub enum CompactDecision {
     #[default]
     Continue,
-    Block { reason: String },
-    Replace { result: crate::compaction::CompactionResult },
+    Block {
+        reason: String,
+    },
+    Replace {
+        result: crate::compaction::CompactionResult,
+    },
 }
 
 use crate::prompt::{PromptBuilder, PromptMutation};

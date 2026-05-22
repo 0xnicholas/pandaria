@@ -89,7 +89,9 @@ async fn test_session_state_lifecycle() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"hello"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -98,13 +100,10 @@ async fn test_session_state_lifecycle() {
     assert_eq!(send_response.status(), StatusCode::OK);
 
     // 3. After turn completes: state should return to idle
-    let events = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        sse_handle,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let events = tokio::time::timeout(std::time::Duration::from_secs(5), sse_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     assert!(!events.is_empty());
 

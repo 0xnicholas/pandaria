@@ -19,14 +19,14 @@ pub mod widgets;
 use app::App;
 use clap::Parser;
 use config::{CliArgs, Config};
+use crossterm::ExecutableCommand;
 use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste, Event, EventStream};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use crossterm::ExecutableCommand;
 use futures_util::StreamExt;
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use std::io;
 use std::time::Duration;
 use widgets::spinner::SpinnerWidget;
@@ -54,10 +54,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
             for candidate in &dev_tokens {
                 match rest.list_sessions(candidate).await {
                     Ok(_) => {
-                        tracing::info!(
-                            "Auto-generated dev token for local server at {}",
-                            url
-                        );
+                        tracing::info!("Auto-generated dev token for local server at {}", url);
                         config.auth.token = Some(candidate.clone());
                         break;
                     }
@@ -102,7 +99,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(config, session_info.id.clone(), session_info);
-    let mut spinner_interval = tokio::time::interval(Duration::from_millis(SpinnerWidget::interval_ms()));
+    let mut spinner_interval =
+        tokio::time::interval(Duration::from_millis(SpinnerWidget::interval_ms()));
     let mut reader = EventStream::new();
 
     loop {

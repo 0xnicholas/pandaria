@@ -261,8 +261,7 @@ mod tests {
 
     #[test]
     fn test_detect_deepseek_compat() {
-        let compat =
-            detect_openai_compat("deepseek", "https://api.deepseek.com", "deepseek-chat");
+        let compat = detect_openai_compat("deepseek", "https://api.deepseek.com", "deepseek-chat");
         assert_eq!(compat.thinking_format, Some(ThinkingFormat::DeepSeek));
         assert_eq!(
             compat.requires_reasoning_content_on_assistant_messages,
@@ -293,7 +292,11 @@ mod tests {
 
     #[test]
     fn test_detect_doubao_compat() {
-        let compat = detect_openai_compat("doubao", "https://ark.cn-beijing.volces.com/api/v3/chat/completions", "doubao-pro-32k");
+        let compat = detect_openai_compat(
+            "doubao",
+            "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+            "doubao-pro-32k",
+        );
         assert_eq!(compat.supports_store, Some(false));
         assert_eq!(compat.supports_developer_role, Some(false));
         assert_eq!(compat.thinking_format, None);

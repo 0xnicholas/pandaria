@@ -10,9 +10,7 @@ impl HookDispatcher for DefaultDispatcher {}
 struct BlockingDispatcher;
 #[async_trait]
 impl HookDispatcher for BlockingDispatcher {
-    async fn on_tool_call(&self,
-        _ctx: &ToolCallCtx,
-    ) -> (HookDecision, ToolCallMutation) {
+    async fn on_tool_call(&self, _ctx: &ToolCallCtx) -> (HookDecision, ToolCallMutation) {
         (
             HookDecision::Block {
                 reason: "blocked by test".to_string(),
@@ -62,13 +60,18 @@ async fn test_default_hooks_return_defaults() {
     let mutation = dispatcher.on_context(&ctx).await;
     assert!(mutation.messages.is_none());
 
-    let ctx = agent_core::context::TurnEndCtx::new("t1", "s1", 0, ai_provider::Usage {
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: 0,
-        cache_creation_input_tokens: None,
-        cache_read_input_tokens: None,
-    });
+    let ctx = agent_core::context::TurnEndCtx::new(
+        "t1",
+        "s1",
+        0,
+        ai_provider::Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        },
+    );
 
     // Observational hooks should not panic
     dispatcher.on_turn_end(&ctx).await;

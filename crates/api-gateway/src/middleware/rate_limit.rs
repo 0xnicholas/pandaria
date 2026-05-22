@@ -4,8 +4,8 @@ use axum::{
     response::Response,
 };
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use crate::config::RateLimitConfig;
@@ -51,12 +51,15 @@ impl RateLimiter {
             });
         }
 
-        let mut entry = self.buckets.entry(tenant_id.to_string()).or_insert(TokenBucket {
-            tokens: max_tokens,
-            max_tokens,
-            refill_rate,
-            last_refill: now,
-        });
+        let mut entry = self
+            .buckets
+            .entry(tenant_id.to_string())
+            .or_insert(TokenBucket {
+                tokens: max_tokens,
+                max_tokens,
+                refill_rate,
+                last_refill: now,
+            });
 
         let bucket = entry.value_mut();
         let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
@@ -105,8 +108,8 @@ pub async fn rate_limit_middleware(
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn test_rate_limiter_allows_within_burst() {

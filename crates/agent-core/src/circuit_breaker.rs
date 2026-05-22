@@ -49,7 +49,11 @@ impl CircuitBreaker {
     }
 
     /// Create with custom thresholds.
-    pub fn with_config(failure_threshold: u32, open_duration: Duration, half_open_max: u32) -> Self {
+    pub fn with_config(
+        failure_threshold: u32,
+        open_duration: Duration,
+        half_open_max: u32,
+    ) -> Self {
         Self {
             failure_threshold,
             open_duration,
@@ -170,7 +174,8 @@ impl CircuitBreaker {
         } else {
             let stored = UNIX_EPOCH + Duration::from_millis(millis);
             match SystemTime::now().duration_since(stored) {
-                Ok(elapsed) => Instant::now().checked_sub(elapsed)
+                Ok(elapsed) => Instant::now()
+                    .checked_sub(elapsed)
                     .unwrap_or_else(|| Instant::now() - Duration::from_secs(3600)),
                 Err(_) => Instant::now() - Duration::from_secs(3600), // clock moved backward
             }
@@ -314,9 +319,7 @@ mod tests {
 
         for _ in 0..20 {
             let cb = cb.clone();
-            handles.push(tokio::spawn(async move {
-                cb.check().await
-            }));
+            handles.push(tokio::spawn(async move { cb.check().await }));
         }
 
         let results = futures::future::join_all(handles).await;

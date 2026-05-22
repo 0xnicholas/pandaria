@@ -52,7 +52,13 @@ data: [DONE]
     assert!(matches!(event, AssistantMessageEvent::Start { .. }));
 
     let event = stream.next().await.expect("should have TextStart");
-    assert!(matches!(event, AssistantMessageEvent::TextStart { content_index: 0, .. }));
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextStart {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have TextDelta");
     assert!(
@@ -60,7 +66,13 @@ data: [DONE]
     );
 
     let event = stream.next().await.expect("should have TextEnd");
-    assert!(matches!(event, AssistantMessageEvent::TextEnd { content_index: 0, .. }));
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextEnd {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have Done");
     match event {
@@ -111,31 +123,33 @@ data: [DONE]
 
     let ctx = LlmContext {
         system_prompt: None,
-        messages: vec![ai_provider::Message::Assistant(ai_provider::AssistantMessage {
-            content: vec![Content::ToolCall(ToolCall {
-                id: long_id.clone(),
-                name: "test".to_string(),
-                arguments: serde_json::json!({}),
-                thought_signature: None,
-            })],
-            provider: "test".to_string(),
-            model: "test".to_string(),
-            api: ai_provider::Api {
+        messages: vec![ai_provider::Message::Assistant(
+            ai_provider::AssistantMessage {
+                content: vec![Content::ToolCall(ToolCall {
+                    id: long_id.clone(),
+                    name: "test".to_string(),
+                    arguments: serde_json::json!({}),
+                    thought_signature: None,
+                })],
                 provider: "test".to_string(),
                 model: "test".to_string(),
+                api: ai_provider::Api {
+                    provider: "test".to_string(),
+                    model: "test".to_string(),
+                },
+                usage: ai_provider::Usage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
+                    total_tokens: 0,
+                },
+                stop_reason: StopReason::ToolUse,
+                response_id: None,
+                error_message: None,
+                timestamp: std::time::SystemTime::now(),
             },
-            usage: ai_provider::Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_creation_input_tokens: None,
-                cache_read_input_tokens: None,
-                total_tokens: 0,
-            },
-            stop_reason: StopReason::ToolUse,
-            response_id: None,
-            error_message: None,
-            timestamp: std::time::SystemTime::now(),
-        })],
+        )],
         tools: None,
     };
 
@@ -197,12 +211,7 @@ data: [DONE]
     opts.reasoning = Some(ai_provider::ReasoningLevel::High);
 
     let mut stream = provider
-        .stream(
-            "mistral-large-latest",
-            ctx,
-            opts,
-            CancellationToken::new(),
-        )
+        .stream("mistral-large-latest", ctx, opts, CancellationToken::new())
         .await
         .expect("stream should start");
 

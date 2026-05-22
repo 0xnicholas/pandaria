@@ -88,10 +88,7 @@ fn verify_token(token_str: &str, secret: &str) -> Option<TokenPayload> {
     let payload: TokenPayload = serde_json::from_slice(&payload_bytes).ok()?;
 
     // Validate expiration and clock skew
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()?
-        .as_secs();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
     if payload.exp <= now {
         return None;
     }
@@ -208,10 +205,8 @@ mod tests {
 
     #[test]
     fn test_base64_decode_urlsafe() {
-        let encoded = base64::Engine::encode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            b"hello",
-        );
+        let encoded =
+            base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, b"hello");
         let decoded = base64_decode_urlsafe(&encoded).unwrap();
         assert_eq!(decoded, b"hello");
     }

@@ -14,10 +14,7 @@ macro_rules! define_media_provider {
                 Self::with_base_url(api_key, $default_url)
             }
 
-            pub fn with_base_url(
-                api_key: Option<secrecy::SecretString>,
-                base_url: &str,
-            ) -> Self {
+            pub fn with_base_url(api_key: Option<secrecy::SecretString>, base_url: &str) -> Self {
                 Self {
                     config: crate::providers::shared::ProviderConfig::new(
                         api_key,

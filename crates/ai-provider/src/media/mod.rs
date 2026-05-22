@@ -4,7 +4,9 @@ pub mod task;
 
 pub use error::MediaError;
 pub use registry::{MediaModel, MediaModelRegistry};
-pub use task::{MediaTaskHandle, MediaTaskStatus, MediaTaskType, media_task_type_from_str, next_poll_interval};
+pub use task::{
+    MediaTaskHandle, MediaTaskStatus, MediaTaskType, media_task_type_from_str, next_poll_interval,
+};
 
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;

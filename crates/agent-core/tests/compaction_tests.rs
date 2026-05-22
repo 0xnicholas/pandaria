@@ -1,6 +1,6 @@
-use agent_core::harness::compaction::{CompactionActor, CompactionConfig, should_compact};
 use agent_core::error::CompactionError;
 use agent_core::file_ops::DefaultFileOperationExtractor;
+use agent_core::harness::compaction::{Compactor, CompactionConfig, should_compact};
 use agent_core::hook::dispatcher::HookDispatcher;
 use agent_core::persistence::entry::{CompactionDetails, SessionEntry};
 use agent_core::types::AgentMessage;
@@ -35,7 +35,7 @@ fn test_should_compact_disabled() {
 }
 
 // ============================================================================
-// CompactionActor preparation tests (sync)
+// Compactor preparation tests (sync)
 // ============================================================================
 
 fn make_test_provider() -> Arc<dyn ai_provider::LlmProvider> {
@@ -47,7 +47,10 @@ fn test_provider_config() -> &'static ai_provider::providers::shared::ProviderCo
     static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
     CONFIG.get_or_init(|| {
         ai_provider::providers::shared::ProviderConfig::new(
-            None, "http://test", "test", "TEST_API_KEY",
+            None,
+            "http://test",
+            "test",
+            "TEST_API_KEY",
         )
     })
 }
@@ -77,7 +80,7 @@ impl ai_provider::LlmProvider for TestProvider {
 
 #[test]
 fn test_compaction_actor_prepare_empty() {
-    let actor = CompactionActor::new(
+    let actor = Compactor::new(
         CompactionConfig::new(true, 1000, 500),
         make_test_provider(),
         "test".to_string(),
@@ -91,7 +94,7 @@ fn test_compaction_actor_prepare_empty() {
 
 #[test]
 fn test_compaction_actor_prepare_single_message() {
-    let actor = CompactionActor::new(
+    let actor = Compactor::new(
         CompactionConfig::new(true, 1000, 500),
         make_test_provider(),
         "test".to_string(),
@@ -281,8 +284,8 @@ fn mock_provider_empty_done() -> Arc<dyn LlmProvider> {
 // Helper: build entries and compaction actor
 // ============================================================================
 
-fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> CompactionActor {
-    CompactionActor::new(
+fn make_compaction_actor(provider: Arc<dyn LlmProvider>) -> Compactor {
+    Compactor::new(
         CompactionConfig::new(true, 1000, 100),
         provider,
         "mock".to_string(),
@@ -305,7 +308,10 @@ fn user_entry(text: &str) -> SessionEntry {
 
 fn assistant_with_tool_call(tool_name: &str, path: &str) -> SessionEntry {
     let mut args = serde_json::Map::new();
-    args.insert("path".to_string(), serde_json::Value::String(path.to_string()));
+    args.insert(
+        "path".to_string(),
+        serde_json::Value::String(path.to_string()),
+    );
     SessionEntry::Message {
         id: Uuid::new_v4(),
         message: AgentMessage::Assistant(AssistantMessage {
@@ -377,7 +383,10 @@ async fn test_compact_basic_success() {
     let actor = make_compaction_actor(provider);
     let entries = build_many_entries(10);
 
-    let result = actor.compact(&entries, &CancellationToken::new()).await.unwrap();
+    let result = actor
+        .compact(&entries, &CancellationToken::new())
+        .await
+        .unwrap();
 
     assert_eq!(result.summary, expected_summary);
     assert!(!result.first_kept_entry_id.is_nil());
@@ -467,7 +476,10 @@ async fn test_compact_with_tool_calls_populates_details() {
     // Add padding entries to ensure summarization triggers
     entries.extend(build_many_entries(5));
 
-    let result = actor.compact(&entries, &CancellationToken::new()).await.unwrap();
+    let result = actor
+        .compact(&entries, &CancellationToken::new())
+        .await
+        .unwrap();
 
     assert_eq!(result.summary, expected_summary);
 
@@ -484,7 +496,9 @@ async fn test_compact_with_tool_calls_populates_details() {
         details.read_files
     );
     assert!(
-        details.modified_files.contains(&"target/output.txt".to_string()),
+        details
+            .modified_files
+            .contains(&"target/output.txt".to_string()),
         "modified_files should contain target/output.txt, got {:?}",
         details.modified_files
     );
@@ -521,7 +535,10 @@ async fn test_compact_with_previous_compaction() {
     // Add enough new messages to trigger another compaction
     entries.extend(build_many_entries(10));
 
-    let result = actor.compact(&entries, &CancellationToken::new()).await.unwrap();
+    let result = actor
+        .compact(&entries, &CancellationToken::new())
+        .await
+        .unwrap();
 
     assert_eq!(result.summary, expected_summary);
     assert!(result.tokens_before > 0);
@@ -713,7 +730,10 @@ async fn test_compact_truncates_old_entries() {
 
     // The last entry should be the Compaction marker
     assert!(
-        matches!(after_entries.last().unwrap(), SessionEntry::Compaction { .. }),
+        matches!(
+            after_entries.last().unwrap(),
+            SessionEntry::Compaction { .. }
+        ),
         "last entry should be Compaction"
     );
 }

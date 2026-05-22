@@ -58,7 +58,9 @@ async fn test_batch_create_sessions() {
                 .uri("/api/v1/sessions/batch")
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"count": 3, "template": {"title": "batch test"}}"#))
+                .body(Body::from(
+                    r#"{"count": 3, "template": {"title": "batch test"}}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -98,7 +100,9 @@ async fn test_clone_session() {
                 .uri("/api/v1/sessions")
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "original", "system_prompt": "you are a tester"}"#))
+                .body(Body::from(
+                    r#"{"title": "original", "system_prompt": "you are a tester"}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -144,7 +148,11 @@ async fn test_clone_session() {
 
     let msgs = common::json_body(msgs_response).await;
     let msgs_arr = msgs.as_array().unwrap();
-    assert_eq!(msgs_arr.len(), 0, "cloned session should have empty history");
+    assert_eq!(
+        msgs_arr.len(),
+        0,
+        "cloned session should have empty history"
+    );
 }
 
 #[tokio::test]
@@ -183,7 +191,9 @@ async fn test_reset_session() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"hello"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -263,7 +273,9 @@ async fn test_sync_wait_success() {
                 ))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"hello"}]}"#,
+                ))
                 .unwrap(),
         )
         .await

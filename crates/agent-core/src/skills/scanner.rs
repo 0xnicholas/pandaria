@@ -55,7 +55,10 @@ pub fn validate_skill_name(name: &str, parent_dir_name: &str) -> Vec<String> {
             name.len()
         ));
     }
-    if !regex::Regex::new(r"^[a-z0-9-]+$").expect("static regex").is_match(name) {
+    if !regex::Regex::new(r"^[a-z0-9-]+$")
+        .expect("static regex")
+        .is_match(name)
+    {
         errors.push(
             "name contains invalid characters (must be lowercase a-z, 0-9, hyphens only)"
                 .to_string(),
@@ -148,9 +151,7 @@ fn scan_dir(
 
         let path = entry.path();
         if path.is_file() && name_str.ends_with(".md") {
-            if let Some(skill) =
-                load_skill_from_file(&path, source, seen_names, diagnostics)
-            {
+            if let Some(skill) = load_skill_from_file(&path, source, seen_names, diagnostics) {
                 skills.push(skill);
             }
         } else if path.is_dir() {
@@ -270,7 +271,11 @@ fn load_skill_from_file(
     };
     let canonical_base = match std::fs::canonicalize(path.parent().unwrap_or(Path::new("/"))) {
         Ok(p) => p.display().to_string(),
-        Err(_) => path.parent().unwrap_or(Path::new("/")).display().to_string(),
+        Err(_) => path
+            .parent()
+            .unwrap_or(Path::new("/"))
+            .display()
+            .to_string(),
     };
 
     Some(Skill {
@@ -287,9 +292,7 @@ fn load_skill_from_file(
 ///
 /// Directories are scanned in the order given; earlier sources win on name
 /// collisions.
-pub fn scan_skill_dirs(
-    dirs: &[(PathBuf, SkillSource)],
-) -> LoadSkillsResult {
+pub fn scan_skill_dirs(dirs: &[(PathBuf, SkillSource)]) -> LoadSkillsResult {
     let mut seen_names = HashSet::new();
     let mut diagnostics = Vec::new();
     let mut skills = Vec::new();
@@ -299,7 +302,10 @@ pub fn scan_skill_dirs(
         skills.extend(dir_skills);
     }
 
-    LoadSkillsResult { skills, diagnostics }
+    LoadSkillsResult {
+        skills,
+        diagnostics,
+    }
 }
 
 #[cfg(test)]
@@ -366,7 +372,10 @@ mod tests {
     #[test]
     fn test_validate_skill_name_hyphen_edges() {
         let errs = validate_skill_name("-foo", "-foo");
-        assert!(errs.iter().any(|e| e.contains("start or end with a hyphen")));
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("start or end with a hyphen"))
+        );
     }
 
     #[test]
@@ -386,7 +395,11 @@ mod tests {
         // A nested dir should NOT be scanned because SKILL.md at root stops it
         let nested = tmp.path().join("my-skill").join("sub");
         std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(nested.join("SKILL.md"), "---\nname: sub\ndescription: sub\n---").unwrap();
+        std::fs::write(
+            nested.join("SKILL.md"),
+            "---\nname: sub\ndescription: sub\n---",
+        )
+        .unwrap();
 
         let result = scan_skill_dirs(&[(tmp.path().to_path_buf(), SkillSource::Project)]);
         assert_eq!(result.skills.len(), 1);
@@ -436,7 +449,10 @@ mod tests {
         assert_eq!(result.skills.len(), 1);
         assert_eq!(result.skills[0].description, "first");
         assert_eq!(result.diagnostics.len(), 1);
-        assert!(matches!(result.diagnostics[0].kind, SkillDiagnosticKind::Collision));
+        assert!(matches!(
+            result.diagnostics[0].kind,
+            SkillDiagnosticKind::Collision
+        ));
     }
 
     #[test]
@@ -452,11 +468,7 @@ mod tests {
         .unwrap();
         let kept_dir = tmp.path().join("kept");
         std::fs::create_dir_all(&kept_dir).unwrap();
-        std::fs::write(
-            kept_dir.join("SKILL.md"),
-            "---\ndescription: kept\n---",
-        )
-        .unwrap();
+        std::fs::write(kept_dir.join("SKILL.md"), "---\ndescription: kept\n---").unwrap();
 
         let result = scan_skill_dirs(&[(tmp.path().to_path_buf(), SkillSource::Project)]);
         assert_eq!(result.skills.len(), 1);

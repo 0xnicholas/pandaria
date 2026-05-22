@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::error::AgentError;
 use crate::file_ops::DefaultFileOperationExtractor;
-use crate::harness::compaction::CompactionActor;
+use crate::harness::compaction::Compactor;
 use crate::harness::session::{SessionActor, SessionConfig};
 use crate::hook::combined::CombinedDispatcher;
 use crate::hook::default_dispatcher::DefaultHookDispatcher;
@@ -14,7 +14,7 @@ use crate::space::AgentSpace;
 use crate::tools::{HttpProxyTool, MediaGenerationTool, ToolConfig};
 use crate::types::AgentToolRef;
 
-use super::config::RuntimeConfig;
+use super::config::HarnessConfig;
 
 /// Result of a successful `SessionBuilder::build()` call.
 pub struct BuiltSession {
@@ -22,11 +22,11 @@ pub struct BuiltSession {
     pub tools: Vec<AgentToolRef>,
 }
 
-/// Builder that assembles a `SessionActor` and its tools from a `RuntimeConfig`.
+/// Builder that assembles a `SessionActor` and its tools from a `HarnessConfig`.
 ///
 /// Usage:
 /// ```rust,ignore
-/// let built = SessionBuilder::new(&runtime_config)
+/// let built = SessionBuilder::new(&harness_config)
 ///     .tenant_id("acme")
 ///     .session_id("uuid")
 ///     .system_prompt("You are a helpful assistant.")
@@ -36,7 +36,7 @@ pub struct BuiltSession {
 ///     .await?;
 /// ```
 pub struct SessionBuilder {
-    config: RuntimeConfig,
+    config: HarnessConfig,
     tenant_id: String,
     session_id: String,
     system_prompt: String,
@@ -45,8 +45,8 @@ pub struct SessionBuilder {
 }
 
 impl SessionBuilder {
-    /// Start a new builder from a `RuntimeConfig`.
-    pub fn new(config: &RuntimeConfig) -> Self {
+    /// Start a new builder from a `HarnessConfig`.
+    pub fn new(config: &HarnessConfig) -> Self {
         Self {
             config: config.clone(),
             tenant_id: String::new(),
@@ -90,9 +90,9 @@ impl SessionBuilder {
     /// Assemble the session.
     ///
     /// This method:
-    /// 1. Creates a `DefaultHookDispatcher` from `RuntimeConfig.hook_config`.
+    /// 1. Creates a `DefaultHookDispatcher` from `HarnessConfig.hook_config`.
     /// 2. Builds the tool list (media generation + HTTP proxies).
-    /// 3. Creates a `CompactionActor`.
+    /// 3. Creates a `Compactor`.
     /// 4. Loads skills for the tenant.
     /// 5. Instantiates `SessionActor`.
     pub async fn build(self) -> Result<BuiltSession, AgentError> {
@@ -100,13 +100,10 @@ impl SessionBuilder {
         let session_id = self.session_id.clone();
 
         // 1. Hook dispatcher
-        let mut dispatcher = DefaultHookDispatcher::with_space(self.config.agent_space.clone());
-        dispatcher.denied_tools = self.config.hook_config.denied_tools.clone();
-        dispatcher.allowed_tools = self.config.hook_config.allowed_tools.clone();
-        dispatcher.path_guard_fields = self.config.hook_config.path_guard_fields.clone();
-        dispatcher.path_guard_scan_unknown = self.config.hook_config.path_guard_scan_unknown;
-        dispatcher.max_turns_per_session = self.config.hook_config.max_turns_per_session;
-        dispatcher.cost_callback = self.config.hook_config.cost_callback.clone();
+        let dispatcher = DefaultHookDispatcher::from_config(
+            self.config.agent_space.clone(),
+            &self.config.hook_config,
+        );
 
         let hook_dispatcher: Arc<dyn HookDispatcher> =
             if let Some(ref mem) = self.config.memory_store {
@@ -143,7 +140,7 @@ impl SessionBuilder {
         }
 
         // 3. Compaction actor
-        let compaction_actor = Arc::new(CompactionActor::new(
+        let compaction_actor = Arc::new(Compactor::new(
             self.config.compaction_config.clone(),
             self.config.provider.clone(),
             self.model.clone(),
@@ -174,39 +171,38 @@ impl SessionBuilder {
         agent_space: &AgentSpace,
         tenant_id: &str,
     ) -> Result<Vec<crate::skills::Skill>, AgentError> {
-    let user_skills_dir = agent_space.skills_dir().display().to_string();
-    let project_skills_dir = agent_space.workspace_for(tenant_id).join("skills");
-    let _ = std::fs::create_dir_all(&project_skills_dir);
+        let user_skills_dir = agent_space.skills_dir().display().to_string();
+        let project_skills_dir = agent_space.workspace_for(tenant_id).join("skills");
+        let _ = tokio::fs::create_dir_all(&project_skills_dir).await;
 
-    let loader = FileSystemSkillLoader {
-        user_skills_dir,
-        project_skills_dir: project_skills_dir.display().to_string(),
-        explicit_paths: Vec::new(),
-    };
-    let result = loader.load_skills().await;
-    if !result.diagnostics.is_empty() {
-        for diag in &result.diagnostics {
-            tracing::warn!(
-                path = %diag.path,
-                kind = ?diag.kind,
-                "skill diagnostic: {}",
-                diag.message
-            );
+        let loader = FileSystemSkillLoader {
+            user_skills_dir,
+            project_skills_dir: project_skills_dir.display().to_string(),
+            explicit_paths: Vec::new(),
+        };
+        let result = loader.load_skills().await;
+        if !result.diagnostics.is_empty() {
+            for diag in &result.diagnostics {
+                tracing::warn!(
+                    path = %diag.path,
+                    kind = ?diag.kind,
+                    "skill diagnostic: {}",
+                    diag.message
+                );
+            }
         }
+        Ok(result.skills)
     }
-    Ok(result.skills)
-}
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::compaction::CompactionConfig;
-    use crate::runtime::config::DefaultHookConfig;
     use crate::space::AgentSpace;
 
-    fn dummy_runtime_config() -> RuntimeConfig {
-        RuntimeConfig {
+    fn dummy_runtime_config() -> HarnessConfig {
+        HarnessConfig {
             provider: Arc::new(ai_provider::RouterProvider::new()),
             default_model: "gpt-4".to_string(),
             default_system_prompt: "You are a helper.".to_string(),
@@ -215,9 +211,10 @@ mod tests {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            available_models: vec!["gpt-4".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
-            hook_config: DefaultHookConfig::default(),
+            hook_config: crate::harness::config::HookConfig::default(),
             memory_store: None,
         }
     }

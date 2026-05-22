@@ -1,23 +1,19 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
-use agent_core::harness::compaction::{CompactionActor, CompactionConfig};
-use agent_core::{
-    SessionActor, SessionConfig,
-};
 use agent_core::file_ops::DefaultFileOperationExtractor;
+use agent_core::harness::compaction::{Compactor, CompactionConfig};
 use agent_core::persistence::entry::SessionEntry;
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider, TestResponse};
 use agent_core::types::AgentMessage;
-use ai_provider::{
-    Content, UserMessage,
-};
+use agent_core::{SessionActor, SessionConfig};
+use ai_provider::{Content, UserMessage};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // ============================================================================
-// Helper: build CompactionActor with given provider
+// Helper: build Compactor with given provider
 // ============================================================================
 
-fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> CompactionActor {
-    CompactionActor::new(
+fn make_compaction_actor(provider: Arc<dyn ai_provider::LlmProvider>) -> Compactor {
+    Compactor::new(
         CompactionConfig::new(true, 1000, 100),
         provider,
         "test".to_string(),
@@ -92,7 +88,10 @@ async fn test_recovery_overflow_then_compact_and_retry() {
     }
 
     // Prompt should trigger: overflow → compaction → retry → success
-    let results = session.prompt("trigger overflow".to_string()).await.unwrap();
+    let results = session
+        .prompt("trigger overflow".to_string())
+        .await
+        .unwrap();
 
     // Verify final success
     assert!(
@@ -193,9 +192,6 @@ async fn test_recovery_double_overflow_aborts() {
                 msg
             );
         }
-        other => panic!(
-            "Expected CompactionFailed error, got {:?}",
-            other
-        ),
+        other => panic!("Expected CompactionFailed error, got {:?}", other),
     }
 }

@@ -53,10 +53,9 @@ impl ServerConfig {
         let mut config = Self::default();
 
         if let Ok(addr) = std::env::var("PANDARIA_BIND_ADDR") {
-            config.bind_addr = addr.parse().expect(&format!(
-                "PANDARIA_BIND_ADDR '{}' is invalid",
-                addr
-            ));
+            config.bind_addr = addr
+                .parse()
+                .expect(&format!("PANDARIA_BIND_ADDR '{}' is invalid", addr));
         }
 
         if let Ok(secret) = std::env::var("PANDARIA_AUTH_SECRET") {
@@ -64,20 +63,18 @@ impl ServerConfig {
         }
 
         if let Ok(rps) = std::env::var("PANDARIA_RATE_LIMIT_RPS") {
-            config.rate_limit.requests_per_second = rps.parse().expect(
-                "PANDARIA_RATE_LIMIT_RPS must be a valid u32"
-            );
+            config.rate_limit.requests_per_second = rps
+                .parse()
+                .expect("PANDARIA_RATE_LIMIT_RPS must be a valid u32");
         }
         if let Ok(burst) = std::env::var("PANDARIA_RATE_LIMIT_BURST") {
-            config.rate_limit.burst_size = burst.parse().expect(
-                "PANDARIA_RATE_LIMIT_BURST must be a valid u32"
-            );
+            config.rate_limit.burst_size = burst
+                .parse()
+                .expect("PANDARIA_RATE_LIMIT_BURST must be a valid u32");
         }
 
         if let Ok(origins) = std::env::var("PANDARIA_CORS_ORIGINS") {
-            config.cors_origins = Some(
-                origins.split(',').map(|s| s.trim().to_string()).collect()
-            );
+            config.cors_origins = Some(origins.split(',').map(|s| s.trim().to_string()).collect());
         }
 
         config

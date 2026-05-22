@@ -21,11 +21,12 @@ pub struct SseEvent {
 impl SseEvent {
     /// Parse the data payload as JSON.
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> Result<T, LlmError> {
-        serde_json::from_str(&self.data).map_err(|e| {
-            LlmError::StreamError {
-                kind: crate::StreamErrorKind::Parse,
-                message: format!("SSE JSON parse error: {e}; data={}", &self.data[..self.data.len().min(256)]),
-            }
+        serde_json::from_str(&self.data).map_err(|e| LlmError::StreamError {
+            kind: crate::StreamErrorKind::Parse,
+            message: format!(
+                "SSE JSON parse error: {e}; data={}",
+                &self.data[..self.data.len().min(256)]
+            ),
         })
     }
 

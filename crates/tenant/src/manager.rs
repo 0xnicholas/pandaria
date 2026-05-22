@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -7,13 +7,12 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use agent_core::{RuntimeConfig, SessionBuilder};
+use agent_core::{HarnessConfig, SessionActor, SessionBuilder};
 
 use crate::error::TenantError;
 use crate::events::SessionEventBridge;
 use crate::registry::TenantRegistry;
 use crate::session_entry::ActiveSession;
-
 
 /// Webhook configuration for session event delivery.
 #[derive(Debug, Clone)]
@@ -90,11 +89,7 @@ pub trait TenantManager: Send + Sync {
     ) -> Result<u64, TenantError>;
 
     /// Interrupt the current in-flight turn.
-    async fn interrupt(
-        &self,
-        tenant_id: &str,
-        session_id: &Uuid,
-    ) -> Result<(), TenantError>;
+    async fn interrupt(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError>;
 
     /// Subscribe to AgentEvent stream for a session.
     /// Drop the receiver to cancel subscription.
@@ -105,11 +100,7 @@ pub trait TenantManager: Send + Sync {
     ) -> Result<tokio::sync::mpsc::Receiver<agent_core::AgentEvent>, TenantError>;
 
     /// Delete a session and release all associated resources.
-    async fn delete_session(
-        &self,
-        tenant_id: &str,
-        session_id: &Uuid,
-    ) -> Result<(), TenantError>;
+    async fn delete_session(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError>;
 
     /// Update session metadata (partial update).
     async fn update_session(
@@ -120,11 +111,7 @@ pub trait TenantManager: Send + Sync {
     ) -> Result<SessionInfo, TenantError>;
 
     /// Trigger manual compaction for a session.
-    async fn compact_session(
-        &self,
-        tenant_id: &str,
-        session_id: &Uuid,
-    ) -> Result<(), TenantError>;
+    async fn compact_session(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError>;
 
     /// Get full message history for a session.
     async fn get_session_messages(
@@ -209,8 +196,13 @@ pub struct BatchFailure {
 /// Result of a synchronous wait operation.
 #[derive(Debug, Clone)]
 pub enum WaitResult {
-    Completed { turn_index: u64, messages: Vec<agent_core::types::AgentMessage> },
-    Timeout { turn_index: u64 },
+    Completed {
+        turn_index: u64,
+        messages: Vec<agent_core::types::AgentMessage>,
+    },
+    Timeout {
+        turn_index: u64,
+    },
 }
 
 /// Default implementation of `TenantManager`.
@@ -219,34 +211,22 @@ pub enum WaitResult {
 /// and bridges `AgentEvent` streams to subscribers.
 pub struct TenantManagerImpl {
     registry: Arc<TenantRegistry>,
-    runtime_config: Arc<RuntimeConfig>,
+    runtime_config: Arc<HarnessConfig>,
+
     sessions: DashMap<(String, Uuid), ActiveSession>,
-    /// Available models for quota query.
-    available_models: Vec<String>,
     /// Maximum allowed synchronous wait timeout in milliseconds.
     max_sync_wait_ms: u64,
 }
 
 impl TenantManagerImpl {
     /// Create a new `TenantManagerImpl`.
-    pub fn new(
-        registry: Arc<TenantRegistry>,
-        runtime_config: Arc<RuntimeConfig>,
-    ) -> Self {
-        let default_model = runtime_config.default_model.clone();
+    pub fn new(registry: Arc<TenantRegistry>, runtime_config: Arc<HarnessConfig>) -> Self {
         Self {
             registry,
             runtime_config,
             sessions: DashMap::new(),
-            available_models: vec![default_model],
             max_sync_wait_ms: 60_000,
         }
-    }
-
-    /// Set the list of available models returned by `get_quota`.
-    pub fn with_available_models(mut self, models: Vec<String>) -> Self {
-        self.available_models = models;
-        self
     }
 
     /// Set the maximum synchronous wait timeout in milliseconds.
@@ -254,26 +234,12 @@ impl TenantManagerImpl {
         self.max_sync_wait_ms = ms;
         self
     }
-}
 
-#[async_trait]
-impl TenantManager for TenantManagerImpl {
-    async fn create_session(
-        &self,
-        tenant_id: &str,
-        params: CreateSessionParams,
-    ) -> Result<SessionInfo, TenantError> {
-        // 1. Validate tenant exists and reserve a session slot.
-        let supervisor = self
-            .registry
-            .get(tenant_id)
-            .ok_or_else(|| TenantError::TenantNotFound(tenant_id.to_string()))?;
-        let guard = supervisor.reserve_session()?;
-
-        let session_id = Uuid::new_v4();
-
-        // 2. Validate external tool endpoints (security boundary).
-        for tool_config in &params.tools {
+    /// Validate external tool endpoints for SSRF and URL format.
+    fn validate_external_tool_endpoints(
+        tools: &[agent_core::ToolConfig],
+    ) -> Result<(), TenantError> {
+        for tool_config in tools {
             if url::Url::parse(&tool_config.endpoint).is_err() {
                 return Err(TenantError::BadRequest(format!(
                     "tool_endpoint_invalid: {}",
@@ -287,51 +253,53 @@ impl TenantManager for TenantManagerImpl {
                 )));
             }
         }
+        Ok(())
+    }
 
-        // 3. Build the session via SessionBuilder.
-        let system_prompt = params
-            .system_prompt
-            .clone()
-            .unwrap_or_else(|| self.runtime_config.default_system_prompt.clone());
-        let built = SessionBuilder::new(&self.runtime_config)
-            .tenant_id(tenant_id)
-            .session_id(session_id.to_string())
-            .system_prompt(system_prompt.clone())
-            .model(self.runtime_config.default_model.clone())
-            .with_external_tools(params.tools.clone())
-            .build()
-            .await
-            .map_err(|e| TenantError::Internal {
-                tenant_id: tenant_id.to_string(),
-                message: format!("session build failed: {}", e),
-            })?;
-        let mut actor = built.actor;
-        let tools = built.tools;
-
-        // 4. Register webhook event listener if configured.
-        if let Some(ref webhook_config) = params.webhook {
-            if url::Url::parse(&webhook_config.url).is_err() {
-                return Err(TenantError::BadRequest(format!(
-                    "webhook_url_invalid: {}",
-                    webhook_config.url
-                )));
-            }
-            if agent_core::utils::ssrf::is_internal_endpoint(&webhook_config.url) {
-                return Err(TenantError::BadRequest(format!(
-                    "webhook_url_forbidden: {}",
-                    webhook_config.url
-                )));
-            }
-            let listener = crate::events::WebhookEventListener::new(
-                webhook_config.clone(),
-                tenant_id.to_string(),
-                session_id.to_string(),
-                self.runtime_config.http_client.clone(),
-            );
-            actor.add_event_listener(Arc::new(listener));
+    /// Register a webhook event listener on the session actor if configured.
+    fn setup_webhook(
+        &self,
+        actor: &mut SessionActor,
+        webhook_config: &Option<WebhookConfig>,
+        tenant_id: &str,
+        session_id: &str,
+    ) -> Result<(), TenantError> {
+        let Some(webhook) = webhook_config else {
+            return Ok(());
+        };
+        if url::Url::parse(&webhook.url).is_err() {
+            return Err(TenantError::BadRequest(format!(
+                "webhook_url_invalid: {}",
+                webhook.url
+            )));
         }
+        if agent_core::utils::ssrf::is_internal_endpoint(&webhook.url) {
+            return Err(TenantError::BadRequest(format!(
+                "webhook_url_forbidden: {}",
+                webhook.url
+            )));
+        }
+        let listener = crate::events::WebhookEventListener::new(
+            webhook.clone(),
+            tenant_id.to_string(),
+            session_id.to_string(),
+            self.runtime_config.http_client.clone(),
+        );
+        actor.add_event_listener(Arc::new(listener));
+        Ok(())
+    }
 
-        // 5. Set up event bridge and abort token.
+    /// Finalize session setup: event bridge, abort token, and registration.
+    fn insert_active_session(
+        &self,
+        tenant_id: &str,
+        session_id: Uuid,
+        mut actor: SessionActor,
+        guard: crate::supervisor::SessionGuard,
+        system_prompt: String,
+        params: CreateSessionParams,
+        tools: Vec<agent_core::AgentToolRef>,
+    ) -> SessionInfo {
         let (event_tx, _) = tokio::sync::broadcast::channel(256);
         let bridge = Arc::new(SessionEventBridge::new(event_tx));
         actor.add_event_listener(bridge.clone());
@@ -366,6 +334,58 @@ impl TenantManager for TenantManagerImpl {
             },
         );
 
+        info
+    }
+}
+
+#[async_trait]
+impl TenantManager for TenantManagerImpl {
+    async fn create_session(
+        &self,
+        tenant_id: &str,
+        params: CreateSessionParams,
+    ) -> Result<SessionInfo, TenantError> {
+        let guard = self
+            .registry
+            .get(tenant_id)
+            .ok_or_else(|| TenantError::TenantNotFound(tenant_id.to_string()))?
+            .reserve_session()?;
+        let session_id = Uuid::new_v4();
+
+        Self::validate_external_tool_endpoints(&params.tools)?;
+
+        let system_prompt = params.system_prompt.clone()
+            .unwrap_or_else(|| self.runtime_config.default_system_prompt.clone());
+        let mut built = SessionBuilder::new(&self.runtime_config)
+            .tenant_id(tenant_id)
+            .session_id(session_id.to_string())
+            .system_prompt(system_prompt.clone())
+            .model(self.runtime_config.default_model.clone())
+            .with_external_tools(params.tools.clone())
+            .build()
+            .await
+            .map_err(|e| TenantError::Internal {
+                tenant_id: tenant_id.to_string(),
+                message: format!("session build failed: {}", e),
+            })?;
+
+        self.setup_webhook(
+            &mut built.actor,
+            &params.webhook,
+            tenant_id,
+            &session_id.to_string(),
+        )?;
+
+        let info = self.insert_active_session(
+            tenant_id,
+            session_id,
+            built.actor,
+            guard,
+            system_prompt,
+            params,
+            built.tools,
+        );
+
         info!(
             tenant_id = %tenant_id,
             session_id = %session_id,
@@ -396,9 +416,7 @@ impl TenantManager for TenantManagerImpl {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         let mut info = entry.info.clone();
         info.turn_count = entry.turn_counter.load(Ordering::SeqCst);
@@ -414,38 +432,36 @@ impl TenantManager for TenantManagerImpl {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         // Hard quota check before invoking the provider.
         let supervisor = self
             .registry
             .get(tenant_id)
             .ok_or_else(|| TenantError::TenantNotFound(tenant_id.to_string()))?;
-        supervisor.check_quota(crate::tenant::QuotaCheck::TokenUsage { input: 0, output: 0 })?;
+        supervisor.check_quota(crate::tenant::QuotaCheck::TokenUsage {
+            input: 0,
+            output: 0,
+        })?;
 
         let turn_index = entry.turn_counter.fetch_add(1, Ordering::SeqCst);
 
         {
             let mut actor = entry.actor.lock().await;
-            actor.prompt_with_content(content).await.map_err(|e| map_agent_error(e, tenant_id))?;
+            actor
+                .prompt_with_content(content)
+                .await
+                .map_err(|e| map_agent_error(e, tenant_id))?;
         }
 
         Ok(turn_index)
     }
 
-    async fn interrupt(
-        &self,
-        tenant_id: &str,
-        session_id: &Uuid,
-    ) -> Result<(), TenantError> {
+    async fn interrupt(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError> {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         // Cancel the token without holding the actor lock — this allows
         // abort to reach the in-flight LLM stream even while prompt()
@@ -469,25 +485,17 @@ impl TenantManager for TenantManagerImpl {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         Ok(entry.bridge.subscribe())
     }
 
-    async fn delete_session(
-        &self,
-        tenant_id: &str,
-        session_id: &Uuid,
-    ) -> Result<(), TenantError> {
+    async fn delete_session(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError> {
         let key = (tenant_id.to_string(), *session_id);
         let entry = self
             .sessions
             .remove(&key)
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?
             .1;
 
         // Gracefully shut down the actor so buffered events are drained
@@ -507,7 +515,14 @@ impl TenantManager for TenantManagerImpl {
                 session_id: session_id.to_string(),
                 user_id: None,
             };
-            let _ = mem.forget_session(&mem_ctx).await;
+            if let Err(e) = mem.forget_session(&mem_ctx).await {
+                warn!(
+                    tenant_id = %tenant_id,
+                    session_id = %session_id,
+                    error = %e,
+                    "memory: forget_session failed"
+                );
+            }
         }
 
         info!(
@@ -528,9 +543,7 @@ impl TenantManager for TenantManagerImpl {
         let mut entry = self
             .sessions
             .get_mut(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         // Update stored info and session actor
         if let Some(title) = updates.title {
@@ -552,20 +565,17 @@ impl TenantManager for TenantManagerImpl {
         Ok(info)
     }
 
-    async fn compact_session(
-        &self,
-        tenant_id: &str,
-        session_id: &Uuid,
-    ) -> Result<(), TenantError> {
+    async fn compact_session(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError> {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         let mut actor = entry.actor.lock().await;
-        actor.compact(None).await.map_err(|e| map_agent_error(e, tenant_id))?;
+        actor
+            .compact(None)
+            .await
+            .map_err(|e| map_agent_error(e, tenant_id))?;
 
         info!(
             tenant_id = %tenant_id,
@@ -584,9 +594,7 @@ impl TenantManager for TenantManagerImpl {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         let actor = entry.actor.lock().await;
         Ok(actor.messages())
@@ -600,9 +608,7 @@ impl TenantManager for TenantManagerImpl {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         let actor = entry.actor.lock().await;
         Ok((actor.state(), actor.error_reason()))
@@ -625,7 +631,7 @@ impl TenantManager for TenantManagerImpl {
             max_tool_calls_per_minute: quota.max_tool_calls_per_minute as u64,
             tool_calls_in_last_minute: status.tool_calls_in_window as u64,
             default_model: self.runtime_config.default_model.clone(),
-            available_models: self.available_models.clone(),
+            available_models: self.runtime_config.available_models.clone(),
         })
     }
 
@@ -689,9 +695,7 @@ impl TenantManager for TenantManagerImpl {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         let template = CreateSessionParams {
             title,
@@ -714,12 +718,13 @@ impl TenantManager for TenantManagerImpl {
         let entry = self
             .sessions
             .get(&(tenant_id.to_string(), *session_id))
-            .ok_or_else(|| {
-                TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id))
-            })?;
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
 
         let mut actor = entry.actor.lock().await;
-        let new_token = actor.reset().await.map_err(|e| map_agent_error(e, tenant_id))?;
+        let new_token = actor
+            .reset()
+            .await
+            .map_err(|e| map_agent_error(e, tenant_id))?;
         *entry.abort_token.lock().unwrap() = new_token;
         Ok(actor.state())
     }
@@ -739,7 +744,10 @@ impl TenantManager for TenantManagerImpl {
             while let Some(event) = rx.recv().await {
                 match event {
                     agent_core::AgentEvent::TurnEnd { messages, .. } => {
-                        return Ok(WaitResult::Completed { turn_index, messages });
+                        return Ok(WaitResult::Completed {
+                            turn_index,
+                            messages,
+                        });
                     }
                     agent_core::AgentEvent::Error { error } => {
                         return Err(map_agent_error(error, tenant_id));

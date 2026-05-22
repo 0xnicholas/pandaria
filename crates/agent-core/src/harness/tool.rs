@@ -4,12 +4,12 @@ use ai_provider::ToolCall;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::hook::context::{ToolCallCtx, ToolResultCtx};
 use crate::error::AgentError;
+use crate::hook::context::{ToolCallCtx, ToolResultCtx};
 use crate::hook::dispatcher::HookDispatcher;
 use crate::hook::mutations::HookDecision;
-use crate::types::{AgentToolProgressUpdate, AgentToolRef};
 use crate::hook::timeout::with_timeout;
+use crate::types::{AgentToolProgressUpdate, AgentToolRef};
 use crate::utils::helpers::catch_panic;
 use ai_provider::ToolResultMessage as ToolResultMsg;
 
@@ -58,12 +58,18 @@ impl ToolExecutor {
         let (decision, mutation) = with_timeout(
             self.hook_dispatcher.on_tool_call(&tool_call_ctx),
             500,
-            (HookDecision::Continue, crate::mutations::ToolCallMutation::default()),
+            (
+                HookDecision::Continue,
+                crate::mutations::ToolCallMutation::default(),
+            ),
             "on_tool_call",
-        ).await;
+        )
+        .await;
 
         // Apply accumulated input mutation from hook chain
-        let tool_input = mutation.input.unwrap_or_else(|| tool_call.arguments.clone());
+        let tool_input = mutation
+            .input
+            .unwrap_or_else(|| tool_call.arguments.clone());
 
         match decision {
             HookDecision::Block { reason } => {
@@ -95,9 +101,12 @@ impl ToolExecutor {
         );
 
         // Step 2: Execute the tool (with panic boundary per ADR constraint)
-        let mut result = catch_panic(
-            self.tool.execute(&tool_call.id, tool_input, on_progress, signal)
-        ).await??;
+        let mut result =
+            catch_panic(
+                self.tool
+                    .execute(&tool_call.id, tool_input, on_progress, signal),
+            )
+            .await??;
 
         // Step 3: Dispatch on_tool_result (chaining hook)
         let tool_result_ctx = ToolResultCtx {
@@ -115,7 +124,8 @@ impl ToolExecutor {
             500,
             crate::mutations::ToolResultMutation::default(),
             "on_tool_result",
-        ).await;
+        )
+        .await;
 
         // Apply mutations
         if let Some(content) = mutation.content {
@@ -154,17 +164,23 @@ impl ToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use crate::hook::mutations::ToolResultMutation;
     use crate::AgentToolResult;
+    use crate::hook::mutations::ToolResultMutation;
     use ai_provider::Content;
+    use async_trait::async_trait;
 
     struct MockTool;
     #[async_trait]
     impl crate::types::AgentTool for MockTool {
-        fn name(&self) -> &str { "mock_tool" }
-        fn description(&self) -> &str { "A mock tool" }
-        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        fn name(&self) -> &str {
+            "mock_tool"
+        }
+        fn description(&self) -> &str {
+            "A mock tool"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
         async fn execute(
             &self,
             _tool_call_id: &str,
@@ -192,12 +208,7 @@ mod tests {
     async fn test_tool_executor_normal_flow() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -206,7 +217,10 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!result.is_error);
         assert_eq!(result.tool_call_id, "call_1");
     }
@@ -219,7 +233,9 @@ mod tests {
             _ctx: &ToolCallCtx,
         ) -> (HookDecision, crate::mutations::ToolCallMutation) {
             (
-                HookDecision::Block { reason: "test block".to_string() },
+                HookDecision::Block {
+                    reason: "test block".to_string(),
+                },
                 crate::mutations::ToolCallMutation::default(),
             )
         }
@@ -229,12 +245,7 @@ mod tests {
     async fn test_tool_executor_blocked() {
         let dispatcher = Arc::new(BlockAllDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -243,7 +254,10 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(result.is_error);
         let details = result.details.unwrap();
         assert_eq!(details["blocked"], true);
@@ -256,9 +270,15 @@ mod tests {
     struct ProgressTool;
     #[async_trait]
     impl crate::types::AgentTool for ProgressTool {
-        fn name(&self) -> &str { "progress_tool" }
-        fn description(&self) -> &str { "Reports progress" }
-        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        fn name(&self) -> &str {
+            "progress_tool"
+        }
+        fn description(&self) -> &str {
+            "Reports progress"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
         async fn execute(
             &self,
             _tool_call_id: &str,
@@ -290,12 +310,7 @@ mod tests {
     async fn test_tool_progress_callback() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(ProgressTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -308,9 +323,13 @@ mod tests {
         let progress_updates_clone = progress_updates.clone();
 
         let result = executor
-            .execute_tool_call(&tool_call, Some(&move |update: AgentToolProgressUpdate| {
-                progress_updates_clone.lock().unwrap().push(update.content);
-            }), CancellationToken::new())
+            .execute_tool_call(
+                &tool_call,
+                Some(&move |update: AgentToolProgressUpdate| {
+                    progress_updates_clone.lock().unwrap().push(update.content);
+                }),
+                CancellationToken::new(),
+            )
             .await
             .unwrap();
 
@@ -341,12 +360,7 @@ mod tests {
     async fn test_tool_result_mutation() {
         let dispatcher = Arc::new(MutatingDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -355,7 +369,10 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(result.is_error); // mutated to error
         assert_eq!(result.content.len(), 1);
         match &result.content[0] {
@@ -369,9 +386,15 @@ mod tests {
     struct ErrorTool;
     #[async_trait]
     impl crate::types::AgentTool for ErrorTool {
-        fn name(&self) -> &str { "error_tool" }
-        fn description(&self) -> &str { "Always fails" }
-        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        fn name(&self) -> &str {
+            "error_tool"
+        }
+        fn description(&self) -> &str {
+            "Always fails"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
         async fn execute(
             &self,
             _tool_call_id: &str,
@@ -379,7 +402,9 @@ mod tests {
             _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
             _signal: CancellationToken,
         ) -> Result<AgentToolResult, AgentError> {
-            Err(AgentError::ToolExecutionFailed("intentional failure".to_string()))
+            Err(AgentError::ToolExecutionFailed(
+                "intentional failure".to_string(),
+            ))
         }
     }
 
@@ -387,12 +412,7 @@ mod tests {
     async fn test_tool_execution_error() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(ErrorTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -401,7 +421,9 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await;
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await;
         assert!(result.is_err());
         match result {
             Err(AgentError::ToolExecutionFailed(msg)) => {
@@ -414,9 +436,15 @@ mod tests {
     struct TerminateTool;
     #[async_trait]
     impl crate::types::AgentTool for TerminateTool {
-        fn name(&self) -> &str { "terminate_tool" }
-        fn description(&self) -> &str { "Signals termination" }
-        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        fn name(&self) -> &str {
+            "terminate_tool"
+        }
+        fn description(&self) -> &str {
+            "Signals termination"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
         async fn execute(
             &self,
             _tool_call_id: &str,
@@ -440,12 +468,7 @@ mod tests {
     async fn test_tool_terminate_flag_propagation() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(TerminateTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -454,7 +477,10 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await
+            .unwrap();
         assert!(!result.is_error);
         let details = result.details.unwrap();
         // Verify terminate flag is embedded in details
@@ -477,12 +503,7 @@ mod tests {
     async fn test_on_tool_call_panic_uses_default() {
         let dispatcher = Arc::new(PanicOnToolCallDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -492,7 +513,9 @@ mod tests {
         };
 
         // Panic in on_tool_call is caught and defaults to Continue, so tool executes normally
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await;
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await;
         assert!(result.is_ok());
         let content = result.unwrap().content;
         assert_eq!(content.len(), 1);
@@ -511,12 +534,7 @@ mod tests {
     async fn test_on_tool_result_panic_uses_default() {
         let dispatcher = Arc::new(PanicOnToolResultDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -526,7 +544,9 @@ mod tests {
         };
 
         // Panic in on_tool_result is caught and defaults to no mutation
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await;
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await;
         assert!(result.is_ok());
         let content = result.unwrap().content;
         assert_eq!(content.len(), 1);
@@ -539,9 +559,15 @@ mod tests {
     struct PanicTool;
     #[async_trait]
     impl crate::types::AgentTool for PanicTool {
-        fn name(&self) -> &str { "panic_tool" }
-        fn description(&self) -> &str { "Always panics" }
-        fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+        fn name(&self) -> &str {
+            "panic_tool"
+        }
+        fn description(&self) -> &str {
+            "Always panics"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
         async fn execute(
             &self,
             _tool_call_id: &str,
@@ -557,12 +583,7 @@ mod tests {
     async fn test_tool_execute_panic_is_caught() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(PanicTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -571,18 +592,20 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await;
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), AgentError::ToolExecutionFailed(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            AgentError::ToolExecutionFailed(_)
+        ));
     }
 
     struct TerminateMutatingDispatcher;
     #[async_trait]
     impl HookDispatcher for TerminateMutatingDispatcher {
-        async fn on_tool_result(
-            &self,
-            _ctx: &ToolResultCtx,
-        ) -> ToolResultMutation {
+        async fn on_tool_result(&self, _ctx: &ToolResultCtx) -> ToolResultMutation {
             ToolResultMutation {
                 terminate: Some(true),
                 ..Default::default()
@@ -594,12 +617,7 @@ mod tests {
     async fn test_tool_result_mutation_terminate_flag() {
         let dispatcher = Arc::new(TerminateMutatingDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new(
-            "t1".to_string(),
-            "s1".to_string(),
-            dispatcher,
-            tool,
-        );
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -608,7 +626,10 @@ mod tests {
             thought_signature: None,
         };
 
-        let result = executor.execute_tool_call(&tool_call, None, CancellationToken::new()).await.unwrap();
+        let result = executor
+            .execute_tool_call(&tool_call, None, CancellationToken::new())
+            .await
+            .unwrap();
         let details = result.details.unwrap();
         // Verify terminate flag from mutation is embedded in details
         assert_eq!(details["_terminate"], true);

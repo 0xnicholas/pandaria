@@ -1,22 +1,34 @@
 use std::sync::{Arc, Mutex};
 
-use agent_core::{AgentLoop, AgentLoopConfig, AgentEvent, SessionActor, SessionConfig, HookDispatcher};
 use agent_core::harness::agent_loop::resolve_orphan_tool_calls;
 use agent_core::prompt::PromptBuilder;
 use agent_core::test_utils::{AllowAllDispatcher, TestProvider};
-use async_trait::async_trait;
+use agent_core::{
+    AgentEvent, AgentLoop, AgentLoopConfig, HookDispatcher, SessionActor, SessionConfig,
+};
 use ai_provider::{Content, LlmContext, LlmProvider, StopReason, StreamOptions, ToolCall};
+use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-fn make_loop_config(provider: Arc<dyn LlmProvider>, dispatcher: Arc<dyn HookDispatcher>, tools: Vec<agent_core::AgentToolRef>) -> AgentLoopConfig {
+fn make_loop_config(
+    provider: Arc<dyn LlmProvider>,
+    dispatcher: Arc<dyn HookDispatcher>,
+    tools: Vec<agent_core::AgentToolRef>,
+) -> AgentLoopConfig {
     AgentLoopConfig {
-        tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
-        provider, hook_dispatcher: dispatcher, tools,
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        model: "test".to_string(),
+        provider,
+        hook_dispatcher: dispatcher,
+        tools,
         prompt_builder: PromptBuilder::from("You are helpful."),
         stream_options: StreamOptions::default(),
         steer_queue: Arc::new(Mutex::new(vec![])),
         follow_up_queue: Arc::new(Mutex::new(vec![])),
-        event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+        event_sink: Arc::new(|event| {
+            tracing::debug!("event: {:?}", event);
+        }),
         circuit_breaker: None,
         skills: Vec::new(),
     }
@@ -26,33 +38,50 @@ fn make_loop_config(provider: Arc<dyn LlmProvider>, dispatcher: Arc<dyn HookDisp
 async fn test_follow_up_triggers_second_turn() {
     let _ = tracing_subscriber::fmt().try_init();
 
-    let provider = TestProvider::counted(|n| agent_core::test_utils::TestResponse::Text(format!("response{}", n)));
+    let provider = TestProvider::counted(|n| {
+        agent_core::test_utils::TestResponse::Text(format!("response{}", n))
+    });
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let follow_up_queue = Arc::new(Mutex::new(vec![
-        ai_provider::Message::User(ai_provider::UserMessage {
-            content: vec![Content::Text { text: "follow_up_msg".to_string(), text_signature: None }],
+    let follow_up_queue = Arc::new(Mutex::new(vec![ai_provider::Message::User(
+        ai_provider::UserMessage {
+            content: vec![Content::Text {
+                text: "follow_up_msg".to_string(),
+                text_signature: None,
+            }],
             timestamp: std::time::SystemTime::now(),
-        }),
-    ]));
+        },
+    )]));
     let config = AgentLoopConfig {
-        tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
-        provider, hook_dispatcher: dispatcher, tools: vec![],
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        model: "test".to_string(),
+        provider,
+        hook_dispatcher: dispatcher,
+        tools: vec![],
         prompt_builder: PromptBuilder::from("You are helpful."),
         stream_options: StreamOptions::default(),
         steer_queue: Arc::new(Mutex::new(vec![])),
         follow_up_queue: follow_up_queue.clone(),
-        event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+        event_sink: Arc::new(|event| {
+            tracing::debug!("event: {:?}", event);
+        }),
         circuit_breaker: None,
         skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
     let user_msg = ai_provider::Message::User(ai_provider::UserMessage {
-        content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+        content: vec![Content::Text {
+            text: "hi".to_string(),
+            text_signature: None,
+        }],
         timestamp: std::time::SystemTime::now(),
     });
 
-    let results = loop_.run(vec![user_msg], CancellationToken::new()).await.unwrap();
+    let results = loop_
+        .run(vec![user_msg], CancellationToken::new())
+        .await
+        .unwrap();
 
     assert_eq!(results.len(), 3);
     assert!(matches!(&results[0], ai_provider::Message::Assistant(_)));
@@ -74,19 +103,27 @@ async fn test_steer_injection() {
         static CONFIG: OnceLock<ai_provider::providers::shared::ProviderConfig> = OnceLock::new();
         CONFIG.get_or_init(|| {
             ai_provider::providers::shared::ProviderConfig::new(
-                None, "http://test", "test", "TEST_API_KEY",
+                None,
+                "http://test",
+                "test",
+                "TEST_API_KEY",
             )
         })
     }
 
     #[async_trait]
     impl LlmProvider for VerifyingProvider {
-        fn provider_name(&self) -> &str { "verify" }
-        fn models(&self) -> Vec<String> { vec!["test".to_string()] }
+        fn provider_name(&self) -> &str {
+            "verify"
+        }
+        fn models(&self) -> Vec<String> {
+            vec!["test".to_string()]
+        }
         fn config(&self) -> &ai_provider::providers::shared::ProviderConfig {
             test_provider_config()
         }
-        async fn stream(&self,
+        async fn stream(
+            &self,
             _model: &str,
             context: LlmContext,
             _options: StreamOptions,
@@ -94,20 +131,32 @@ async fn test_steer_injection() {
         ) -> Result<ai_provider::AssistantMessageEventStream, ai_provider::LlmError> {
             let has_steer = context.messages.iter().any(|m| {
                 if let ai_provider::Message::User(u) = m {
-                    u.content.iter().any(|c| matches!(c, Content::Text { text, .. } if text == &self.expected_text))
-                } else { false }
+                    u.content.iter().any(
+                        |c| matches!(c, Content::Text { text, .. } if text == &self.expected_text),
+                    )
+                } else {
+                    false
+                }
             });
             assert!(has_steer, "steer message should appear in LLM context");
 
             let (stream, tx) = ai_provider::AssistantMessageEventStream::new(4);
             let partial = ai_provider::AssistantMessage {
-                content: vec![Content::Text { text: "ok".to_string(), text_signature: None }],
+                content: vec![Content::Text {
+                    text: "ok".to_string(),
+                    text_signature: None,
+                }],
                 provider: "verify".to_string(),
                 model: "test".to_string(),
-                api: ai_provider::Api { provider: "verify".to_string(), model: "test".to_string() },
+                api: ai_provider::Api {
+                    provider: "verify".to_string(),
+                    model: "test".to_string(),
+                },
                 usage: ai_provider::Usage {
-                    input_tokens: 0, output_tokens: 0,
-                    cache_creation_input_tokens: None, cache_read_input_tokens: None,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_input_tokens: None,
+                    cache_read_input_tokens: None,
                     total_tokens: 0,
                 },
                 stop_reason: StopReason::Stop,
@@ -116,40 +165,66 @@ async fn test_steer_injection() {
                 timestamp: std::time::SystemTime::now(),
             };
             tokio::spawn(async move {
-                let _ = tx.send(ai_provider::AssistantMessageEvent::Start { partial: partial.clone() }).await;
-                let _ = tx.send(ai_provider::AssistantMessageEvent::Done { reason: StopReason::Stop, message: partial }).await;
+                let _ = tx
+                    .send(ai_provider::AssistantMessageEvent::Start {
+                        partial: partial.clone(),
+                    })
+                    .await;
+                let _ = tx
+                    .send(ai_provider::AssistantMessageEvent::Done {
+                        reason: StopReason::Stop,
+                        message: partial,
+                    })
+                    .await;
             });
             Ok(stream)
         }
     }
 
-    let provider = Arc::new(VerifyingProvider { expected_text: "steer_msg".to_string() });
+    let provider = Arc::new(VerifyingProvider {
+        expected_text: "steer_msg".to_string(),
+    });
     let dispatcher = Arc::new(AllowAllDispatcher);
-    let steer_queue = Arc::new(Mutex::new(vec![
-        ai_provider::Message::User(ai_provider::UserMessage {
-            content: vec![Content::Text { text: "steer_msg".to_string(), text_signature: None }],
+    let steer_queue = Arc::new(Mutex::new(vec![ai_provider::Message::User(
+        ai_provider::UserMessage {
+            content: vec![Content::Text {
+                text: "steer_msg".to_string(),
+                text_signature: None,
+            }],
             timestamp: std::time::SystemTime::now(),
-        }),
-    ]));
+        },
+    )]));
     let config = AgentLoopConfig {
-        tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
-        provider, hook_dispatcher: dispatcher, tools: vec![],
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        model: "test".to_string(),
+        provider,
+        hook_dispatcher: dispatcher,
+        tools: vec![],
         prompt_builder: PromptBuilder::from("You are helpful."),
         stream_options: StreamOptions::default(),
         steer_queue: steer_queue.clone(),
         follow_up_queue: Arc::new(Mutex::new(vec![])),
-        event_sink: Arc::new(|event| { tracing::debug!("event: {:?}", event); }),
+        event_sink: Arc::new(|event| {
+            tracing::debug!("event: {:?}", event);
+        }),
         circuit_breaker: None,
         skills: Vec::new(),
     };
     let loop_ = AgentLoop::new(config);
 
     let user_msg = ai_provider::Message::User(ai_provider::UserMessage {
-        content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+        content: vec![Content::Text {
+            text: "hi".to_string(),
+            text_signature: None,
+        }],
         timestamp: std::time::SystemTime::now(),
     });
 
-    let results = loop_.run(vec![user_msg], CancellationToken::new()).await.unwrap();
+    let results = loop_
+        .run(vec![user_msg], CancellationToken::new())
+        .await
+        .unwrap();
     assert_eq!(results.len(), 2);
     assert!(matches!(&results[0], ai_provider::Message::User(_)));
     assert!(matches!(&results[1], ai_provider::Message::Assistant(_)));
@@ -166,8 +241,12 @@ async fn test_event_sequence() {
     let provider = TestProvider::text("Hello!");
     let dispatcher = Arc::new(AllowAllDispatcher);
     let config = AgentLoopConfig {
-        tenant_id: "t1".to_string(), session_id: "s1".to_string(), model: "test".to_string(),
-        provider, hook_dispatcher: dispatcher, tools: vec![],
+        tenant_id: "t1".to_string(),
+        session_id: "s1".to_string(),
+        model: "test".to_string(),
+        provider,
+        hook_dispatcher: dispatcher,
+        tools: vec![],
         prompt_builder: PromptBuilder::from("You are helpful."),
         stream_options: StreamOptions::default(),
         steer_queue: Arc::new(Mutex::new(vec![])),
@@ -181,35 +260,81 @@ async fn test_event_sequence() {
     let loop_ = AgentLoop::new(config);
 
     let user_msg = ai_provider::Message::User(ai_provider::UserMessage {
-        content: vec![Content::Text { text: "hi".to_string(), text_signature: None }],
+        content: vec![Content::Text {
+            text: "hi".to_string(),
+            text_signature: None,
+        }],
         timestamp: std::time::SystemTime::now(),
     });
 
-    loop_.run(vec![user_msg], CancellationToken::new()).await.unwrap();
+    loop_
+        .run(vec![user_msg], CancellationToken::new())
+        .await
+        .unwrap();
 
     let evs = events.lock().unwrap();
-    let variant_names: Vec<&str> = evs.iter().map(|e| match e {
-        AgentEvent::AgentStart => "AgentStart",
-        AgentEvent::TurnStart { .. } => "TurnStart",
-        AgentEvent::MessageStart { .. } => "MessageStart",
-        AgentEvent::MessageEnd { .. } => "MessageEnd",
-        AgentEvent::TurnEnd { .. } => "TurnEnd",
-        AgentEvent::AgentEnd { .. } => "AgentEnd",
-        AgentEvent::AutoRetryEnd { success: true, .. } => "AutoRetryEnd",
-        _ => "Other",
-    }).collect();
+    let variant_names: Vec<&str> = evs
+        .iter()
+        .map(|e| match e {
+            AgentEvent::AgentStart => "AgentStart",
+            AgentEvent::TurnStart { .. } => "TurnStart",
+            AgentEvent::MessageStart { .. } => "MessageStart",
+            AgentEvent::MessageEnd { .. } => "MessageEnd",
+            AgentEvent::TurnEnd { .. } => "TurnEnd",
+            AgentEvent::AgentEnd { .. } => "AgentEnd",
+            AgentEvent::AutoRetryEnd { success: true, .. } => "AutoRetryEnd",
+            _ => "Other",
+        })
+        .collect();
 
-    assert!(variant_names.iter().position(|&n| n == "AgentStart").is_some());
-    assert!(variant_names.iter().position(|&n| n == "TurnStart").is_some());
-    assert!(variant_names.iter().position(|&n| n == "MessageStart").is_some());
-    assert!(variant_names.iter().position(|&n| n == "MessageEnd").is_some());
+    assert!(
+        variant_names
+            .iter()
+            .position(|&n| n == "AgentStart")
+            .is_some()
+    );
+    assert!(
+        variant_names
+            .iter()
+            .position(|&n| n == "TurnStart")
+            .is_some()
+    );
+    assert!(
+        variant_names
+            .iter()
+            .position(|&n| n == "MessageStart")
+            .is_some()
+    );
+    assert!(
+        variant_names
+            .iter()
+            .position(|&n| n == "MessageEnd")
+            .is_some()
+    );
     assert!(variant_names.iter().position(|&n| n == "TurnEnd").is_some());
-    assert!(variant_names.iter().position(|&n| n == "AgentEnd").is_some());
+    assert!(
+        variant_names
+            .iter()
+            .position(|&n| n == "AgentEnd")
+            .is_some()
+    );
 
-    let agent_start_pos = variant_names.iter().position(|&n| n == "AgentStart").unwrap();
-    let turn_start_pos = variant_names.iter().position(|&n| n == "TurnStart").unwrap();
-    let msg_start_pos = variant_names.iter().position(|&n| n == "MessageStart").unwrap();
-    let msg_end_pos = variant_names.iter().position(|&n| n == "MessageEnd").unwrap();
+    let agent_start_pos = variant_names
+        .iter()
+        .position(|&n| n == "AgentStart")
+        .unwrap();
+    let turn_start_pos = variant_names
+        .iter()
+        .position(|&n| n == "TurnStart")
+        .unwrap();
+    let msg_start_pos = variant_names
+        .iter()
+        .position(|&n| n == "MessageStart")
+        .unwrap();
+    let msg_end_pos = variant_names
+        .iter()
+        .position(|&n| n == "MessageEnd")
+        .unwrap();
     let turn_end_pos = variant_names.iter().position(|&n| n == "TurnEnd").unwrap();
     let agent_end_pos = variant_names.iter().position(|&n| n == "AgentEnd").unwrap();
 
@@ -232,10 +357,15 @@ fn test_resolve_orphan_injects_synthetic_error() {
             })],
             provider: "test".to_string(),
             model: "test".to_string(),
-            api: ai_provider::Api { provider: "test".to_string(), model: "test".to_string() },
+            api: ai_provider::Api {
+                provider: "test".to_string(),
+                model: "test".to_string(),
+            },
             usage: ai_provider::Usage {
-                input_tokens: 0, output_tokens: 0,
-                cache_creation_input_tokens: None, cache_read_input_tokens: None,
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
                 total_tokens: 0,
             },
             stop_reason: StopReason::ToolUse,
@@ -279,7 +409,7 @@ async fn test_complete_returns_text_only() {
         model: "test".to_string(),
         provider: provider.clone(),
         hook_dispatcher: dispatcher,
-        compaction_actor: Arc::new(agent_core::harness::compaction::CompactionActor::new(
+        compaction_actor: Arc::new(agent_core::harness::compaction::Compactor::new(
             agent_core::harness::compaction::CompactionConfig::default(),
             provider,
             "test".to_string(),

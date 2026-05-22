@@ -8,8 +8,8 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-use wiremock::matchers::{method, path, header};
 
 #[tokio::test]
 async fn test_webhook_delivers_turn_end_event() {
@@ -17,7 +17,11 @@ async fn test_webhook_delivers_turn_end_event() {
 
     // 1. Start a webhook receiver (wiremock)
     let webhook_server = MockServer::start().await;
-    let webhook_port = webhook_server.uri().trim_start_matches("http://127.0.0.1:").parse::<u16>().unwrap();
+    let webhook_port = webhook_server
+        .uri()
+        .trim_start_matches("http://127.0.0.1:")
+        .parse::<u16>()
+        .unwrap();
 
     Mock::given(method("POST"))
         .and(path("/webhook"))
@@ -82,34 +86,40 @@ async fn test_webhook_delivers_turn_end_event() {
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"hello"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"hello"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
 
     // 5. Wait for webhook delivery (with timeout)
-    let delivery_result = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        async {
-            loop {
-                let requests = webhook_server.received_requests().await.unwrap();
-                if let Some(req) = requests.into_iter().find(|r| {
-                    r.headers.get("X-Pandaria-Event").is_some()
-                }) {
-                    return req;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let delivery_result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let requests = webhook_server.received_requests().await.unwrap();
+            if let Some(req) = requests
+                .into_iter()
+                .find(|r| r.headers.get("X-Pandaria-Event").is_some())
+            {
+                return req;
             }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-    ).await;
+    })
+    .await;
 
     assert!(delivery_result.is_ok(), "webhook delivery timed out");
     let request = delivery_result.unwrap();
 
     // Verify headers
     assert_eq!(
-        request.headers.get("X-Pandaria-Event").unwrap().to_str().unwrap(),
+        request
+            .headers
+            .get("X-Pandaria-Event")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "turn_end"
     );
     assert!(
@@ -121,11 +131,21 @@ async fn test_webhook_delivers_turn_end_event() {
         "expected X-Pandaria-Signature header"
     );
     assert_eq!(
-        request.headers.get("X-Pandaria-Session-Id").unwrap().to_str().unwrap(),
+        request
+            .headers
+            .get("X-Pandaria-Session-Id")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         session_id
     );
     assert_eq!(
-        request.headers.get("X-Pandaria-Tenant-Id").unwrap().to_str().unwrap(),
+        request
+            .headers
+            .get("X-Pandaria-Tenant-Id")
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "test-tenant"
     );
 
@@ -136,7 +156,12 @@ async fn test_webhook_delivers_turn_end_event() {
     assert!(body_json["delivery_id"].is_string());
 
     // Verify HMAC-SHA256 signature
-    let signature_header = request.headers.get("X-Pandaria-Signature").unwrap().to_str().unwrap();
+    let signature_header = request
+        .headers
+        .get("X-Pandaria-Signature")
+        .unwrap()
+        .to_str()
+        .unwrap();
     let expected_hmac = hmac_sha256("webhook-secret", &body_str);
     assert_eq!(
         signature_header,
@@ -183,7 +208,8 @@ fn hmac_sha256(secret: &str, body: &str) -> String {
     use sha2::Sha256;
 
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC can take key of any size");
     mac.update(body.as_bytes());
     let result = mac.finalize();
     let bytes = result.into_bytes();

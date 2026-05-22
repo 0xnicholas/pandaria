@@ -140,10 +140,7 @@ impl Editor {
         let mut pos = self.cursor_col;
 
         while pos > 0 {
-            let ch = char_indices
-                .get(pos - 1)
-                .map(|(_, c)| *c)
-                .unwrap_or(' ');
+            let ch = char_indices.get(pos - 1).map(|(_, c)| *c).unwrap_or(' ');
             if ch.is_alphanumeric() || ch == '_' {
                 break;
             }
@@ -151,10 +148,7 @@ impl Editor {
         }
 
         while pos > 0 {
-            let ch = char_indices
-                .get(pos - 1)
-                .map(|(_, c)| *c)
-                .unwrap_or(' ');
+            let ch = char_indices.get(pos - 1).map(|(_, c)| *c).unwrap_or(' ');
             if !ch.is_alphanumeric() && ch != '_' {
                 break;
             }
@@ -249,8 +243,7 @@ impl Editor {
 
     pub fn page_down(&mut self) {
         self.save_undo_state();
-        self.cursor_line =
-            (self.cursor_line + 10).min(self.lines.len().saturating_sub(1));
+        self.cursor_line = (self.cursor_line + 10).min(self.lines.len().saturating_sub(1));
         let line_len = self.lines[self.cursor_line].chars().count();
         self.cursor_col = self.cursor_col.min(line_len);
     }
@@ -405,8 +398,7 @@ impl Editor {
 
     pub fn delete_to_line_start(&mut self) {
         self.save_undo_state();
-        let deleted =
-            self.delete_range(self.cursor_line, 0, self.cursor_line, self.cursor_col);
+        let deleted = self.delete_range(self.cursor_line, 0, self.cursor_line, self.cursor_col);
         self.cursor_col = 0;
         self.push_kill_ring(deleted, false);
     }
@@ -414,8 +406,7 @@ impl Editor {
     pub fn delete_to_line_end(&mut self) {
         self.save_undo_state();
         let len = self.lines[self.cursor_line].chars().count();
-        let deleted =
-            self.delete_range(self.cursor_line, self.cursor_col, self.cursor_line, len);
+        let deleted = self.delete_range(self.cursor_line, self.cursor_col, self.cursor_line, len);
         self.push_kill_ring(deleted, true);
     }
 
@@ -429,11 +420,7 @@ impl Editor {
         if start_line == end_line && start_col <= end_col {
             let line = &mut self.lines[start_line];
             let chars: Vec<char> = line.chars().collect();
-            let start_byte: usize = chars
-                .iter()
-                .take(start_col)
-                .map(|c| c.len_utf8())
-                .sum();
+            let start_byte: usize = chars.iter().take(start_col).map(|c| c.len_utf8()).sum();
             let end_byte: usize = chars
                 .iter()
                 .take(end_col.min(chars.len()))
@@ -592,7 +579,11 @@ impl Editor {
             self.save_undo_state();
             let line = &self.lines[self.cursor_line];
             let chars: Vec<char> = line.chars().collect();
-            if let Some(pos) = chars.iter().skip(self.cursor_col + 1).position(|&c| c == target) {
+            if let Some(pos) = chars
+                .iter()
+                .skip(self.cursor_col + 1)
+                .position(|&c| c == target)
+            {
                 self.cursor_col = self.cursor_col + 1 + pos;
                 self.preferred_col = Some(self.cursor_col);
             }
@@ -609,11 +600,7 @@ impl Editor {
         self.insert_text(&marker);
     }
 
-    pub fn render_buf(
-        &self,
-        area: Rect,
-        buf: &mut Buffer,
-    ) {
+    pub fn render_buf(&self, area: Rect, buf: &mut Buffer) {
         let block = Block::default()
             .borders(Borders::TOP)
             .border_style(Style::default().fg(self.theme.border));
@@ -639,8 +626,7 @@ impl Editor {
                             .get(self.cursor_col)
                             .map(|c| c.to_string())
                             .unwrap_or_else(|| " ".to_string());
-                        let after: String =
-                            chars.iter().skip(self.cursor_col + 1).collect();
+                        let after: String = chars.iter().skip(self.cursor_col + 1).collect();
 
                         Line::from(vec![
                             Span::styled(before, Style::default().fg(self.theme.text)),
@@ -668,11 +654,14 @@ impl Editor {
             } else {
                 "Write a message · /help for commands · Ctrl+Shift+P palette"
             };
-            let placeholder =
-                Span::styled(text, Style::default().fg(self.theme.dim));
-            Paragraph::new(Line::from(placeholder)).block(Block::default()).render(inner, buf);
+            let placeholder = Span::styled(text, Style::default().fg(self.theme.dim));
+            Paragraph::new(Line::from(placeholder))
+                .block(Block::default())
+                .render(inner, buf);
         } else {
-            Paragraph::new(visible_lines).block(Block::default()).render(inner, buf);
+            Paragraph::new(visible_lines)
+                .block(Block::default())
+                .render(inner, buf);
         }
     }
 }

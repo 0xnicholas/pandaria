@@ -63,7 +63,9 @@ pub fn key_event_to_id(event: &KeyEvent) -> KeyId {
         KeyCode::F(n) => return format!("f{n}"),
         KeyCode::Esc => "esc",
         KeyCode::Null => return String::new(),
-        KeyCode::Char(c) => return format_modifier_key(c.to_lowercase().to_string(), event.modifiers),
+        KeyCode::Char(c) => {
+            return format_modifier_key(c.to_lowercase().to_string(), event.modifiers);
+        }
         _ => return String::new(),
     };
 
@@ -105,10 +107,7 @@ pub fn default_keybindings() -> HashMap<Keybinding, Vec<KeyId>> {
         Keybinding::EditorSubmit,
         vec!["enter".into(), "alt+enter".into()],
     );
-    m.insert(
-        Keybinding::EditorNewLine,
-        vec!["shift+enter".into()],
-    );
+    m.insert(Keybinding::EditorNewLine, vec!["shift+enter".into()]);
     m.insert(Keybinding::EditorCursorUp, vec!["up".into()]);
     m.insert(Keybinding::EditorCursorDown, vec!["down".into()]);
     m.insert(
@@ -153,14 +152,8 @@ pub fn default_keybindings() -> HashMap<Keybinding, Vec<KeyId>> {
         Keybinding::EditorDeleteWordForward,
         vec!["alt+d".into(), "alt+delete".into()],
     );
-    m.insert(
-        Keybinding::EditorDeleteToLineStart,
-        vec!["ctrl+u".into()],
-    );
-    m.insert(
-        Keybinding::EditorDeleteToLineEnd,
-        vec!["ctrl+k".into()],
-    );
+    m.insert(Keybinding::EditorDeleteToLineStart, vec!["ctrl+u".into()]);
+    m.insert(Keybinding::EditorDeleteToLineEnd, vec!["ctrl+k".into()]);
     m.insert(Keybinding::EditorYank, vec!["ctrl+y".into()]);
     m.insert(Keybinding::EditorYankPop, vec!["alt+y".into()]);
     m.insert(Keybinding::EditorCharJump, vec!["ctrl+]".into()]);
@@ -169,10 +162,16 @@ pub fn default_keybindings() -> HashMap<Keybinding, Vec<KeyId>> {
     m.insert(Keybinding::AutocompleteTrigger, vec!["tab".into()]);
 
     // AppOpenCommandPalette has no default binding
-    m.insert(Keybinding::AppOpenCommandPalette, vec!["ctrl+shift+p".into()]);
+    m.insert(
+        Keybinding::AppOpenCommandPalette,
+        vec!["ctrl+shift+p".into()],
+    );
     m.insert(Keybinding::AppExternalEditor, vec!["ctrl+x".into()]);
     m.insert(Keybinding::AppRestoreQueue, vec!["ctrl+u".into()]);
-    m.insert(Keybinding::AppCycleModelForward, vec!["ctrl+shift+n".into()]);
+    m.insert(
+        Keybinding::AppCycleModelForward,
+        vec!["ctrl+shift+n".into()],
+    );
     m.insert(Keybinding::AppCycleModelBackward, vec!["ctrl+p".into()]);
 
     m
@@ -223,7 +222,9 @@ impl KeybindingsManager {
         if let Some(user_keys) = self.user.get(&binding) {
             user_keys.contains(&key_id)
         } else {
-            self.defaults.get(&binding).map_or(false, |keys| keys.contains(&key_id))
+            self.defaults
+                .get(&binding)
+                .map_or(false, |keys| keys.contains(&key_id))
         }
     }
 
@@ -318,7 +319,10 @@ mod tests {
         let mut manager = KeybindingsManager::new();
 
         let mut bindings = HashMap::new();
-        bindings.insert("editor.submit".to_string(), toml::Value::String("ctrl+enter".to_string()));
+        bindings.insert(
+            "editor.submit".to_string(),
+            toml::Value::String("ctrl+enter".to_string()),
+        );
         let config = KeysConfig { bindings };
 
         manager.load_user_config(&config);

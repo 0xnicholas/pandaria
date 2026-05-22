@@ -53,9 +53,13 @@ data: [DONE]
     assert!(matches!(event, AssistantMessageEvent::Start { .. }));
 
     let event = stream.next().await.expect("should have TextStart");
-    assert!(
-        matches!(event, AssistantMessageEvent::TextStart { content_index: 0, .. })
-    );
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextStart {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have TextDelta 'Hello'");
     assert!(
@@ -67,7 +71,10 @@ data: [DONE]
         matches!(&event, AssistantMessageEvent::TextDelta { delta, content_index: 0, .. } if delta == " from")
     );
 
-    let event = stream.next().await.expect("should have TextDelta ' DeepSeek'");
+    let event = stream
+        .next()
+        .await
+        .expect("should have TextDelta ' DeepSeek'");
     assert!(
         matches!(&event, AssistantMessageEvent::TextDelta { delta, content_index: 0, .. } if delta == " DeepSeek")
     );
@@ -144,9 +151,13 @@ data: [DONE]
     );
 
     let event = stream.next().await.expect("should have TextStart");
-    assert!(
-        matches!(event, AssistantMessageEvent::TextStart { content_index: 0, .. })
-    );
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextStart {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have TextDelta");
     assert!(
@@ -219,7 +230,13 @@ data: [DONE]
     assert!(matches!(event, AssistantMessageEvent::Start { .. }));
 
     let event = stream.next().await.expect("should have TextStart");
-    assert!(matches!(event, AssistantMessageEvent::TextStart { content_index: 0, .. }));
+    assert!(matches!(
+        event,
+        AssistantMessageEvent::TextStart {
+            content_index: 0,
+            ..
+        }
+    ));
 
     let event = stream.next().await.expect("should have TextDelta 'ok'");
     assert!(

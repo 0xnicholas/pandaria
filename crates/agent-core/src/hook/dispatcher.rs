@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 
 use crate::hook::context::{
-    AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx,
-    ProviderRequestCtx, ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx,
-    ToolExecutionStartCtx, ToolResultCtx, TurnEndCtx,
+    AgentEndCtx, BeforeAgentStartCtx, CompactCtx, CompactEndCtx, ContextCtx, ProviderRequestCtx,
+    ProviderResponseCtx, SessionCtx, ToolCallCtx, ToolExecutionEndCtx, ToolExecutionStartCtx,
+    ToolResultCtx, TurnEndCtx,
 };
 use crate::hook::mutations::{
     BeforeAgentStartMutation, CompactDecision, ContextMutation, HookDecision,
@@ -21,46 +21,38 @@ pub trait HookDispatcher: Send + Sync {
     // ═══ Blocking hooks — first-block-wins ═══
 
     /// Blocking hook with input mutation support.
-    async fn on_tool_call(&self,
-        _ctx: &ToolCallCtx,
-    ) -> (HookDecision, ToolCallMutation) {
+    async fn on_tool_call(&self, _ctx: &ToolCallCtx) -> (HookDecision, ToolCallMutation) {
         (HookDecision::Continue, ToolCallMutation::default())
     }
 
     /// Blocking hook for compaction.
-    async fn on_before_compact(&self,
-        _ctx: &CompactCtx,
-    ) -> CompactDecision {
+    async fn on_before_compact(&self, _ctx: &CompactCtx) -> CompactDecision {
         CompactDecision::Continue
     }
 
     // ═══ Chaining hooks — chain merge ═══
 
-    async fn on_tool_result(&self,
-        _ctx: &ToolResultCtx,
-    ) -> ToolResultMutation {
+    async fn on_tool_result(&self, _ctx: &ToolResultCtx) -> ToolResultMutation {
         ToolResultMutation::default()
     }
 
-    async fn on_context(&self,
-        _ctx: &ContextCtx,
-    ) -> ContextMutation {
+    async fn on_context(&self, _ctx: &ContextCtx) -> ContextMutation {
         ContextMutation::default()
     }
 
-    async fn on_before_agent_start(&self,
-        _ctx: &BeforeAgentStartCtx,
-    ) -> BeforeAgentStartMutation {
+    async fn on_before_agent_start(&self, _ctx: &BeforeAgentStartCtx) -> BeforeAgentStartMutation {
         BeforeAgentStartMutation::default()
     }
 
-    async fn on_before_provider_request(&self,
+    async fn on_before_provider_request(
+        &self,
         _ctx: &ProviderRequestCtx,
     ) -> ProviderRequestMutation {
         ProviderRequestMutation::default()
     }
 
-    async fn on_after_provider_response(&self,
+    async fn on_after_provider_response(
+        &self,
         _ctx: &ProviderResponseCtx,
     ) -> ProviderResponseMutation {
         ProviderResponseMutation::default()

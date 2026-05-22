@@ -1,4 +1,4 @@
-use axum::response::{sse::Event, IntoResponse, Sse};
+use axum::response::{IntoResponse, Sse, sse::Event};
 use futures::stream::Stream;
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -14,20 +14,26 @@ pub struct SseStream {
 }
 
 impl SseStream {
-    pub fn new(rx: tokio::sync::mpsc::Receiver<ServerEvent>, abort: tokio::task::AbortHandle) -> Self {
+    pub fn new(
+        rx: tokio::sync::mpsc::Receiver<ServerEvent>,
+        abort: tokio::task::AbortHandle,
+    ) -> Self {
         Self { rx, abort }
     }
 }
 
 impl IntoResponse for SseStream {
     fn into_response(self) -> axum::response::Response {
-        Sse::new(EventStream { rx: self.rx, abort: Some(self.abort) })
-            .keep_alive(
-                axum::response::sse::KeepAlive::new()
-                    .interval(std::time::Duration::from_secs(15))
-                    .text("ping"),
-            )
-            .into_response()
+        Sse::new(EventStream {
+            rx: self.rx,
+            abort: Some(self.abort),
+        })
+        .keep_alive(
+            axum::response::sse::KeepAlive::new()
+                .interval(std::time::Duration::from_secs(15))
+                .text("ping"),
+        )
+        .into_response()
     }
 }
 
@@ -60,9 +66,7 @@ impl Stream for EventStream {
                             .data(r#"{"type":"error","code":"internal","message":"event serialization failed"}"#))));
                     }
                 };
-                Poll::Ready(Some(Ok(Event::default()
-                    .event(event_type)
-                    .data(data))))
+                Poll::Ready(Some(Ok(Event::default().event(event_type).data(data))))
             }
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -96,9 +100,11 @@ mod tests {
         let (tx, rx) = tokio::sync::mpsc::channel::<ServerEvent>(4);
         let mut stream = EventStream { rx, abort: None };
 
-        tx.send(ServerEvent::TextDelta { delta: "hello".into() })
-            .await
-            .unwrap();
+        tx.send(ServerEvent::TextDelta {
+            delta: "hello".into(),
+        })
+        .await
+        .unwrap();
         drop(tx);
 
         let item = futures::StreamExt::next(&mut stream).await;

@@ -9,8 +9,8 @@
 
 mod common;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -112,7 +112,9 @@ data: [DONE]
                 .uri(format!("/api/v1/sessions/{}/messages", session_id))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"call the echo tool"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"call the echo tool"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -124,29 +126,29 @@ data: [DONE]
     assert_eq!(call_count.load(Ordering::SeqCst), 2);
 
     // Collect SSE events
-    let events = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        sse_handle,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let events = tokio::time::timeout(std::time::Duration::from_secs(5), sse_handle)
+        .await
+        .unwrap()
+        .unwrap();
 
     // Verify ToolCallDone event is present
-    let tool_done = events.iter().find(|e| {
-        matches!(e, api_gateway::types::ServerEvent::ToolCallDone { .. })
-    });
+    let tool_done = events
+        .iter()
+        .find(|e| matches!(e, api_gateway::types::ServerEvent::ToolCallDone { .. }));
     assert!(tool_done.is_some(), "expected ToolCallDone in SSE events");
 
-    if let api_gateway::types::ServerEvent::ToolCallDone { call_id, is_error, .. } = tool_done.unwrap() {
+    if let api_gateway::types::ServerEvent::ToolCallDone {
+        call_id, is_error, ..
+    } = tool_done.unwrap()
+    {
         assert_eq!(call_id, "call_abc");
         assert!(*is_error, "expected error because tool is not registered");
     }
 
     // Verify final TurnEnd
-    let turn_end = events.iter().find(|e| {
-        matches!(e, api_gateway::types::ServerEvent::TurnEnd { .. })
-    });
+    let turn_end = events
+        .iter()
+        .find(|e| matches!(e, api_gateway::types::ServerEvent::TurnEnd { .. }));
     assert!(turn_end.is_some(), "expected TurnEnd in SSE events");
 
     // Verify message history contains user + assistant(tool) + tool_result + assistant(text)
@@ -171,8 +173,6 @@ data: [DONE]
     );
 
     // Verify tool_result message exists
-    let has_tool_result = msgs_arr.iter().any(|m| {
-        m.get("tool_call_id").is_some()
-    });
+    let has_tool_result = msgs_arr.iter().any(|m| m.get("tool_call_id").is_some());
     assert!(has_tool_result, "expected tool_result message in history");
 }

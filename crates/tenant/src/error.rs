@@ -23,10 +23,7 @@ pub enum TenantError {
     },
 
     #[error("tool call rate limit exceeded for tenant {tenant_id}: {calls} calls in window")]
-    ToolCallRateLimitExceeded {
-        tenant_id: String,
-        calls: usize,
-    },
+    ToolCallRateLimitExceeded { tenant_id: String, calls: usize },
 
     #[error("session not found: {0}")]
     SessionNotFound(String),

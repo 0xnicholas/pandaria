@@ -29,9 +29,16 @@ pub fn render_status_bar(
         return;
     }
     let (conn_icon, conn_text) = match connection {
-        ConnectionStatus::Connected => (Span::styled("●", Style::default().fg(theme.success)), None),
-        ConnectionStatus::Disconnected => (Span::styled("●", Style::default().fg(theme.error)), Some(" Disconnected")),
-        ConnectionStatus::Reconnecting => (Span::styled("↻", Style::default().fg(theme.warning)), None),
+        ConnectionStatus::Connected => {
+            (Span::styled("●", Style::default().fg(theme.success)), None)
+        }
+        ConnectionStatus::Disconnected => (
+            Span::styled("●", Style::default().fg(theme.error)),
+            Some(" Disconnected"),
+        ),
+        ConnectionStatus::Reconnecting => {
+            (Span::styled("↻", Style::default().fg(theme.warning)), None)
+        }
     };
     let center = if busy {
         let strategy_label = match queue_strategy {

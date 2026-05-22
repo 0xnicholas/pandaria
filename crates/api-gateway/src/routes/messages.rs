@@ -1,17 +1,17 @@
 use axum::{
+    Json,
     extract::{Extension, Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::server::AppState;
 use crate::{
     error::GatewayError,
     middleware::TenantId,
     types::{MessageContentPart, SendMessageRequest, UsageInfo},
 };
-use crate::server::AppState;
 
 #[derive(Debug, serde::Deserialize)]
 pub struct SendMessageQuery {
@@ -64,7 +64,10 @@ pub async fn send(
             .await?;
 
         match result {
-            tenant::WaitResult::Completed { turn_index, messages } => {
+            tenant::WaitResult::Completed {
+                turn_index,
+                messages,
+            } => {
                 let last_assistant = messages.iter().rev().find_map(|m| match m {
                     agent_core::AgentMessage::Assistant(a) => Some(a),
                     _ => None,
@@ -109,10 +112,7 @@ pub async fn interrupt(
     Extension(tenant_id): Extension<TenantId>,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, GatewayError> {
-    state
-        .tenant_manager
-        .interrupt(&tenant_id.0, &id)
-        .await?;
+    state.tenant_manager.interrupt(&tenant_id.0, &id).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
-use crate::models::{Model, ModelCompat, Modality, TokenCost, get_model};
+use crate::models::{Modality, Model, ModelCompat, TokenCost, get_model};
 use crate::provider::{LlmProvider, StreamOptions};
 use crate::providers::shared::ProviderConfig;
 use crate::resolver::{ProviderFactory, ProviderResolver, ResolvedModel};
@@ -26,12 +26,7 @@ impl RouterProvider {
     pub fn new() -> Self {
         Self {
             resolver: ProviderResolver::new(),
-            default_config: ProviderConfig::new(
-                None,
-                "http://router",
-                "router",
-                "ROUTER_API_KEY",
-            ),
+            default_config: ProviderConfig::new(None, "http://router", "router", "ROUTER_API_KEY"),
             cache: DashMap::new(),
         }
     }
@@ -50,17 +45,32 @@ impl RouterProvider {
 
         let rule = self.resolver.get_rule(provider_name)?;
         let instance: Arc<dyn LlmProvider> = match &rule.factory {
-            ProviderFactory::OpenAi => Arc::new(crate::providers::openai::OpenAiProvider::with_base_url(None, base_url)),
-            ProviderFactory::Anthropic => Arc::new(crate::providers::anthropic::AnthropicProvider::with_base_url(None, base_url)),
-            ProviderFactory::Google => Arc::new(crate::providers::google::GoogleProvider::with_base_url(None, base_url)),
-            ProviderFactory::DeepSeek => Arc::new(crate::providers::deepseek::DeepSeekProvider::with_base_url(None, base_url)),
-            ProviderFactory::Mistral => Arc::new(crate::providers::mistral::MistralProvider::with_base_url(None, base_url)),
-            ProviderFactory::Doubao => Arc::new(crate::providers::doubao::DoubaoProvider::with_base_url(None, base_url)),
-            ProviderFactory::OpenAiCompatible { provider_name: name, env_key } => {
-                Arc::new(crate::providers::openai_compatible::OpenAiCompatibleProvider::new(
+            ProviderFactory::OpenAi => Arc::new(
+                crate::providers::openai::OpenAiProvider::with_base_url(None, base_url),
+            ),
+            ProviderFactory::Anthropic => Arc::new(
+                crate::providers::anthropic::AnthropicProvider::with_base_url(None, base_url),
+            ),
+            ProviderFactory::Google => Arc::new(
+                crate::providers::google::GoogleProvider::with_base_url(None, base_url),
+            ),
+            ProviderFactory::DeepSeek => Arc::new(
+                crate::providers::deepseek::DeepSeekProvider::with_base_url(None, base_url),
+            ),
+            ProviderFactory::Mistral => Arc::new(
+                crate::providers::mistral::MistralProvider::with_base_url(None, base_url),
+            ),
+            ProviderFactory::Doubao => Arc::new(
+                crate::providers::doubao::DoubaoProvider::with_base_url(None, base_url),
+            ),
+            ProviderFactory::OpenAiCompatible {
+                provider_name: name,
+                env_key,
+            } => Arc::new(
+                crate::providers::openai_compatible::OpenAiCompatibleProvider::new(
                     None, base_url, name, env_key,
-                ))
-            }
+                ),
+            ),
         };
 
         self.cache.insert(key, instance.clone());
@@ -70,7 +80,9 @@ impl RouterProvider {
     /// 当模型不在静态注册表中时，用 ProviderRule 的默认值构建 fallback Model。
     fn build_fallback_model(&self, resolved: &ResolvedModel) -> Option<Model> {
         let rule = self.resolver.get_rule(&resolved.provider_name).ok()?;
-        let base_url = resolved.base_url.clone()
+        let base_url = resolved
+            .base_url
+            .clone()
             .unwrap_or_else(|| self.resolver.default_base_url(&resolved.provider_name));
         Some(Model {
             id: resolved.model_id.clone(),
@@ -141,15 +153,12 @@ impl LlmProvider for RouterProvider {
         let resolved = self.resolver.resolve(model)?;
 
         // 确定实际 base_url：resolved 覆盖 > 规则表默认值
-        let base_url = resolved.base_url.clone()
-            .unwrap_or_else(|| {
-                self.resolver.default_base_url(&resolved.provider_name)
-            });
+        let base_url = resolved
+            .base_url
+            .clone()
+            .unwrap_or_else(|| self.resolver.default_base_url(&resolved.provider_name));
 
-        let provider = self.get_or_create_provider(
-            &resolved.provider_name,
-            &base_url,
-        )?;
+        let provider = self.get_or_create_provider(&resolved.provider_name, &base_url)?;
 
         // 合并 resolved 中的 overrides 到 options
         let mut opts = options;
@@ -160,7 +169,9 @@ impl LlmProvider for RouterProvider {
             opts.headers = Some(h);
         }
 
-        provider.stream(&resolved.model_id, context, opts, signal).await
+        provider
+            .stream(&resolved.model_id, context, opts, signal)
+            .await
     }
 }
 
@@ -180,7 +191,11 @@ mod tests {
         let models = router.models();
         assert!(!models.is_empty());
         assert!(models.iter().any(|m| m == "openai/gpt-5.2"));
-        assert!(models.iter().any(|m| m == "anthropic/claude-sonnet-4-20250514"));
+        assert!(
+            models
+                .iter()
+                .any(|m| m == "anthropic/claude-sonnet-4-20250514")
+        );
     }
 
     #[test]
@@ -195,7 +210,9 @@ mod tests {
     #[test]
     fn test_model_metadata_anthropic() {
         let router = RouterProvider::new();
-        let model = router.model_metadata("anthropic/claude-sonnet-4-20250514").unwrap();
+        let model = router
+            .model_metadata("anthropic/claude-sonnet-4-20250514")
+            .unwrap();
         assert_eq!(model.id, "claude-sonnet-4-20250514");
         assert_eq!(model.provider, "anthropic");
         assert_eq!(model.api, "anthropic-messages");
@@ -234,45 +251,69 @@ mod tests {
     #[test]
     fn test_cache_reuse() {
         let router = RouterProvider::new();
-        let p1 = router.get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions").unwrap();
-        let p2 = router.get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions").unwrap();
+        let p1 = router
+            .get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions")
+            .unwrap();
+        let p2 = router
+            .get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions")
+            .unwrap();
         assert!(Arc::ptr_eq(&p1, &p2));
     }
 
     #[test]
     fn test_cache_rebuild_on_base_url_change() {
         let router = RouterProvider::new();
-        let p1 = router.get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions").unwrap();
-        let p2 = router.get_or_create_provider("openai", "https://proxy.example.com/v1/chat/completions").unwrap();
+        let p1 = router
+            .get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions")
+            .unwrap();
+        let p2 = router
+            .get_or_create_provider("openai", "https://proxy.example.com/v1/chat/completions")
+            .unwrap();
         assert!(!Arc::ptr_eq(&p1, &p2));
     }
 
     #[test]
     fn test_cache_different_providers() {
         let router = RouterProvider::new();
-        let p1 = router.get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions").unwrap();
-        let p2 = router.get_or_create_provider("anthropic", "https://api.anthropic.com/v1/messages").unwrap();
+        let p1 = router
+            .get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions")
+            .unwrap();
+        let p2 = router
+            .get_or_create_provider("anthropic", "https://api.anthropic.com/v1/messages")
+            .unwrap();
         assert!(!Arc::ptr_eq(&p1, &p2));
     }
 
     #[test]
     fn test_get_or_create_openrouter() {
         let router = RouterProvider::new();
-        let p = router.get_or_create_provider("openrouter", "https://openrouter.ai/api/v1/chat/completions").unwrap();
+        let p = router
+            .get_or_create_provider(
+                "openrouter",
+                "https://openrouter.ai/api/v1/chat/completions",
+            )
+            .unwrap();
         assert_eq!(p.provider_name(), "openrouter");
     }
 
     #[test]
     fn test_get_or_create_ollama() {
         let router = RouterProvider::new();
-        let p = router.get_or_create_provider("ollama", "http://localhost:11434/v1/chat/completions").unwrap();
+        let p = router
+            .get_or_create_provider("ollama", "http://localhost:11434/v1/chat/completions")
+            .unwrap();
         assert_eq!(p.provider_name(), "ollama");
     }
 
     #[test]
     fn test_get_or_create_doubao() {
         let router = RouterProvider::new();
-        let p = router.get_or_create_provider("doubao", "https://ark.cn-beijing.volces.com/api/v3/chat/completions").unwrap();
+        let p = router
+            .get_or_create_provider(
+                "doubao",
+                "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+            )
+            .unwrap();
         assert_eq!(p.provider_name(), "doubao");
     }
 

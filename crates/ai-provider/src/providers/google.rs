@@ -115,16 +115,12 @@ impl GoogleProvider {
             65_535,
         );
 
-        let response = crate::protocol::request::RequestBuilder::new(
-            client,
-            url,
-            fallback,
-            options,
-        )
-        .body(body)
-        .header("x-goog-api-key", api_key.expose_secret())
-        .send()
-        .await?;
+        let response =
+            crate::protocol::request::RequestBuilder::new(client, url, fallback, options)
+                .body(body)
+                .header("x-goog-api-key", api_key.expose_secret())
+                .send()
+                .await?;
 
         // Process SSE stream (Google Gemini format)
         use futures::StreamExt;

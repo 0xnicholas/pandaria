@@ -1,4 +1,6 @@
-use super::types::{FragmentKind, FragmentSource, PromptFragment, RenderedFragment, RenderedPrompt};
+use super::types::{
+    FragmentKind, FragmentSource, PromptFragment, RenderedFragment, RenderedPrompt,
+};
 use tracing::warn;
 
 /// Assembles the final system prompt from ordered fragments.
@@ -88,11 +90,7 @@ impl PromptBuilder {
     /// empty, preserving the semantic equivalence of "no system prompt".
     pub fn render_option(&self) -> Option<String> {
         let text = self.render();
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        if text.is_empty() { None } else { Some(text) }
     }
 
     /// Render with per-fragment metadata for observability.
@@ -133,7 +131,11 @@ impl PromptBuilder {
     /// (`total_chars / 4.0`), independent of the compaction module to
     /// avoid cross-module coupling.
     pub fn estimate_tokens(&self) -> usize {
-        let total_chars: usize = self.fragments.iter().map(|f| f.content.chars().count()).sum();
+        let total_chars: usize = self
+            .fragments
+            .iter()
+            .map(|f| f.content.chars().count())
+            .sum();
         (total_chars as f64 / 4.0).ceil() as usize
     }
 
