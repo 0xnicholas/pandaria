@@ -106,6 +106,7 @@ pub fn detect_openai_compat(provider: &str, base_url: &str, model_id: &str) -> O
     let is_grok = provider == "xai" || base_url.contains("api.x.ai");
     let is_zai = provider == "zai" || base_url.contains("api.z.ai");
     let is_openrouter = provider == "openrouter" || base_url.contains("openrouter.ai");
+    let is_mimo = provider == "mimo" || base_url.contains("xiaomimimo.com");
 
     let cache_control_format = if is_openrouter && model_id.starts_with("anthropic/") {
         Some(CacheControlFormat::Anthropic)
@@ -158,7 +159,11 @@ pub fn detect_openai_compat(provider: &str, base_url: &str, model_id: &str) -> O
         zai_tool_stream: None,
         open_router_routing: None,
         vercel_gateway_routing: None,
-        auth_header: None,
+        auth_header: if is_mimo {
+            Some("api-key".to_string())
+        } else {
+            None
+        },
     }
 }
 
@@ -347,5 +352,25 @@ mod tests {
 
         let result2 = detect_anthropic_compat("custom", "https://custom.proxy.io");
         assert_eq!(result2, AnthropicCompat::default());
+    }
+
+    #[test]
+    fn test_detect_mimo_auth_header() {
+        let compat = detect_openai_compat(
+            "mimo",
+            "https://api.xiaomimimo.com/v1/chat/completions",
+            "mimo-v2.5-pro",
+        );
+        assert_eq!(compat.auth_header, Some("api-key".to_string()));
+    }
+
+    #[test]
+    fn test_detect_non_mimo_auth_header_none() {
+        let compat = detect_openai_compat(
+            "openai",
+            "https://api.openai.com/v1",
+            "gpt-5.2",
+        );
+        assert_eq!(compat.auth_header, None);
     }
 }
