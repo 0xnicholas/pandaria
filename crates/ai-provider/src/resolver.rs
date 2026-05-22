@@ -311,6 +311,23 @@ impl ProviderResolver {
             },
         );
 
+        rules.insert(
+            "mimo".to_string(),
+            ProviderRule {
+                factory: ProviderFactory::OpenAiCompatible {
+                    provider_name: "mimo".to_string(),
+                    env_key: "MIMO_API_KEY",
+                },
+                default_base_url: "https://api.xiaomimimo.com/v1/chat/completions"
+                    .to_string(),
+                env_key: "MIMO_API_KEY",
+                api_type: "openai-completions",
+                compat_hints: None,
+                fallback_context_window: 1_048_576,
+                fallback_max_tokens: 128_000,
+            },
+        );
+
         rules
     }
 }
@@ -555,5 +572,14 @@ mod tests {
             "https://api.openai.com/v1/chat/completions"
         );
         assert_eq!(resolver.default_base_url("unknown"), "");
+    }
+
+    #[test]
+    fn test_resolve_mimo() {
+        let resolver = ProviderResolver::new();
+        let resolved = resolver.resolve("mimo/mimo-v2.5-pro").unwrap();
+        assert_eq!(resolved.provider_name, "mimo");
+        assert_eq!(resolved.model_id, "mimo-v2.5-pro");
+        assert_eq!(resolved.api_type, "openai-completions");
     }
 }
