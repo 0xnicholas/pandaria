@@ -69,6 +69,11 @@ pub struct OpenAiCompat {
     pub zai_tool_stream: Option<bool>,
     pub open_router_routing: Option<OpenRouterRouting>,
     pub vercel_gateway_routing: Option<VercelGatewayRouting>,
+    /// 覆盖默认认证头。
+    /// Some("api-key") → 请求带 `api-key: {key}`（无 Bearer 前缀）
+    /// None             → 保持默认 `Authorization: Bearer {key}`
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub auth_header: Option<String>,
 }
 
 // ━━━ Anthropic Messages Compatibility ━━━
@@ -153,6 +158,7 @@ pub fn detect_openai_compat(provider: &str, base_url: &str, model_id: &str) -> O
         zai_tool_stream: None,
         open_router_routing: None,
         vercel_gateway_routing: None,
+        auth_header: None,
     }
 }
 
@@ -229,6 +235,7 @@ pub fn merge_openai_compat(baseline: &OpenAiCompat, explicit: &OpenAiCompat) -> 
             &explicit.vercel_gateway_routing,
             &baseline.vercel_gateway_routing,
         ),
+        auth_header: opt_or(&explicit.auth_header, &baseline.auth_header),
     }
 }
 
