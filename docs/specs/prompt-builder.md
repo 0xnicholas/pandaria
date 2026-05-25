@@ -1,3 +1,15 @@
+---
+
+> **⚠️ DEPRECATED — Architecture Changed (v0.1.x)**
+>
+> This document was written for the **Extension Actor + EventBus** architecture, which has been **removed** in v0.1.x.
+> The "extensions" crate, ExtensionActor, HookRouter, and EventBus no longer exist.
+> Built-in strategies (audit, path_guard, tool_guard, token_budget) are now inlined in agent-core::hook::DefaultHookDispatcher.
+> Hook calls are direct function calls (no Actor, no EventBus, no timeout boundaries).
+> See [AGENTS.md](../../AGENTS.md) (ADR-002, ADR-003) for the current architecture.
+
+---
+
 # PromptBuilder Specification
 
 > Status: Design Complete  

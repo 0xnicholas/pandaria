@@ -20,7 +20,9 @@ pandaria 服务端 HTTP 入口层。
 ## 依赖方向
 
 ```
-api-gateway → tenant → extensions → agent-core → ai-provider
+api-gateway → tenant → agent-core → ai-provider
+                   ↓
+              storage
 ```
 
 api-gateway **禁止**直接依赖 `ai-provider`。所有 LLM 相关类型通过 `agent-core` re-export 或内部重新定义。

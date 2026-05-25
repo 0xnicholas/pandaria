@@ -30,7 +30,7 @@ testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
 
 [package]
 name = "pandaria"
-version = "0.1.0"
+version = "0.1.3"
 edition = "2024"
 default-run = "pandaria"
 

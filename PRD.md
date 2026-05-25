@@ -508,12 +508,12 @@ LlmProvider                       ├── on_before_compact() → CompactDecis
 **目标**：服务端可部署，支持多租户、持久化和 API 接入。
 
 **交付物**：
-- `api-gateway` crate：gRPC / WebSocket 接入、认证、限流
+- `api-gateway` crate：REST + SSE 接入、HMAC 认证、per-tenant 限流
 - `tenant` crate：调度器、配额管理、Session 注册表
 - `storage` crate：Redis + PostgreSQL SessionStore 实现
 - Session 持久化 schema
 
-**状态**：🔲 计划中
+**状态**：✅ 已完成（REST + SSE 替代 gRPC/WebSocket 作为客户端协议）
 
 ### M3 — V2（规模化）
 
@@ -537,8 +537,7 @@ LlmProvider                       ├── on_before_compact() → CompactDecis
 |---|---|
 | 单 session 端到端延迟（不含 LLM 调用） | < 10ms |
 | 单节点并发 session 数 | ≥ 1000 |
-| Hook 超时（拦截型 / 链式） | 500ms，超时默认 Continue / 跳过 |
-| Hook 超时（观测型） | 100ms，超时静默丢弃 |
+| Hook 调用模型 | 直接函数调用，无 Actor overhead；panic 由 AgentLoop/ToolExecutor 统一捕获 |
 | LLM 重试策略 | 最多 3 次，指数退避 100ms 基础延迟 |
 | Tool execution 超时 | 不设全局超时（由工具自行控制），spawn_blocking 用于 CPU 密集型操作 |
 
@@ -557,7 +556,7 @@ LlmProvider                       ├── on_before_compact() → CompactDecis
 
 | 约束 | 说明 |
 |---|---|
-| 减少 unwrap | 非测试代码应最小化 `.unwrap()`，优先使用 `?` 或 `expect("reason")`。当前代码库有 190 个非测试 unwrap 待清理 |
+| 减少 unwrap | 非测试代码应最小化 `.unwrap()`，优先使用 `?` 或 `expect("reason")`。当前代码库有 229 个非测试 unwrap 待清理 |
 | 异步阻塞隔离 | 禁止 `std::thread::sleep` 等阻塞调用出现在 async 上下文中，CPU 密集型操作使用 `tokio::task::spawn_blocking` |
 | 错误类型 | 所有跨 crate 错误使用 `thiserror` 定义 |
 | LLM 重试 | 指数退避，最多 3 次，可选 `max_retry_delay_ms` 上限 |
@@ -604,7 +603,7 @@ LlmProvider                       ├── on_before_compact() → CompactDecis
 - 内置 Hook 策略（audit、path-guard、tool-guard、token-budget）
 - LLM provider 集成（Anthropic、OpenAI、Google、Mistral）
 - TUI 客户端（独立二进制）
-- API 接入层（gRPC / WebSocket）
+- API 接入层（REST + SSE，gRPC / WebSocket 为远期选项）
 
 ### Out of scope
 

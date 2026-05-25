@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-core"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "agent-core",
  "ai-provider",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "ai-provider"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -157,7 +157,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api-gateway"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "agent-core",
  "ai-provider",
@@ -2949,7 +2949,7 @@ checksum = "1a80800c0488c3a21695ea981a54918fbb37abf04f4d0720c453632255e2ff0e"
 
 [[package]]
 name = "pandaria"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "dotenvy",
  "tokio",
@@ -4237,7 +4237,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "storage"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "agent-core",
  "ai-provider",
@@ -4407,7 +4407,7 @@ dependencies = [
 
 [[package]]
 name = "tenant"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "agent-core",
  "ai-provider",
@@ -4905,7 +4905,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "arboard",
  "base64",

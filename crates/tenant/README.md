@@ -15,8 +15,8 @@ boundaries before sessions are created.
 - `TenantQuota` — configurable limits (sessions, tokens, tool calls, CPU).
 - `TenantManager` trait — dependency-inversion boundary consumed by `api-gateway`.
 - `TenantManagerImpl` — default implementation managing `SessionActor` lifecycle.
-- `TenantQuotaExtension` — per-tenant tool-call rate limit (blocking hook).
-- `TenantTokenMeterExtension` — per-tenant token usage metering (observational hook).
+- `TenantQuotaExtension` — per-tenant tool-call rate limit (blocking hook, via `DefaultHookDispatcher`).
+- `TenantTokenMeterExtension` — per-tenant token usage metering (observational hook, via `DefaultHookDispatcher`).
 - `SessionGuard` — RAII guard for session slots, auto-releases on drop.
 
 ## Usage Flow
@@ -36,7 +36,7 @@ boundaries before sessions are created.
        "claude-sonnet-4",  // default model
        "You are helpful.", // default system prompt
        128_000,            // default context window
-       extensions,         // Vec<Arc<dyn Extension>>
+       hook_dispatcher,    // Arc<dyn HookDispatcher>
    );
    ```
 
@@ -44,12 +44,20 @@ boundaries before sessions are created.
    - Validates tenant exists
    - Checks session quota
    - Reserves a session slot (`SessionGuard`)
-   - Spawns per-session `ExtensionManager`
-   - Creates `CompactionActor` + `SessionActor`
+   - Creates `CompactionActor` + `SessionActor` with the provided `HookDispatcher`
    - Sets up event bridge for SSE subscriptions
 
-4. **Inline enforcement**: Register extensions in order:
+4. **Inline enforcement**: Configure `DefaultHookDispatcher` with tenant extensions:
    ```rust
+   use agent_core::hook::DefaultHookDispatcher;
+   use tenant::{TenantQuotaExtension, TenantTokenMeterExtension};
+
+   let hook_dispatcher = DefaultHookDispatcher::builder()
+       .space(space.clone())
+       .custom_on_tool_call(Box::new(TenantQuotaExtension::new(registry.clone())))
+       .custom_on_turn_end(Box::new(TenantTokenMeterExtension::new(registry.clone())))
+       .build();
+
    let manager = TenantManagerImpl::new(
        registry.clone(),
        provider,
@@ -57,19 +65,17 @@ boundaries before sessions are created.
        model,
        system_prompt,
        context_window,
-       vec![
-           Arc::new(TenantQuotaExtension::new(registry.clone())),
-           Arc::new(TenantTokenMeterExtension::new(registry.clone())),
-       ],
+       Arc::new(hook_dispatcher),
    );
    ```
-   - `TenantQuotaExtension` must come **before** `TenantTokenMeterExtension`.
+   - `TenantQuotaExtension` should be registered as a blocking hook (e.g., `on_tool_call`).
+   - `TenantTokenMeterExtension` should be registered as an observational hook (e.g., `on_turn_end`).
    - Unknown tenants are **blocked by default** (`allow_unknown: false`).
 
 5. **Token budget enforcement**: Call `check_quota(TokenUsage)` at the
    api-gateway or session-factory layer before accepting new prompts.
-   Inline token-budget blocking inside the Extension system is not yet
-   supported (requires `on_before_provider_request` hook, marked TODO in agent-core).
+   Inline token-budget blocking inside the hook system requires
+   `on_before_provider_request` hook support (available via `DefaultHookDispatcher`).
 
 ## Boundaries
 
