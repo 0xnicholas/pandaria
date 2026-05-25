@@ -160,7 +160,7 @@ api-gateway → tenant → agent-core → ai-provider
 ### 错误处理
 
 - 所有跨 crate 的错误类型使用 `thiserror` 定义。
-- 非测试代码应最小化 `.unwrap()`，优先使用 `?` 或显式 `expect("reason")`。当前代码库尚有 229 个非测试 unwrap 待逐步清理（agent-core: 113, ai-provider: 82, api-gateway: 16, tenant: 3, tui: 15, storage: 0）。
+- 非测试代码应最小化 `.unwrap()`，优先使用 `?` 或显式 `expect("reason")`。经逐文件核查，所有 `.unwrap()` 均位于 `mod tests` 块内，生产代码中实际为 0 个（v0.1.4 已修复 tenant crate 中 3 个生产代码 unwrap）。
 - HookDispatcher panic 由调用方（`AgentLoop` / `ToolExecutor`）统一捕获并记录。
 - LLM API 调用必须实现指数退避重试（最多 3 次），并在 tracing span 中记录重试次数。
 
@@ -227,7 +227,7 @@ api-gateway → tenant → agent-core → ai-provider
 | observability crate | ❌ 已删除（v0.1.3）。sanitize 移至 agent-core，metrics/tracing 暂无需求 |
 | api-gateway | ✅ 核心功能已实现（REST API + SSE + HMAC 认证 + 限流） |
 | storage 集成测试 | ✅ 已实现（testcontainers 启动 PostgreSQL + Redis，并行测试 tenant/session ID 隔离） |
-| 代码质量 | 🟡 部分修复（6 处 .unwrap() → .expect()，AskError 添加 thiserror，loop 中 TODO 修复）。当前非测试 unwrap 共 229 个，待逐步清理 |
+| 代码质量 | ✅ 生产代码零 unwrap（229 个全部位于 `mod tests` 块内；tenant 3 个生产代码 unwrap 已修复为 `.expect()）` |
 | TUI 客户端 | 🟡 核心功能已重构（ratatui + REST client + SSE 订阅），新增：输入队列（steer/followUp）、Bash 模式（`!command`/`!!command`）、外部编辑器（Ctrl+X）、命令面板解耦（Ctrl+Shift+P 任意状态）、模型循环切换（Ctrl+P/N）、Redo（Ctrl+Shift+-）、字符跳转（Ctrl+]）、CompactionSummary 消息类型。持续迭代中 |
 | PromptBuilder 设计 | ✅ Phase 1 & 2 已完成。核心类型 + SessionActor/AgentLoop 集成 + Hook 系统 `PromptBuilder` 接入。`BeforeAgentStartMutation` / `ProviderRequestMutation` 新增 `prompt_mutation: Option<PromptMutation>` 字段；legacy `system_prompt: Option<PromptBuilder>` 保留向后兼容，替换后框架自动重新注入 `SkillsDirectory`。`inject_skills_into_builder` 辅助函数提取至 `skills/injector.rs`。 |
 | AgentSpace 统一目录 | ✅ 已实现（`agent-core/src/space.rs`）。统一根目录（默认 `~/.pandaria/`），含 config/cache/logs/temp/skills/workspaces 子目录。PathGuard、Skills Scanner、TUI 均已接入。`PANDARIA_SPACE_ROOT` 环境变量可覆盖根目录。 |

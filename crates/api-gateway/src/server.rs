@@ -10,7 +10,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::config::ServerConfig;
 use crate::middleware::{auth, rate_limit};
-use crate::routes::{events, health, messages, sessions};
+use crate::routes::{events, health, messages, metrics, sessions};
 
 use crate::types::SessionInfo;
 
@@ -82,6 +82,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/healthz", get(health::get))
+        .route("/metrics", get(metrics::get))
         .nest("/api/v1", api_routes)
         .layer(DefaultBodyLimit::max(state.config.max_request_body_size))
         .layer(TraceLayer::new_for_http())

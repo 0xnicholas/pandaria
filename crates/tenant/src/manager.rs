@@ -130,6 +130,9 @@ pub trait TenantManager: Send + Sync {
     /// Get quota information for a tenant.
     async fn get_quota(&self, tenant_id: &str) -> Result<QuotaInfo, TenantError>;
 
+    /// Return the total number of active sessions across all tenants.
+    fn active_session_count(&self) -> usize;
+
     /// Create multiple sessions from a shared template.
     async fn batch_create_sessions(
         &self,
@@ -338,6 +341,21 @@ impl TenantManagerImpl {
     }
 }
 
+/// Heuristic token estimation: ~4 chars per token for most LLMs.
+fn estimate_input_tokens(content: &[ai_provider::Content]) -> u64 {
+    let chars: usize = content
+        .iter()
+        .map(|c| match c {
+            ai_provider::Content::Text { text, .. } => text.len(),
+            ai_provider::Content::Image { .. } => 1024,
+            ai_provider::Content::Audio { .. } => 1024,
+            ai_provider::Content::Video { .. } => 2048,
+            _ => 0,
+        })
+        .sum();
+    (chars / 4).max(1) as u64
+}
+
 #[async_trait]
 impl TenantManager for TenantManagerImpl {
     async fn create_session(
@@ -439,8 +457,9 @@ impl TenantManager for TenantManagerImpl {
             .registry
             .get(tenant_id)
             .ok_or_else(|| TenantError::TenantNotFound(tenant_id.to_string()))?;
+        let estimated_input = estimate_input_tokens(&content);
         supervisor.check_quota(crate::tenant::QuotaCheck::TokenUsage {
-            input: 0,
+            input: estimated_input,
             output: 0,
         })?;
 
@@ -466,7 +485,7 @@ impl TenantManager for TenantManagerImpl {
         // Cancel the token without holding the actor lock — this allows
         // abort to reach the in-flight LLM stream even while prompt()
         // is running.
-        entry.abort_token.lock().unwrap().cancel();
+        entry.abort_token.lock().expect("abort_token lock poisoned").cancel();
 
         warn!(
             tenant_id = %tenant_id,
@@ -506,7 +525,7 @@ impl TenantManager for TenantManagerImpl {
         }
 
         // Cancel any in-flight operation.
-        entry.abort_token.lock().unwrap().cancel();
+        entry.abort_token.lock().expect("abort_token lock poisoned").cancel();
 
         // Notify external memory system of session deletion (optional).
         if let Some(ref mem) = self.runtime_config.memory_store {
@@ -725,7 +744,7 @@ impl TenantManager for TenantManagerImpl {
             .reset()
             .await
             .map_err(|e| map_agent_error(e, tenant_id))?;
-        *entry.abort_token.lock().unwrap() = new_token;
+        *entry.abort_token.lock().expect("abort_token lock poisoned") = new_token;
         Ok(actor.state())
     }
 
@@ -776,6 +795,10 @@ impl TenantManager for TenantManagerImpl {
         for (tenant_id, session_id) in keys {
             let _ = self.delete_session(&tenant_id, &session_id).await;
         }
+    }
+
+    fn active_session_count(&self) -> usize {
+        self.sessions.len()
     }
 }
 

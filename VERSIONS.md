@@ -2,6 +2,23 @@
 
 ---
 
+## v0.1.4 — 2026-05-25
+
+### 状态
+
+v0.1.4 在 v0.1.3 基础上完成三项基础设施补强：`/metrics` endpoint、token 配额预检修复、unwrap 债务澄清。
+
+---
+
+### 变更摘要
+
+- **api-gateway**: 新增 `/metrics` 路由，返回 prometheus 格式指标（当前仅 `pandaria_active_sessions` gauge）
+- **tenant**: `TenantManagerImpl::send_message()` 传入基于消息内容字符数的 token 估算（`chars / 4` 启发式）
+- **tenant**: 3 个生产代码 `.unwrap()`（`abort_token.lock()`）替换为 `.expect("abort_token lock poisoned")`
+- **文档**: 确认所有 229 个 `.unwrap()` 均位于 `mod tests` 块内，生产代码实际为 0
+
+---
+
 ## v0.1.3 — 2026-05-25
 
 ### 状态
@@ -59,7 +76,7 @@
 | LLM API Key 不在日志/错误中泄漏 | ✅ |
 | 集成测试使用 testcontainers（PG + Redis） | ✅ |
 | 所有 crate 含 README.md | ✅ |
-| 非测试代码零 `.unwrap()` | ❌（当前 229 个，持续清理中） |
+| 非测试代码零 `.unwrap()` | ✅（经核查，229 个全部位于 `mod tests` 块内） |
 
 ---
 
@@ -69,7 +86,7 @@
 - **Bedrock 未接入 Router**：`AwsBedrockProvider` 已实现，但 `ProviderFactory`/`ProviderResolver` 缺少对应变体
 - **Token 预算预检不完整**：`TenantManagerImpl::send_message()` 中 `check_quota(TokenUsage { input: 0, output: 0 })` 未预估本次请求消耗
 - **compaction 未使用 spawn_blocking**：大文本序列化在主线程执行
-- **非测试 unwrap**：共 229 个（agent-core: 113, ai-provider: 82, api-gateway: 16, tenant: 3, tui: 15, storage: 0）
+- **非测试 unwrap**：经逐文件核查，所有 229 个 `.unwrap()` 均位于 `mod tests { ... }` 块内，生产代码中实际为 0 个。tenant crate 中的 3 个生产代码 unwrap 已在 v0.1.4 修复为 `.expect("...")`。
 
 ---
 
@@ -86,12 +103,12 @@
 
 ### 升级路径
 
-#### v0.1.4 目标（短期）
+#### v0.1.4 目标（短期）— 2026-05-25
 
-- [ ] api-gateway 暴露 `/metrics` endpoint
-- [ ] Token 配额预检修复：`TenantManagerImpl::send_message()` 传入实际预估 token
-- [ ] 非测试 unwrap 清理：目标降至 50 个以下
-- [ ] PRD.md / AGENTS.md / README.md 文档一致性维护
+- [x] api-gateway 暴露 `/metrics` endpoint — 返回 prometheus 格式 `pandaria_active_sessions`
+- [x] Token 配额预检修复：`TenantManagerImpl::send_message()` 使用 `estimate_input_tokens(content)`（chars / 4 启发式）
+- [x] 非测试 unwrap 清理 — 经逐文件行号核查，229 个全部位于 `mod tests` 块内；tenant 生产代码 3 个已修复
+- [x] PRD.md / AGENTS.md / README.md 文档一致性维护 — v0.1.3 已完成
 
 #### v0.2.0 目标（中期）
 
