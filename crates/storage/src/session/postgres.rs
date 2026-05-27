@@ -150,4 +150,34 @@ impl SessionStore for PgSessionStore {
             .await
             .map_err(|e| AgentError::Persistence(e.to_string()))
     }
+
+    async fn append_entries(
+        &self,
+        tenant_id: &str,
+        session_id: &str,
+        new_entries: &[SessionEntry],
+    ) -> Result<(), AgentError> {
+        let json = serde_json::to_value(new_entries)
+            .map_err(|e| AgentError::Persistence(format!("serialize: {e}")))?;
+
+        // jsonb || jsonb concatenates the new array onto the existing one
+        sqlx::query(
+            r#"
+            INSERT INTO sessions (tenant_id, session_id, entries, updated_at)
+            VALUES ($1, $2, $3, NOW())
+            ON CONFLICT (tenant_id, session_id)
+            DO UPDATE SET
+                entries = sessions.entries || EXCLUDED.entries,
+                updated_at = NOW()
+            "#,
+        )
+        .bind(tenant_id)
+        .bind(session_id)
+        .bind(json)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AgentError::Persistence(format!("pg append: {e}")))?;
+
+        Ok(())
+    }
 }
