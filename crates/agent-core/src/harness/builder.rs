@@ -109,7 +109,11 @@ impl SessionBuilder {
             if let Some(ref mem) = self.config.memory_store {
                 Arc::new(CombinedDispatcher::new(vec![
                     Arc::new(dispatcher),
-                    Arc::new(MemoryHookDispatcher::new(mem.clone())),
+                    Arc::new(MemoryHookDispatcher::new(
+                        mem.clone(),
+                        self.model.clone(),
+                        std::time::SystemTime::now(),
+                    )),
                 ]))
             } else {
                 Arc::new(dispatcher)

@@ -533,6 +533,8 @@ impl TenantManager for TenantManagerImpl {
                 tenant_id: tenant_id.to_string(),
                 session_id: session_id.to_string(),
                 user_id: None,
+                model: String::new(),
+                session_started_at: std::time::SystemTime::now(),
             };
             if let Err(e) = mem.forget_session(&mem_ctx).await {
                 warn!(

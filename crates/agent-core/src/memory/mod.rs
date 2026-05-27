@@ -1,4 +1,5 @@
 pub mod extractor;
+pub mod formatter;
 pub mod hook;
 pub mod in_memory;
 pub mod store;
