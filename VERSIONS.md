@@ -2,6 +2,45 @@
 
 ---
 
+## v0.2.0 — 2026-05-27
+
+### 状态
+
+v0.2.0 完成持久化加固、Memory 数据准备重构、E2E 测试矩阵扩展三项核心工作。
+
+### 变更摘要
+
+#### 持久化加固
+
+- **自动 restore**：`SessionActor` 在首次 `prompt()` 时自动从 store 恢复历史，无需调用方手动调 `restore()`。原 `restore()` 方法标记 deprecated。
+- **增量保存**：`SessionStore` trait 新增 `append_entries()` 默认方法（load→merge→save）。PG 适配器 override 为 `jsonb || jsonb` 串联，避免全量序列化。
+- **api-gateway 持久化接入**：`HarnessConfig.store` 可通过 HTTP API 注入，session 重启后可恢复。
+- **MemoryStore forget 联动**：`TenantManagerImpl::delete_session()` 同步调用 `MemoryStore::forget_session()`。
+
+#### Memory 数据准备重构
+
+- **MemoryStore trait 简化**：`remember(ctx, facts)` → `remember(ctx, content, metadata)`。删除 `MemoryFact`、`MemoryQuery` 类型。
+- **Conversation Formatter**：新增 `memory/formatter.rs`，将 agent turn 格式化为 Markdown 文本 + 结构化元数据，供 Emerald 等外挂记忆系统消费。
+- **MemoryHookDispatcher 重写**：`on_turn_end` 调用 formatter 生成 Markdown 内容，fire-and-forget 发送到外挂 store。
+- **MemoryContext 增强**：新增 `model` 和 `session_started_at` 字段。
+
+#### E2E 测试矩阵
+
+- **新增 5 个 E2E 测试文件**：
+  - `e2e_persistence_recovery` — 全链路持久化恢复（store 级别验证）
+  - `e2e_persistence_compaction` — compaction + persistence 组合
+  - `e2e_persistence_fault_injection` — DB 不可用降级
+  - `e2e_concurrent_sessions` — 并发 session 隔离
+  - `e2e_memory_store` — MemoryStore 联动（格式验证 + API 集成）
+- **测试基础设施**：`common.rs` 新增 `build_test_app_with_store`、`build_test_app_with_store_and_compaction`、`ensure_test_containers`、`create_test_pg_store` 等工厂函数。
+
+#### 文档
+
+- Spec: `docs/specs/2026-05-26-persistence-e2e-hardening.md`
+- Plan: `docs/plans/2026-05-26-persistence-e2e-hardening.md`
+
+---
+
 ## v0.1.4 — 2026-05-25
 
 ### 状态

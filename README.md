@@ -510,11 +510,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### v0.2.0（中期）
 
+- [x] Session 持久化加固：auto-restore + 增量保存（`append_entries`）+ PG jsonb 串联优化
+- [x] Memory 数据准备重构：Conversation Formatter + MemoryStore trait 简化 + MemoryHookDispatcher 重写
+- [x] E2E 测试矩阵扩展：5 个新测试（持久化恢复、compaction、故障注入、并发隔离、MemoryStore 联动）
 - [ ] CPU time 预算实现与接入
 - [ ] Bedrock provider 接入 Router/Resolver
 - [ ] compaction 大文本操作移至 `spawn_blocking`
-- [ ] Token 配额预检修复（传入实际预估 token）
-- [ ] 非测试 unwrap 清理：目标降至 50 个以下
 - [ ] 水平扩展：session 跨节点迁移能力设计
 - [ ] WASM / RPC 插件运行时（重新设计轻量级插件边界）
 

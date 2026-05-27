@@ -220,13 +220,14 @@ api-gateway → tenant → agent-core → ai-provider
 | Extension 模型（Rust trait） | ❌ 已删除（v0.1.x 内联为 DefaultHookDispatcher） |
 | Hook 机制（直接函数调用） | ✅ 已确定 |
 | Session 隔离粒度（tokio task） | ✅ 已确定 |
-| Session 持久化 schema | ✅ 已实现（PostgreSQL adapter + Redis adapter） |
+| Session 持久化 schema | ✅ 已实现（PostgreSQL adapter + Redis adapter，支持 auto-restore + 增量保存 `append_entries`） |
 | LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral/DeepSeek + Bedrock feature-gated） |
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST） |
 | tenant crate | 🟡 核心功能已实现（并发配额、token/tool call 计量、session 生命周期），CPU time 预算待实现 |
+| Memory 系统 | ✅ MemoryStore trait + MemoryHookDispatcher + Conversation Formatter。外挂系统（Emerald）集成就绪 |
 | observability crate | ❌ 已删除（v0.1.3）。sanitize 移至 agent-core，metrics/tracing 暂无需求 |
-| api-gateway | ✅ 核心功能已实现（REST API + SSE + HMAC 认证 + 限流） |
-| storage 集成测试 | ✅ 已实现（testcontainers 启动 PostgreSQL + Redis，并行测试 tenant/session ID 隔离） |
+| api-gateway | ✅ 核心功能已实现（REST API + SSE + HMAC 认证 + 限流 + persist store 接入） |
+| storage 集成测试 | ✅ 已实现（testcontainers 启动 PostgreSQL + Redis，8 PG + 7 Redis；E2E 持久化恢复/故障注入/并发隔离） |
 | 代码质量 | ✅ 生产代码零 unwrap（229 个全部位于 `mod tests` 块内；tenant 3 个生产代码 unwrap 已修复为 `.expect()）` |
 | TUI 客户端 | 🟡 核心功能已重构（ratatui + REST client + SSE 订阅），新增：输入队列（steer/followUp）、Bash 模式（`!command`/`!!command`）、外部编辑器（Ctrl+X）、命令面板解耦（Ctrl+Shift+P 任意状态）、模型循环切换（Ctrl+P/N）、Redo（Ctrl+Shift+-）、字符跳转（Ctrl+]）、CompactionSummary 消息类型。持续迭代中 |
 | PromptBuilder 设计 | ✅ Phase 1 & 2 已完成。核心类型 + SessionActor/AgentLoop 集成 + Hook 系统 `PromptBuilder` 接入。`BeforeAgentStartMutation` / `ProviderRequestMutation` 新增 `prompt_mutation: Option<PromptMutation>` 字段；legacy `system_prompt: Option<PromptBuilder>` 保留向后兼容，替换后框架自动重新注入 `SkillsDirectory`。`inject_skills_into_builder` 辅助函数提取至 `skills/injector.rs`。 |
