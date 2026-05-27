@@ -219,6 +219,10 @@ impl TenantManager for MockTenantManager {
     }
 
     async fn shutdown(&self) {}
+
+    fn active_session_count(&self) -> usize {
+        self.sessions.lock().unwrap().len()
+    }
 }
 
 /// Build a test router with the mock tenant manager and a test auth secret.

@@ -133,7 +133,7 @@ pub fn build_test_app_with_client(
     api_gateway::build_router(state)
 }
 
-const TEST_SECRET: &str = "test-secret-32-chars-long!!!";
+pub const TEST_SECRET: &str = "test-secret-32-chars-long!!!";
 
 /// Generate a valid HMAC-SHA256 token for the given tenant.
 pub fn make_token(tenant_id: &str) -> String {
@@ -311,4 +311,100 @@ data: [DONE]
 "#,
         text
     )
+}
+
+// ── Persistence-aware test fixtures ──
+
+use storage::session::postgres::PgSessionStore;
+
+/// Build a test router with both a real TenantManagerImpl and a SessionStore.
+/// Delegates to `build_test_app_with_store_and_compaction` with default config.
+pub fn build_test_app_with_store(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    store: Arc<dyn agent_core::SessionStore>,
+) -> Router {
+    build_test_app_with_store_and_compaction(
+        provider,
+        store,
+        agent_core::CompactionConfig::default(),
+    )
+}
+
+/// Build a test router with a SessionStore and custom CompactionConfig.
+pub fn build_test_app_with_store_and_compaction(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    store: Arc<dyn agent_core::SessionStore>,
+    compaction_config: agent_core::CompactionConfig,
+) -> Router {
+    let registry = Arc::new(tenant::TenantRegistry::new());
+    let test_tenant = tenant::Tenant::new(
+        "test-tenant",
+        tenant::TenantQuota {
+            max_concurrent_sessions: 10,
+            max_tokens_per_day: 1_000_000,
+            max_tool_calls_per_minute: 60,
+            cpu_time_budget_ms_per_day: 3_600_000,
+        },
+    );
+    registry.register(test_tenant).unwrap();
+
+    let runtime_config = Arc::new(agent_core::HarnessConfig {
+        provider: provider.clone(),
+        default_model: "gpt-4".to_string(),
+        default_system_prompt: "You are a helpful assistant.".to_string(),
+        default_context_window: 128_000,
+        store: Some(store),
+        media_provider: None,
+        media_registry: None,
+        http_client: reqwest::Client::new(),
+        available_models: vec!["gpt-4".to_string()],
+        compaction_config,
+        agent_space: agent_core::AgentSpace::default(),
+        hook_config: agent_core::HookConfig::default(),
+        memory_store: None,
+    });
+    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
+        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
+    );
+
+    let config = ServerConfig {
+        auth_secret: secrecy::SecretString::from(TEST_SECRET),
+        ..Default::default()
+    };
+    let state = Arc::new(AppState::new(manager, config));
+    api_gateway::build_router(state)
+}
+
+/// Verify Docker containers are running before persistence-dependent tests.
+pub async fn ensure_test_containers() {
+    let pg_url = std::env::var("PANDARIA_TEST_PG_URL")
+        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:15432/postgres".to_string());
+    let redis_url = std::env::var("PANDARIA_TEST_REDIS_URL")
+        .unwrap_or_else(|_| "redis://:redis@localhost:16379".to_string());
+
+    let pg_ok = sqlx::PgPool::connect(&pg_url).await.is_ok();
+    // Simple connectivity check: try to open a client and get connection
+    let redis_ok = redis::Client::open(redis_url.as_str())
+        .map(|_| ())
+        .is_ok();
+
+    if !pg_ok || !redis_ok {
+        panic!(
+            "测试容器未启动。请先运行:\n\
+             docker start docker-env-postgres docker-env-redis\n\
+             或设置环境变量 PANDARIA_TEST_PG_URL / PANDARIA_TEST_REDIS_URL"
+        );
+    }
+}
+
+/// Create a PgSessionStore connected to the test PostgreSQL container.
+pub async fn create_test_pg_store() -> PgSessionStore {
+    let url = std::env::var("PANDARIA_TEST_PG_URL")
+        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:15432/postgres".to_string());
+    let pool = sqlx::PgPool::connect(&url)
+        .await
+        .expect("failed to connect to test postgres");
+    let store = PgSessionStore::new(pool);
+    store.init().await.expect("pg init failed");
+    store
 }

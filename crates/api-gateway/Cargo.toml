@@ -41,6 +41,9 @@ ai-provider = { path = "../ai-provider", features = ["test-utils"] }
 tokio-tungstenite = "0.26"
 reqwest = "0.12"
 hex = "0.4"
+storage = { path = "../storage" }
+sqlx = "0.8"
+redis = "0.27"
 
 [[test]]
 name = "e2e_session_lifecycle"
@@ -77,3 +80,23 @@ path = "tests/e2e/e2e_api_extensions.rs"
 [[test]]
 name = "e2e_websocket"
 path = "tests/e2e/e2e_websocket.rs"
+
+[[test]]
+name = "e2e_persistence_recovery"
+path = "tests/e2e/e2e_persistence_recovery.rs"
+
+[[test]]
+name = "e2e_persistence_compaction"
+path = "tests/e2e/e2e_persistence_compaction.rs"
+
+[[test]]
+name = "e2e_persistence_fault_injection"
+path = "tests/e2e/e2e_persistence_fault_injection.rs"
+
+[[test]]
+name = "e2e_concurrent_sessions"
+path = "tests/e2e/e2e_concurrent_sessions.rs"
+
+[[test]]
+name = "e2e_memory_store"
+path = "tests/e2e/e2e_memory_store.rs"
