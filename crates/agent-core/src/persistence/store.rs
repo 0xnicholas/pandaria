@@ -30,4 +30,23 @@ pub trait SessionStore: Send + Sync {
 
     /// List all session IDs for a given tenant.
     async fn list_sessions(&self, tenant_id: &str) -> Result<Vec<String>, AgentError>;
+
+    /// Append new entries to an existing session without a full load→merge→save.
+    ///
+    /// The name reflects the caller's intent ("I have new entries to append"),
+    /// not a guarantee of physical append at the storage layer.
+    ///
+    /// Default implementation: load → merge → full save.
+    /// Storage adapters may override with more efficient strategies
+    /// (e.g., `jsonb_insert` for PostgreSQL).
+    async fn append_entries(
+        &self,
+        tenant_id: &str,
+        session_id: &str,
+        new_entries: &[SessionEntry],
+    ) -> Result<(), AgentError> {
+        let mut all = self.load_session(tenant_id, session_id).await?;
+        all.extend_from_slice(new_entries);
+        self.save_session(tenant_id, session_id, &all).await
+    }
 }
