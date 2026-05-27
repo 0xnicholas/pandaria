@@ -57,6 +57,12 @@ pub struct SessionActor {
     follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
     /// Optional persistence backend for session history
     store: Option<Arc<dyn SessionStore>>,
+    /// Whether auto-restore should run before the next prompt
+    needs_restore: bool,
+    /// Entry count at the time of last save (incremental save boundary)
+    last_saved_entry_count: usize,
+    /// Timestamp when this session actor was created
+    session_started_at: std::time::SystemTime,
     /// Skills available for this session.
     skills: Vec<crate::skills::Skill>,
     /// Handle of the most recent fire-and-forget persistence task.
@@ -167,6 +173,8 @@ impl SessionActor {
             "session started",
         );
 
+        let has_store = config.store.is_some();
+
         let mut actor = Self {
             tenant_id: config.tenant_id,
             session_id: config.session_id,
@@ -183,6 +191,9 @@ impl SessionActor {
             steer_queue: Arc::new(Mutex::new(Vec::new())),
             follow_up_queue: Arc::new(Mutex::new(Vec::new())),
             store: config.store,
+            needs_restore: has_store,
+            last_saved_entry_count: 0,
+            session_started_at: std::time::SystemTime::now(),
             last_save: None,
             abort_token: CancellationToken::new(),
             recovery: RecoveryStateMachine::new(3),
@@ -223,27 +234,12 @@ impl SessionActor {
 
     /// Attempt to restore session history from the configured store.
     ///
-    /// Returns the number of entries restored, or 0 if no store is configured
-    /// or the store has no data for this session.
+    /// **Deprecated:** Restore now happens automatically in `prompt()` /
+    /// `run_with_messages()`. This method is a no-op and will be removed
+    /// in a future version.
+    #[deprecated(since = "0.2.0", note = "restore is now automatic; this method is a no-op")]
     pub async fn restore(&mut self) -> Result<usize, AgentError> {
-        if let Some(ref store) = self.store {
-            let entries = store
-                .load_session(&self.tenant_id, &self.session_id)
-                .await?;
-            let count = entries.len();
-            if count > 0 {
-                info!(
-                    tenant_id = %self.tenant_id,
-                    session_id = %self.session_id,
-                    restored_count = count,
-                    "restored session history from store",
-                );
-            }
-            self.entries = entries;
-            Ok(count)
-        } else {
-            Ok(0)
-        }
+        Ok(0)
     }
 
     /// Send a user message and run the agent loop.
@@ -281,6 +277,38 @@ impl SessionActor {
                 .unwrap_or_default();
             return Err(AgentError::SessionInError { reason });
         }
+
+        // Auto-restore session history from store before first prompt
+        if self.needs_restore {
+            self.needs_restore = false;
+            if let Some(ref store) = self.store {
+                match store.load_session(&self.tenant_id, &self.session_id).await {
+                    Ok(entries) if !entries.is_empty() => {
+                        let count = entries.len();
+                        self.entries = entries;
+                        self.last_saved_entry_count = count;
+                        info!(
+                            tenant_id = %self.tenant_id,
+                            session_id = %self.session_id,
+                            restored_count = count,
+                            "auto-restored session history",
+                        );
+                    }
+                    Ok(_) => {
+                        // Empty store — fresh session
+                    }
+                    Err(e) => {
+                        warn!(
+                            tenant_id = %self.tenant_id,
+                            session_id = %self.session_id,
+                            error = %e,
+                            "auto-restore failed, starting with empty session",
+                        );
+                    }
+                }
+            }
+        }
+
         // Handle /skill:name invocation only when there's exactly one Text part
         if content.len() == 1 {
             if let Content::Text { ref text, .. } = content[0] {
@@ -628,29 +656,31 @@ impl SessionActor {
             );
         }
 
-        // Persist AFTER check_compaction so that newly-added compaction
-        // entries are included in the snapshot.
-        // Serialize saves per-session by awaiting the previous task before
-        // spawning the next one, preventing stale snapshots from overwriting
-        // newer ones.
+        // Persist incrementally — only save new entries since last save.
+        // Await the previous save task to preserve ordering, then spawn a new
+        // fire-and-forget task for the new entries.
         if let Some(ref store) = self.store {
-            if let Some(handle) = self.last_save.take() {
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
-            }
-            let entries = self.entries.clone();
-            let tenant_id = self.tenant_id.clone();
-            let session_id = self.session_id.clone();
-            let store = store.clone();
-            self.last_save = Some(tokio::spawn(async move {
-                if let Err(e) = store.save_session(&tenant_id, &session_id, &entries).await {
-                    warn!(
-                        tenant_id = %tenant_id,
-                        session_id = %session_id,
-                        error = %e,
-                        "failed to persist session",
-                    );
+            let new_entries = &self.entries[self.last_saved_entry_count..];
+            if !new_entries.is_empty() {
+                if let Some(handle) = self.last_save.take() {
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
                 }
-            }));
+                let entries_to_save = new_entries.to_vec();
+                self.last_saved_entry_count = self.entries.len();
+                let tenant_id = self.tenant_id.clone();
+                let session_id = self.session_id.clone();
+                let store = store.clone();
+                self.last_save = Some(tokio::spawn(async move {
+                    if let Err(e) = store.append_entries(&tenant_id, &session_id, &entries_to_save).await {
+                        warn!(
+                            tenant_id = %tenant_id,
+                            session_id = %session_id,
+                            error = %e,
+                            "failed to persist session",
+                        );
+                    }
+                }));
+            }
         }
 
         Ok(all_new_msgs)

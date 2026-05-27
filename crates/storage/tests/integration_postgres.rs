@@ -326,8 +326,11 @@ async fn test_session_actor_persistence_loop() {
         skills: vec![],
     });
 
-    let restored = session2.restore().await.expect("restore failed");
-    assert!(restored > 0, "expected restored entries > 0");
+    // Auto-restore triggers on first prompt; send a message to trigger it
+    session2
+        .prompt("resume".to_string())
+        .await
+        .expect("resume prompt failed");
 
     let msgs = session2.messages();
     assert!(
