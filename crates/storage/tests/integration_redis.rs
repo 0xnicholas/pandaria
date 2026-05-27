@@ -365,3 +365,49 @@ async fn test_redis_store_tenant_list_isolation() {
         .expect("list y failed");
     assert_eq!(list_y, vec!["sy1"]);
 }
+
+#[tokio::test]
+async fn test_redis_append_entries() {
+    let _ = tracing_subscriber::fmt().try_init();
+    let (conn, _container) = start_redis().await;
+    let store = RedisSessionStore::new(conn);
+
+    let tenant = "append_t";
+    let session = "append_s";
+
+    let e1 = SessionEntry::Message {
+        id: uuid::Uuid::new_v4(),
+        message: agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
+                text: "first".to_string(),
+                text_signature: None,
+            }],
+            timestamp: std::time::SystemTime::now(),
+        }),
+    };
+    store.save_session(tenant, session, &[e1]).await.expect("save failed");
+
+    let e2 = SessionEntry::Message {
+        id: uuid::Uuid::new_v4(),
+        message: agent_core::AgentMessage::Assistant(ai_provider::AssistantMessage {
+            content: vec![ai_provider::Content::Text {
+                text: "second".to_string(),
+                text_signature: None,
+            }],
+            provider: "test".into(),
+            model: "test".into(),
+            api: ai_provider::Api { provider: "test".into(), model: "test".into() },
+            usage: ai_provider::Usage {
+                input_tokens: 1, output_tokens: 1, total_tokens: 2,
+                cache_creation_input_tokens: None, cache_read_input_tokens: None,
+            },
+            stop_reason: ai_provider::StopReason::Stop,
+            response_id: None, error_message: None,
+            timestamp: std::time::SystemTime::now(),
+        }),
+    };
+    store.append_entries(tenant, session, &[e2]).await.expect("append failed");
+
+    let loaded = store.load_session(tenant, session).await.expect("load failed");
+    assert_eq!(loaded.len(), 2, "expected 2 entries after append");
+}
