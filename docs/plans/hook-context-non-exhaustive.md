@@ -1,5 +1,7 @@
 # Plan: Hook Context Struct #[non_exhaustive]
 
+> **Status:** Completed ✅ — 14 `#[non_exhaustive]` annotations applied to all context structs
+
 ## 关联 Spec
 
 [docs/specs/hook-context-non-exhaustive.md](../specs/hook-context-non-exhaustive.md)

@@ -1,7 +1,7 @@
 # Plan: 在 agent-core 中实现 Skills 支持
 
 > 创建日期: 2026-05-14  
-> 状态: Review 完成，已优化至 v1.2  
+> 状态: Completed ✅ — Skills support delivered
 > 对应 Spec: `docs/specs/skills-spec.md`
 
 ---

@@ -1,7 +1,7 @@
 # Plan: Provider Resolution & Routing Layer 实施计划
 
 > 创建日期: 2026-05-16
-> 状态: Draft
+> 状态: Completed ✅ — ProviderResolver + built-in rules delivered
 > 对应 Spec: `docs/specs/provider-resolution.md`
 
 ---

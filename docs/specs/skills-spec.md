@@ -1,7 +1,7 @@
 # Skills 技术规格文档
 
 > 版本: 1.0  
-> 状态: Draft  
+> 状态: Completed ✅ — Skills support delivered  
 > 对应 Plan: `docs/plans/skills-support-plan.md`
 
 ---

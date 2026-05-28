@@ -1,7 +1,7 @@
 # api-gateway 实现计划
 
 > **Date:** 2026-05-14
-> **Status:** Draft
+> **Status:** Completed ✅ — api-gateway delivered
 > **Spec Reference:** `docs/specs/2026-05-02-api-gateway.md`（修订版）
 > **Priority:** P1 — 依赖 `crates/tenant/` 完成后可全面启动
 

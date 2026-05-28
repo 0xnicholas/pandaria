@@ -1,0 +1,27 @@
+# Docker Compose for Emerald integration testing
+#
+# Usage:
+#   docker compose -f docker-compose.emerald.yml up -d
+#   PANDARIA_TEST_EMERALD_URL=http://localhost:8000 \
+#     PANDARIA_TEST_EMERALD_API_KEY=em_test_key \
+#     cargo test -p agent-core --test integration_emerald -- --test-threads=1
+#   docker compose -f docker-compose.emerald.yml down
+#
+# Replace the image with your actual Emerald Docker image.
+
+services:
+  emerald:
+    # TODO: replace with your Emerald Docker image
+    image: ${EMERALD_IMAGE:-emerald:latest}
+    container_name: pandaria-emerald-test
+    ports:
+      - "${EMERALD_PORT:-8000}:8000"
+    environment:
+      - EMERALD_API_KEY=${EMERALD_API_KEY:-em_test_key}
+      # Add other Emerald-specific env vars below
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8000/v1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

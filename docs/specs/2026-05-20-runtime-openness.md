@@ -1,7 +1,7 @@
 # Pandaria Runtime Openness 规格书
 
 **Date:** 2026-05-20
-**Status:** Draft
+**Status:** Completed ✅ — HttpProxyTool + dynamic tool registration delivered
 **Reference:** AGENTS.md (ADR-001, ADR-003, ADR-004, ADR-005)
 
 ---

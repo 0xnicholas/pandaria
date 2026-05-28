@@ -75,7 +75,7 @@ impl HookDispatcher for MemoryHookDispatcher {
 
         tokio::spawn(async move {
             match tokio::time::timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(15),
                 store.remember(&mem_ctx, &content, &metadata),
             )
             .await
@@ -148,7 +148,7 @@ impl HookDispatcher for MemoryHookDispatcher {
 
         tokio::spawn(async move {
             match tokio::time::timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(15),
                 store.remember(&mem_ctx, &summary, &metadata),
             )
             .await

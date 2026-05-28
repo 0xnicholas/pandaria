@@ -1,6 +1,6 @@
 # ai-provider v0.2 开发实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** Completed ✅ — all tasks delivered
 
 **Goal:** 将 ai-provider crate 从 v0.1（核心功能完成）升级到完整 spec 覆盖，补全 wiremock 集成测试、P3 Provider（Mistral/Bedrock）、OAuth 抽象层，并完成最终质量验证。
 

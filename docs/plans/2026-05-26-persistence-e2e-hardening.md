@@ -1,7 +1,7 @@
 # Persistence & E2E Test Hardening 实施计划
 
 **Date:** 2026-05-26
-**Status:** Ready
+**Status:** Completed ✅ — delivered in v0.2.0
 **Reference:** `docs/specs/2026-05-26-persistence-e2e-hardening.md`
 
 ---

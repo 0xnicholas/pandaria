@@ -1,7 +1,7 @@
 # ai-provider 详细模块规格
 
 **Date:** 2026-05-02
-**Status:** Draft
+**Status:** Completed ✅ — ai-provider delivered
 **Reference:** pi.dev LLM layer (`packages/ai/`), AGENTS.md (ADR-001, ADR-005)
 
 ---

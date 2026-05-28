@@ -556,7 +556,7 @@ LlmProvider                       ├── on_before_compact() → CompactDecis
 
 | 约束 | 说明 |
 |---|---|
-| 减少 unwrap | 非测试代码应最小化 `.unwrap()`，优先使用 `?` 或 `expect("reason")`。当前代码库有 229 个非测试 unwrap 待清理 |
+| 减少 unwrap | 非测试代码应最小化 `.unwrap()`，优先使用 `?` 或 `expect("reason")`。经 v0.1.4 核查，所有 229 个 `.unwrap()` 均位于 `mod tests` 块内，生产代码中实际为 0 个 |
 | 异步阻塞隔离 | 禁止 `std::thread::sleep` 等阻塞调用出现在 async 上下文中，CPU 密集型操作使用 `tokio::task::spawn_blocking` |
 | 错误类型 | 所有跨 crate 错误使用 `thiserror` 定义 |
 | LLM 重试 | 指数退避，最多 3 次，可选 `max_retry_delay_ms` 上限 |

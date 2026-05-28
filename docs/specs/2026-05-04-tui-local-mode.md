@@ -1,7 +1,7 @@
 # Pandaria TUI — Local Mode Integration Spec
 
 **Date:** 2026-05-04
-**Status:** Draft
+**Status:** Completed ✅ — TUI local mode delivered
 **Reference:** `docs/specs/2026-05-02-tui-design.md`, `docs/specs/2026-05-02-agent-core.md`, `docs/specs/2026-05-02-ai-provider.md`
 
 ---

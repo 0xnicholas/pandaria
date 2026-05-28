@@ -1,7 +1,7 @@
 # 多模态模型接入规格书
 
 **Date:** 2026-05-19
-**Status:** Draft
+**Status:** Completed ✅ — 理解型多模态 + 生成型多模态已交付
 **Reference:** AGENTS.md (ADR-001, ADR-003, ADR-004)
 
 ---

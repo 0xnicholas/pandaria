@@ -41,6 +41,7 @@ ai-provider = { path = "../ai-provider", features = ["test-utils"] }
 tokio-tungstenite = "0.26"
 reqwest = "0.12"
 hex = "0.4"
+tokio-util = { workspace = true }
 storage = { path = "../storage" }
 sqlx = "0.8"
 redis = "0.27"
@@ -100,3 +101,19 @@ path = "tests/e2e/e2e_concurrent_sessions.rs"
 [[test]]
 name = "e2e_memory_store"
 path = "tests/e2e/e2e_memory_store.rs"
+
+[[test]]
+name = "e2e_path_guard"
+path = "tests/e2e/e2e_path_guard.rs"
+
+[[test]]
+name = "e2e_media_provider"
+path = "tests/e2e/e2e_media_provider.rs"
+
+[[test]]
+name = "e2e_rate_limit"
+path = "tests/e2e/e2e_rate_limit.rs"
+
+[[test]]
+name = "e2e_token_budget"
+path = "tests/e2e/e2e_token_budget.rs"

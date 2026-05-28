@@ -1,7 +1,7 @@
 # Pandaria TUI Module — Specification
 
 **Date:** 2026-05-03
-**Status:** Draft
+**Status:** Completed ✅ — TUI delivered
 **Reference:** pi.dev TUI (`packages/tui/`, `packages/coding-agent/src/modes/interactive/`)
 
 ---

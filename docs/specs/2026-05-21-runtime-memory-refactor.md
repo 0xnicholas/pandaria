@@ -1,7 +1,7 @@
 # Spec: Runtime & Memory 架构重构
 
 **Date:** 2026-05-21
-**Status:** Frozen
+**Status:** Completed ✅ — delivered in v0.2.0
 **Reference:** AGENTS.md (ADR-001 ~ ADR-005)
 
 ---

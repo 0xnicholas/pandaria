@@ -1,7 +1,7 @@
 # Runtime Openness 实施计划
 
 **Date:** 2026-05-20
-**Status:** Draft
+**Status:** Completed ✅ — HttpProxyTool + dynamic tool registration delivered
 **Reference:** `docs/specs/2026-05-20-runtime-openness.md`
 
 ---

@@ -1,5 +1,7 @@
 # Spec: Hook Context Struct #[non_exhaustive]
 
+> **Status:** Completed ✅ — 14 `#[non_exhaustive]` annotations applied to all context structs
+
 ## 背景
 
 `crates/agent-core/src/hook/context.rs` 定义了 13 个 hook context struct（如 `ToolCallCtx`、`TurnEndCtx` 等），用于在 Extension trait 的 hook 方法中传递运行时上下文。这些 struct 的字段全部是 `pub`，且没有 `#[non_exhaustive]` 属性。

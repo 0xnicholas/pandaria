@@ -1,7 +1,7 @@
 # Spec: Persistence & E2E Test Hardening
 
 **Date:** 2026-05-26
-**Status:** Ready for Planning
+**Status:** Completed ✅ — delivered in v0.2.0
 **Reference:** AGENTS.md (ADR-004, ADR-005)
 
 ---

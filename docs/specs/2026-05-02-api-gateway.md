@@ -1,7 +1,7 @@
 # api-gateway 详细模块规格
 
 **Date:** 2026-05-02
-**Status:** Draft
+**Status:** Completed ✅ — api-gateway delivered
 **Reference:** AGENTS.md (依赖方向, ADR-005), TUI spec (客户端 API 协议)
 
 ---

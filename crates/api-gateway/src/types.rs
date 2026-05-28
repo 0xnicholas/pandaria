@@ -100,6 +100,7 @@ pub struct SessionInfo {
     pub model: String,
     pub context_window: Option<u64>,
     pub created_at: Option<String>,
+    pub turn_count: u64,
 }
 
 impl From<tenant::SessionInfo> for SessionInfo {
@@ -110,6 +111,7 @@ impl From<tenant::SessionInfo> for SessionInfo {
             model: info.model,
             context_window: None, // 由 gateway handler 从 ServerConfig 填充
             created_at: Some(info.created_at),
+            turn_count: info.turn_count,
         }
     }
 }

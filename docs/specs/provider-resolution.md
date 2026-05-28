@@ -1,7 +1,7 @@
 # Spec: Provider Resolution & Routing Layer
 
 > 版本: 1.1
-> 状态: Draft
+> 状态: Completed ✅ — ProviderResolver + built-in rules delivered
 > 对应 Plan: `docs/plans/provider-resolution.md`
 
 ---

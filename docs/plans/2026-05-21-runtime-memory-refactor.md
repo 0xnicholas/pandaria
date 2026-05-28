@@ -1,7 +1,7 @@
 # Runtime & Memory 架构重构实施计划
 
 **Date:** 2026-05-21
-**Status:** Draft
+**Status:** Completed ✅ — delivered in v0.2.0
 **Reference:** `docs/specs/2026-05-21-runtime-memory-refactor.md`
 
 ---

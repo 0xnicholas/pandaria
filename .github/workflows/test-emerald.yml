@@ -1,0 +1,113 @@
+name: Emerald Integration Tests
+
+on:
+  # Manual trigger — Emerald repo is private, image must be available.
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Test mode'
+        required: true
+        default: 'memory'
+        type: choice
+        options:
+          - memory
+          - docker
+      emerald_image:
+        description: 'Emerald Docker image (only for docker mode)'
+        required: false
+        default: 'emerald:v0.2.0'
+      emerald_api_key:
+        description: 'Emerald API key'
+        required: false
+        default: 'em_test'
+
+jobs:
+  emerald-e2e-memory:
+    if: github.event.inputs.mode == 'memory'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout Emerald
+        uses: actions/checkout@v4
+        with:
+          repository: earendil-works/emerald
+          ref: v0.2.0
+          path: emerald
+          token: ${{ secrets.EMERALD_REPO_TOKEN || github.token }}
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Emerald
+        run: |
+          cd emerald
+          pip install -e "."
+
+      - name: Start Emerald (memory mode)
+        run: |
+          cd emerald
+          python3 scripts/test_server.py &
+          for i in {1..30}; do
+            if curl -sf http://localhost:9999/v1/health; then
+              echo "Emerald is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Emerald failed to start"
+          exit 1
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run integration tests
+        run: |
+          export PANDARIA_TEST_EMERALD_URL=http://localhost:9999
+          export PANDARIA_TEST_EMERALD_API_KEY=${{ github.event.inputs.emerald_api_key }}
+          cargo test -p agent-core --test integration_emerald -- --test-threads=1
+
+  emerald-e2e-docker:
+    if: github.event.inputs.mode == 'docker'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Start Emerald (Docker)
+        run: |
+          export EMERALD_IMAGE="${{ github.event.inputs.emerald_image }}"
+          docker compose -f docker-compose.emerald.yml up -d
+
+      - name: Wait for Emerald
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:8000/v1/health; then
+              echo "Emerald is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Emerald failed to start"
+          docker compose -f docker-compose.emerald.yml logs
+          exit 1
+
+      - name: Run integration tests
+        run: |
+          export PANDARIA_TEST_EMERALD_URL=http://localhost:8000
+          export PANDARIA_TEST_EMERALD_API_KEY=${{ github.event.inputs.emerald_api_key }}
+          cargo test -p agent-core --test integration_emerald -- --test-threads=1
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f docker-compose.emerald.yml down

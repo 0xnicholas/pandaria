@@ -1,5 +1,6 @@
 # 多模态模型接入实施计划
 
+> **Status:** Completed ✅ — 理解型多模态 + 生成型多模态已交付
 > **优先级: P1** — 非阻塞级，可在现有功能迭代中并行推进。
 > **目标:** 分阶段实现理解型多模态（Video/Audio 输入）和生成型多模态（MediaProvider + MediaGenerationTool）。
 > **Spec Reference:** `docs/specs/2026-05-19-multimodal-support.md`
