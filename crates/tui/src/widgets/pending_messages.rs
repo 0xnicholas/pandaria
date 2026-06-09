@@ -25,7 +25,7 @@ impl Widget for PendingMessagesWidget<'_> {
 
         let count = self.pending.len();
         let label = if count == 1 {
-            format!("↑ 1 pending message")
+            "↑ 1 pending message".to_string()
         } else {
             format!("↑ {} pending messages", count)
         };

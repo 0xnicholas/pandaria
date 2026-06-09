@@ -5,7 +5,8 @@ use api_gateway::server::{AppState, serve};
 use secrecy::ExposeSecret;
 use tracing::info;
 
-fn generate_test_token(secret: &str, tenant_id: &str) -> String {
+/// Generate an HMAC-signed token for the given tenant.
+fn generate_token(secret: &str, tenant_id: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,10 +32,55 @@ fn generate_test_token(secret: &str, tenant_id: &str) -> String {
     let signature = mac.finalize().into_bytes();
     let sig_b64 = base64::Engine::encode(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        &signature,
+        signature,
     );
 
     format!("{}.{}", payload_b64, sig_b64)
+}
+
+/// Register a dev tenant when `PANDARIA_DEV_TENANT` is set.
+/// The tenant ID and quota are read from environment variables.
+fn register_dev_tenant(registry: &tenant::TenantRegistry) -> Option<String> {
+    let tenant_id = std::env::var("PANDARIA_DEV_TENANT").ok()?;
+
+    let max_concurrent = std::env::var("PANDARIA_DEV_TENANT_MAX_SESSIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+
+    let max_tokens = std::env::var("PANDARIA_DEV_TENANT_MAX_TOKENS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1_000_000);
+
+    let max_tool_calls = std::env::var("PANDARIA_DEV_TENANT_MAX_TOOL_CALLS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+
+    let cpu_budget = std::env::var("PANDARIA_DEV_TENANT_CPU_BUDGET_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3_600_000);
+
+    let quota = tenant::TenantQuota {
+        max_concurrent_sessions: max_concurrent,
+        max_tokens_per_day: max_tokens,
+        max_tool_calls_per_minute: max_tool_calls,
+        cpu_time_budget_ms_per_day: cpu_budget,
+    };
+
+    let t = tenant::Tenant::new(&tenant_id, quota);
+    match registry.register(t) {
+        Ok(()) => {
+            info!(%tenant_id, "registered dev tenant");
+            Some(tenant_id)
+        }
+        Err(e) => {
+            tracing::warn!(%tenant_id, error = %e, "failed to register dev tenant");
+            None
+        }
+    }
 }
 
 #[tokio::main]
@@ -62,38 +108,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 2. Tenant Registry ---
     let registry = Arc::new(tenant::TenantRegistry::new());
-    let test_tenant = tenant::Tenant::new(
-        "test-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(test_tenant)?;
-    info!("registered test tenant: test-tenant");
+    let dev_tenant_id = register_dev_tenant(&registry);
 
-    // --- 3. Runtime Config ---
-    let runtime_config = Arc::new(agent_core::HarnessConfig {
-        provider: provider.clone(),
-        default_model: "deepseek/deepseek-v4-pro".to_string(),
-        default_system_prompt: "You are a helpful assistant.".to_string(),
-        default_context_window: 128_000,
-        store: None,
-        media_provider: None,
-        media_registry: None,
-        http_client: reqwest::Client::new(),
-        available_models: vec!["deepseek/deepseek-v4-pro".to_string()],
-        compaction_config: agent_core::CompactionConfig {
-            enabled: true,
-            reserve_tokens: 4096,
-            keep_recent_tokens: 8192,
-        },
-        agent_space: agent_core::AgentSpace::from_env_or_default(),
-        hook_config: agent_core::HookConfig::default(),
-        memory_store: None,
-    });
+    // --- 3. Runtime Config (from environment variables) ---
+    let runtime_config = Arc::new(agent_core::HarnessConfig::from_env(provider.clone()));
+    info!(
+        default_model = %runtime_config.default_model,
+        available_models = ?runtime_config.available_models,
+        compaction_enabled = runtime_config.compaction_config.enabled,
+        "harness config loaded from env"
+    );
 
     // --- 4. Tenant Manager ---
     let tenant_manager: Arc<dyn tenant::TenantManager> = Arc::new(
@@ -116,11 +140,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("========================================");
     println!("  pandaria-server ready");
     println!("  bind: {}", config.bind_addr);
-    if std::env::var("PANDARIA_DEV_MODE").is_ok() {
+    if let Some(ref tenant_id) = dev_tenant_id {
         let secret = config.auth_secret.expose_secret();
-        let token = generate_test_token(secret, "test-tenant");
-        println!("  tenant: test-tenant");
-        println!("  token:  {}", token);
+        let token = generate_token(secret, tenant_id);
+        println!("  dev tenant: {tenant_id}");
+        println!("  dev token:  {token}");
     }
     println!("========================================");
 

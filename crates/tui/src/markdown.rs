@@ -121,7 +121,7 @@ fn highlight_code(code: &str, lang: Option<&str>, syntax_theme: &str) -> Vec<Vec
     let mut result = Vec::new();
     for line in LinesWithEndings::from(code) {
         let ranges: Vec<(syntect::highlighting::Style, &str)> =
-            h.highlight_line(line, &ps).unwrap_or_default();
+            h.highlight_line(line, ps).unwrap_or_default();
         result.push(
             ranges
                 .into_iter()

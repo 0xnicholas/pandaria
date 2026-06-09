@@ -16,6 +16,12 @@ pub struct MediaModelRegistry {
     models: HashMap<String, MediaModel>,
 }
 
+impl Default for MediaModelRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MediaModelRegistry {
     pub fn new() -> Self {
         Self {

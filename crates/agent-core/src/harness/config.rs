@@ -78,6 +78,79 @@ impl std::fmt::Debug for HarnessConfig {
     }
 }
 
+impl HarnessConfig {
+    /// Build a `HarnessConfig` from environment variables.
+    ///
+    /// `provider` must be supplied by the caller (it cannot be constructed
+    /// from env vars alone). All other fields read from environment variables
+    /// with sensible defaults.
+    ///
+    /// # Environment Variables
+    ///
+    /// | Variable | Default | Description |
+    /// |---|---|---|
+    /// | `PANDARIA_DEFAULT_MODEL` | `deepseek/deepseek-v4-pro` | Default model for new sessions |
+    /// | `PANDARIA_DEFAULT_SYSTEM_PROMPT` | `You are a helpful assistant.` | Default system prompt |
+    /// | `PANDARIA_DEFAULT_CONTEXT_WINDOW` | `128000` | Default context window size |
+    /// | `PANDARIA_AVAILABLE_MODELS` | (derived from `default_model`) | Comma-separated model list |
+    /// | `PANDARIA_COMPACTION_ENABLED` | `true` | Enable automatic compaction |
+    /// | `PANDARIA_COMPACTION_RESERVE_TOKENS` | `4096` | Tokens reserved for response |
+    /// | `PANDARIA_COMPACTION_KEEP_RECENT_TOKENS` | `8192` | Recent context tokens to keep |
+    pub fn from_env(provider: Arc<dyn ai_provider::LlmProvider>) -> Self {
+        let default_model = std::env::var("PANDARIA_DEFAULT_MODEL")
+            .unwrap_or_else(|_| "deepseek/deepseek-v4-pro".to_string());
+
+        let default_system_prompt = std::env::var("PANDARIA_DEFAULT_SYSTEM_PROMPT")
+            .unwrap_or_else(|_| "You are a helpful assistant.".to_string());
+
+        let default_context_window = std::env::var("PANDARIA_DEFAULT_CONTEXT_WINDOW")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(128_000);
+
+        let available_models: Vec<String> = std::env::var("PANDARIA_AVAILABLE_MODELS")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.split(',').map(|m| m.trim().to_string()).collect())
+            .unwrap_or_else(|| vec![default_model.clone()]);
+
+        let compaction_enabled = std::env::var("PANDARIA_COMPACTION_ENABLED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(true);
+
+        let compaction_reserve = std::env::var("PANDARIA_COMPACTION_RESERVE_TOKENS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4096);
+
+        let compaction_keep = std::env::var("PANDARIA_COMPACTION_KEEP_RECENT_TOKENS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(8192);
+
+        Self {
+            provider,
+            default_model,
+            default_system_prompt,
+            default_context_window,
+            store: None,
+            media_provider: None,
+            media_registry: None,
+            http_client: reqwest::Client::new(),
+            available_models,
+            compaction_config: crate::harness::compaction::CompactionConfig::new(
+                compaction_enabled,
+                compaction_reserve,
+                compaction_keep,
+            ),
+            agent_space: AgentSpace::from_env_or_default(),
+            hook_config: HookConfig::default(),
+            memory_store: None,
+        }
+    }
+}
+
 impl Default for HarnessConfig {
     fn default() -> Self {
         Self {

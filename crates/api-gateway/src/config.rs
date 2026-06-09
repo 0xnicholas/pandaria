@@ -55,7 +55,7 @@ impl ServerConfig {
         if let Ok(addr) = std::env::var("PANDARIA_BIND_ADDR") {
             config.bind_addr = addr
                 .parse()
-                .expect(&format!("PANDARIA_BIND_ADDR '{}' is invalid", addr));
+                .unwrap_or_else(|_| panic!("PANDARIA_BIND_ADDR '{}' is invalid", addr));
         }
 
         if let Ok(secret) = std::env::var("PANDARIA_AUTH_SECRET") {

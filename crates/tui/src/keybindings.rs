@@ -224,7 +224,7 @@ impl KeybindingsManager {
         } else {
             self.defaults
                 .get(&binding)
-                .map_or(false, |keys| keys.contains(&key_id))
+                .is_some_and(|keys| keys.contains(&key_id))
         }
     }
 

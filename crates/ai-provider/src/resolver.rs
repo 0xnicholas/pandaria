@@ -34,6 +34,9 @@ pub enum ProviderFactory {
     DeepSeek,
     Mistral,
     Doubao,
+    /// AWS Bedrock (Claude via Bedrock API).
+    /// The `base_url` field in resolution is repurposed as the AWS region hint.
+    AwsBedrock,
     /// 用于 OpenRouter / Ollama / 自定义代理等 OpenAI-compatible 端点
     OpenAiCompatible {
         provider_name: String,
@@ -203,6 +206,21 @@ impl ProviderResolver {
                 factory: ProviderFactory::Anthropic,
                 default_base_url: "https://api.anthropic.com/v1/messages".to_string(),
                 env_key: "ANTHROPIC_API_KEY",
+                api_type: "anthropic-messages",
+                compat_hints: Some(ModelCompat::Anthropic(
+                    crate::compat::AnthropicCompat::default(),
+                )),
+                fallback_context_window: 200_000,
+                fallback_max_tokens: 8192,
+            },
+        );
+
+        rules.insert(
+            "bedrock".to_string(),
+            ProviderRule {
+                factory: ProviderFactory::AwsBedrock,
+                default_base_url: "us-east-1".to_string(),
+                env_key: "AWS_REGION",
                 api_type: "anthropic-messages",
                 compat_hints: Some(ModelCompat::Anthropic(
                     crate::compat::AnthropicCompat::default(),

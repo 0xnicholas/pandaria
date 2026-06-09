@@ -310,9 +310,9 @@ impl SessionActor {
         }
 
         // Handle /skill:name invocation only when there's exactly one Text part
-        if content.len() == 1 {
-            if let Content::Text { ref text, .. } = content[0] {
-                if let Some(skill_name) = crate::skills::parse_skill_invocation(text) {
+        if content.len() == 1
+            && let Content::Text { ref text, .. } = content[0]
+                && let Some(skill_name) = crate::skills::parse_skill_invocation(text) {
                     if let Some(skill) = self.skills.iter().find(|s| s.name == skill_name) {
                         let skill_content = tokio::fs::read_to_string(&skill.file_path)
                             .await
@@ -336,8 +336,6 @@ impl SessionActor {
                         return Err(AgentError::SkillNotFound(skill_name.to_string()));
                     }
                 }
-            }
-        }
 
         let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content,
@@ -1334,17 +1332,21 @@ mod tests {
         assert!(loaded.is_empty());
     }
 
+    /// Auto-restore loads session history from the store on the first prompt()
+    /// of a newly-constructed session. This test verifies that after persisting
+    /// messages in session 1, session 2 (same tenant/session/store) sees those
+    /// messages after its first prompt.
     #[tokio::test]
-    async fn test_restore_from_store() {
+    async fn test_auto_restore_on_first_prompt() {
         let _ = tracing_subscriber::fmt().try_init();
 
         let store = Arc::new(MemoryStore::new());
         let provider = TestProvider::text("response");
         let dispatcher = Arc::new(AllowAllDispatcher);
 
-        // Create session and add some messages
-        {
-            let mut session = SessionActor::new(SessionConfig {
+        // Session 1: run one prompt and flush to the store.
+        let s1_entry_count = {
+            let mut s = SessionActor::new(SessionConfig {
                 tenant_id: "t1".to_string(),
                 session_id: "s1".to_string(),
                 system_prompt: "prompt".to_string(),
@@ -1356,12 +1358,19 @@ mod tests {
                 store: Some(store.clone()),
                 skills: vec![],
             });
-            session.prompt("hello".to_string()).await.unwrap();
-            session.flush().await.unwrap();
-        }
+            s.prompt("hello".to_string()).await.unwrap();
+            s.flush().await.unwrap();
+            s.entries().len()
+        };
+        assert!(s1_entry_count > 0, "session 1 should have entries");
 
-        // Create new session with same store, restore should get messages back
-        let mut session2 = SessionActor::new(SessionConfig {
+        // Verify the store has the entries from session 1.
+        let stored = store.load_session("t1", "s1").await.unwrap();
+        assert!(!stored.is_empty(), "store must have entries after flush");
+
+        // Session 2: same tenant/session/store. Auto-restore happens during
+        // the first prompt, loading session 1's history before the new turn.
+        let mut s2 = SessionActor::new(SessionConfig {
             tenant_id: "t1".to_string(),
             session_id: "s1".to_string(),
             system_prompt: "prompt".to_string(),
@@ -1374,10 +1383,22 @@ mod tests {
             skills: vec![],
         });
 
-        let restored = session2.restore().await.unwrap();
-        assert!(restored > 0);
-        let msgs = session2.messages();
-        assert!(msgs.len() >= 2); // user + assistant
+        // Before first prompt, messages are empty (restore hasn't happened yet).
+        assert!(
+            s2.messages().is_empty(),
+            "messages should be empty before first prompt"
+        );
+
+        // First prompt triggers auto-restore, loading session 1's history.
+        s2.prompt("world".to_string()).await.unwrap();
+
+        let msgs = s2.messages();
+        assert!(
+            msgs.len() >= 4,
+            "auto-restore should load session 1 history ({s1_entry_count} entries) \
+             plus new turn (2 entries), got {} messages",
+            msgs.len()
+        );
     }
 
     #[tokio::test]

@@ -57,11 +57,10 @@ impl MediaGenerationTool {
         let task = media_task_type_from_str(media_type)
             .map_err(|e| AgentError::ToolExecutionFailed(e.to_string()))?;
         let candidate = explicit_model.unwrap_or(&self.default_model);
-        if let Some(meta) = self.registry.get(candidate) {
-            if meta.supported_tasks.contains(&task) {
+        if let Some(meta) = self.registry.get(candidate)
+            && meta.supported_tasks.contains(&task) {
                 return Ok(candidate.to_string());
             }
-        }
         // Auto-fallback: find first model in registry that supports this task
         self.registry
             .models_for_provider(self.provider.provider_name())

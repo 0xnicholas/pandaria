@@ -188,9 +188,9 @@ pub fn get_model(provider: &str, model_id: &str) -> Option<Model> {
 
 /// Look up a model by its full spec string (e.g. "openai/gpt-5.2").
 pub fn get_model_by_spec(spec: &str) -> Option<Model> {
-    let mut parts = spec.splitn(2, '/');
-    let provider = parts.next()?;
-    let model_id = parts.next()?;
+    let (provider, model_id) = spec.split_once('/')?;
+    
+    
     get_model(provider, model_id)
 }
 

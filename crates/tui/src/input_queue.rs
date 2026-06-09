@@ -3,18 +3,15 @@ use std::time::Instant;
 
 /// Strategy for handling user input while the agent is busy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum QueueStrategy {
     /// Interrupt the current turn and send immediately (steer).
     Steer,
     /// Queue the input and auto-send when the current turn ends (followUp).
+    #[default]
     FollowUp,
 }
 
-impl Default for QueueStrategy {
-    fn default() -> Self {
-        QueueStrategy::FollowUp
-    }
-}
 
 /// A single queued input item.
 #[derive(Debug, Clone)]

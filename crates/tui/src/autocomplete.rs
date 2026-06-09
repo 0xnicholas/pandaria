@@ -29,6 +29,12 @@ pub struct SlashCommandProvider {
     commands: Vec<SlashCommand>,
 }
 
+impl Default for SlashCommandProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SlashCommandProvider {
     pub fn new() -> Self {
         let commands = vec![
@@ -130,6 +136,12 @@ impl AutocompleteProvider for SlashCommandProvider {
 
 pub struct FilePathProvider {
     base_dir: PathBuf,
+}
+
+impl Default for FilePathProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FilePathProvider {

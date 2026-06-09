@@ -91,11 +91,10 @@ fn is_ignored(name: &str, patterns: &[String]) -> bool {
             return true;
         }
         // Suffix match (e.g. "*.log" → check if name ends with ".log")
-        if let Some(suffix) = pat.strip_prefix("*.") {
-            if name.ends_with(suffix) {
+        if let Some(suffix) = pat.strip_prefix("*.")
+            && name.ends_with(suffix) {
                 return true;
             }
-        }
     }
     false
 }

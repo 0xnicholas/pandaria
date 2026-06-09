@@ -39,7 +39,7 @@ fn generate_token(secret: &str, tenant_id: &str) -> String {
     let signature = mac.finalize().into_bytes();
     let sig_b64 = base64::Engine::encode(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        &signature,
+        signature,
     );
 
     format!("{}.{}", payload_b64, sig_b64)

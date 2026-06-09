@@ -506,16 +506,25 @@ async fn generate_history_summary(
         SUMMARIZATION_PROMPT
     };
 
-    let conversation_text = serialize_messages(messages);
-
-    let mut prompt_text = format!("<conversation>\n{}\n</conversation>\n\n", conversation_text);
-    if let Some(prev) = previous_summary {
-        prompt_text.push_str(&format!(
-            "<previous-summary>\n{}\n</previous-summary>\n\n",
-            prev
-        ));
-    }
-    prompt_text.push_str(base_prompt);
+    // Offload message serialization to a blocking thread — for large
+    // conversations this string building can be CPU-intensive.
+    let messages_owned = messages.to_vec();
+    let prev_clone = previous_summary.clone();
+    let base_prompt_owned = base_prompt.to_string();
+    let prompt_text = tokio::task::spawn_blocking(move || {
+        let conversation_text = serialize_messages(&messages_owned);
+        let mut prompt = format!("<conversation>\n{}\n</conversation>\n\n", conversation_text);
+        if let Some(prev) = prev_clone {
+            prompt.push_str(&format!(
+                "<previous-summary>\n{}\n</previous-summary>\n\n",
+                prev
+            ));
+        }
+        prompt.push_str(&base_prompt_owned);
+        prompt
+    })
+    .await
+    .map_err(|e| CompactionError::LlmError(format!("serialization task panicked: {e}")))?;
 
     let llm_messages = vec![ai_provider::Message::User(ai_provider::UserMessage {
         content: vec![ai_provider::Content::Text {
@@ -589,11 +598,17 @@ async fn generate_turn_prefix_summary(
     max_tokens: usize,
     signal: CancellationToken,
 ) -> Result<String, CompactionError> {
-    let conversation_text = serialize_messages(messages);
-    let prompt_text = format!(
-        "<conversation>\n{}\n</conversation>\n\n{}",
-        conversation_text, TURN_PREFIX_SUMMARIZATION_PROMPT
-    );
+    // Offload message serialization to a blocking thread.
+    let messages_owned = messages.to_vec();
+    let prompt_text = tokio::task::spawn_blocking(move || {
+        let conversation_text = serialize_messages(&messages_owned);
+        format!(
+            "<conversation>\n{}\n</conversation>\n\n{}",
+            conversation_text, TURN_PREFIX_SUMMARIZATION_PROMPT
+        )
+    })
+    .await
+    .map_err(|e| CompactionError::LlmError(format!("serialization task panicked: {e}")))?;
 
     let llm_messages = vec![ai_provider::Message::User(ai_provider::UserMessage {
         content: vec![ai_provider::Content::Text {

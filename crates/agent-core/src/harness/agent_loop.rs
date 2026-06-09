@@ -615,14 +615,13 @@ impl AgentLoop {
         let max_retries = stream_opts.max_retries;
 
         // Check circuit breaker before first attempt
-        if let Some(ref cb) = self.config.circuit_breaker {
-            if let Err(e) = cb.check().await {
+        if let Some(ref cb) = self.config.circuit_breaker
+            && let Err(e) = cb.check().await {
                 tracing::warn!(error = %e, "circuit breaker open, fast-failing provider request");
                 return Err(AgentError::LlmError(ai_provider::LlmError::ProviderError(
                     format!("circuit breaker: {e}"),
                 )));
             }
-        }
 
         loop {
             if signal.is_cancelled() {
@@ -663,11 +662,10 @@ impl AgentLoop {
                     continue;
                 }
                 Err(e) => {
-                    if let Some(ref cb) = self.config.circuit_breaker {
-                        if e.is_retryable() {
+                    if let Some(ref cb) = self.config.circuit_breaker
+                        && e.is_retryable() {
                             cb.record_failure().await;
                         }
-                    }
                     (self.config.event_sink)(AgentEvent::AutoRetryEnd {
                         success: false,
                         error: Some(e.to_string()),
@@ -786,11 +784,10 @@ impl AgentLoop {
                     .iter()
                     .any(|p| lower.contains(p))
                 });
-                if let Some(ref cb) = self.config.circuit_breaker {
-                    if is_retryable {
+                if let Some(ref cb) = self.config.circuit_breaker
+                    && is_retryable {
                         cb.record_failure().await;
                     }
-                }
                 if is_retryable && retry_count < max_retries {
                     retry_count += 1;
                     let delay_ms = 100 * 2_u64.pow(retry_count - 1);

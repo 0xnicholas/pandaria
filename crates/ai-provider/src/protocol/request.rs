@@ -212,7 +212,7 @@ impl RequestBuilder {
 fn classify_http_error(status: u16, message: String) -> LlmError {
     match status {
         429 => LlmError::RateLimited(message),
-        502 | 503 | 504 => LlmError::Overloaded(message),
+        502..=504 => LlmError::Overloaded(message),
         401 | 403 => LlmError::AuthError(message),
         400 | 422 => LlmError::InvalidRequest(message),
         _ => LlmError::ProviderError(message),

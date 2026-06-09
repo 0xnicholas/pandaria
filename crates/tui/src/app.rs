@@ -437,8 +437,8 @@ impl App {
         }
 
         // Char input
-        if let KeyCode::Char(ch) = key.code {
-            if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT {
+        if let KeyCode::Char(ch) = key.code
+            && (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT) {
                 if self.editor.is_waiting_char_jump() {
                     self.editor.set_char_jump_target(ch);
                     self.editor.char_jump();
@@ -446,7 +446,6 @@ impl App {
                     self.editor.insert_char(ch);
                 }
             }
-        }
     }
 
     /// Check top overlay for confirmed/dismissed flags and process accordingly.
@@ -663,11 +662,10 @@ impl App {
                                 None
                             }
                         });
-                    if let Some(text) = last_assistant_text {
-                        if let Err(e) = crate::clipboard::copy_text(&text) {
+                    if let Some(text) = last_assistant_text
+                        && let Err(e) = crate::clipboard::copy_text(&text) {
                             self.data.last_error = Some(e);
                         }
-                    }
                 }
                 Command::Dump { filename } => {
                     let session = self.data.active_session();
@@ -1078,12 +1076,11 @@ impl App {
         }
 
         // Normal send
-        if is_bash {
-            if let Some(cmd) = bash_command {
+        if is_bash
+            && let Some(cmd) = bash_command {
                 self.spawn_bash_task(cmd, show_command);
                 return;
             }
-        }
 
         self.send_user_message(text);
     }
@@ -1176,11 +1173,10 @@ impl App {
         });
 
         // Mark last assistant message as aborted
-        if let Some(last) = self.data.active_session_mut().messages.last_mut() {
-            if last.role == MessageRole::Assistant && last.status == MessageStatus::Streaming {
+        if let Some(last) = self.data.active_session_mut().messages.last_mut()
+            && last.role == MessageRole::Assistant && last.status == MessageStatus::Streaming {
                 last.status = MessageStatus::Aborted;
             }
-        }
         self.data.active_session_mut().streaming = None;
         self.state = AppState::Connected;
 
@@ -1190,12 +1186,11 @@ impl App {
         }
 
         // Send the steer message
-        if is_bash {
-            if let Some(cmd) = bash_command {
+        if is_bash
+            && let Some(cmd) = bash_command {
                 self.spawn_bash_task(cmd, show_command);
                 return;
             }
-        }
         self.send_user_message(text);
     }
 

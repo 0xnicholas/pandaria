@@ -27,6 +27,12 @@ pub struct CommandPalette {
     dismissed: bool,
 }
 
+impl Default for CommandPalette {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandPalette {
     pub fn new() -> Self {
         Self {

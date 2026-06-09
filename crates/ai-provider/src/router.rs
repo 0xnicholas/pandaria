@@ -32,7 +32,7 @@ impl RouterProvider {
     }
 
     /// 获取或创建底层 provider 实例（按 `(provider_name, base_url)` 缓存）。
-    fn get_or_create_provider(
+    async fn get_or_create_provider(
         &self,
         provider_name: &str,
         base_url: &str,
@@ -63,6 +63,23 @@ impl RouterProvider {
             ProviderFactory::Doubao => Arc::new(
                 crate::providers::doubao::DoubaoProvider::with_base_url(None, base_url),
             ),
+            #[cfg(feature = "bedrock")]
+            ProviderFactory::AwsBedrock => {
+                let region = if base_url.is_empty() || base_url == "http://router" {
+                    std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string())
+                } else {
+                    base_url.to_string()
+                };
+                Arc::new(
+                    crate::providers::bedrock::AwsBedrockProvider::new(&region).await,
+                )
+            }
+            #[cfg(not(feature = "bedrock"))]
+            ProviderFactory::AwsBedrock => {
+                return Err(LlmError::UnknownProvider(
+                    "bedrock (feature not enabled, rebuild with --features bedrock)".to_string(),
+                ));
+            }
             ProviderFactory::OpenAiCompatible {
                 provider_name: name,
                 env_key,
@@ -132,9 +149,9 @@ impl LlmProvider for RouterProvider {
 
         // OpenRouter 特殊处理：用 underlying provider 查注册表
         if resolved.provider_name == "openrouter" {
-            let mut segments = resolved.model_id.splitn(2, '/');
-            let underlying = segments.next()?;
-            let actual_model = segments.next()?;
+            let (underlying, actual_model) = resolved.model_id.split_once('/')?;
+            
+            
             return get_model(underlying, actual_model)
                 .or_else(|| self.build_fallback_model(&resolved));
         }
@@ -158,7 +175,7 @@ impl LlmProvider for RouterProvider {
             .clone()
             .unwrap_or_else(|| self.resolver.default_base_url(&resolved.provider_name));
 
-        let provider = self.get_or_create_provider(&resolved.provider_name, &base_url)?;
+        let provider = self.get_or_create_provider(&resolved.provider_name, &base_url).await?;
 
         // 合并 resolved 中的 overrides 到 options
         let mut opts = options;
@@ -248,79 +265,88 @@ mod tests {
         assert!(router.model_metadata("unknown/model").is_none());
     }
 
-    #[test]
-    fn test_cache_reuse() {
+    #[tokio::test]
+    async fn test_cache_reuse() {
         let router = RouterProvider::new();
         let p1 = router
             .get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions")
+            .await
             .unwrap();
         let p2 = router
             .get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions")
+            .await
             .unwrap();
         assert!(Arc::ptr_eq(&p1, &p2));
     }
 
-    #[test]
-    fn test_cache_rebuild_on_base_url_change() {
+    #[tokio::test]
+    async fn test_cache_rebuild_on_base_url_change() {
         let router = RouterProvider::new();
         let p1 = router
             .get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions")
+            .await
             .unwrap();
         let p2 = router
             .get_or_create_provider("openai", "https://proxy.example.com/v1/chat/completions")
+            .await
             .unwrap();
         assert!(!Arc::ptr_eq(&p1, &p2));
     }
 
-    #[test]
-    fn test_cache_different_providers() {
+    #[tokio::test]
+    async fn test_cache_different_providers() {
         let router = RouterProvider::new();
         let p1 = router
             .get_or_create_provider("openai", "https://api.openai.com/v1/chat/completions")
+            .await
             .unwrap();
         let p2 = router
             .get_or_create_provider("anthropic", "https://api.anthropic.com/v1/messages")
+            .await
             .unwrap();
         assert!(!Arc::ptr_eq(&p1, &p2));
     }
 
-    #[test]
-    fn test_get_or_create_openrouter() {
+    #[tokio::test]
+    async fn test_get_or_create_openrouter() {
         let router = RouterProvider::new();
         let p = router
             .get_or_create_provider(
                 "openrouter",
                 "https://openrouter.ai/api/v1/chat/completions",
             )
+            .await
             .unwrap();
         assert_eq!(p.provider_name(), "openrouter");
     }
 
-    #[test]
-    fn test_get_or_create_ollama() {
+    #[tokio::test]
+    async fn test_get_or_create_ollama() {
         let router = RouterProvider::new();
         let p = router
             .get_or_create_provider("ollama", "http://localhost:11434/v1/chat/completions")
+            .await
             .unwrap();
         assert_eq!(p.provider_name(), "ollama");
     }
 
-    #[test]
-    fn test_get_or_create_doubao() {
+    #[tokio::test]
+    async fn test_get_or_create_doubao() {
         let router = RouterProvider::new();
         let p = router
             .get_or_create_provider(
                 "doubao",
                 "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
             )
+            .await
             .unwrap();
         assert_eq!(p.provider_name(), "doubao");
     }
 
-    #[test]
-    fn test_get_or_create_unknown_provider() {
+    #[tokio::test]
+    async fn test_get_or_create_unknown_provider() {
         let router = RouterProvider::new();
-        let result = router.get_or_create_provider("unknown", "https://example.com");
+        let result = router.get_or_create_provider("unknown", "https://example.com").await;
         assert!(matches!(result, Err(LlmError::UnknownProvider(_))));
     }
 }

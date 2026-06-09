@@ -45,7 +45,7 @@ impl RateLimiter {
 
         // 概率性清理 stale bucket（每 1024 次 check 触发一次），避免无界内存增长
         let count = self.check_count.fetch_add(1, Ordering::Relaxed);
-        if count % 1024 == 0 {
+        if count.is_multiple_of(1024) {
             self.buckets.retain(|_, bucket| {
                 now.duration_since(bucket.last_refill).as_secs() < STALE_THRESHOLD_SECS
             });

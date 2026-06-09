@@ -305,13 +305,11 @@ impl HookDispatcher for DefaultHookDispatcher {
         }
 
         // Media cost tracking
-        if let Some(ref cb) = self.cost_callback {
-            if let Some(ref details) = ctx.details {
-                if let Some(cost) = details.get("cost_per_call").and_then(|v| v.as_f64()) {
+        if let Some(ref cb) = self.cost_callback
+            && let Some(ref details) = ctx.details
+                && let Some(cost) = details.get("cost_per_call").and_then(|v| v.as_f64()) {
                     cb(&ctx.tenant_id, cost);
                 }
-            }
-        }
 
         ToolResultMutation::default()
     }

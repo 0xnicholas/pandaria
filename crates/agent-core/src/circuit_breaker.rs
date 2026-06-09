@@ -134,12 +134,9 @@ impl CircuitBreaker {
     pub async fn record_success(&self) {
         let mut state = self.state.write().await;
         self.consecutive_failures.store(0, Ordering::SeqCst);
-        match *state {
-            State::HalfOpen => {
-                *state = State::Closed;
-                self.half_open_requests.store(0, Ordering::SeqCst);
-            }
-            _ => {}
+        if *state == State::HalfOpen {
+            *state = State::Closed;
+            self.half_open_requests.store(0, Ordering::SeqCst);
         }
     }
 

@@ -20,11 +20,10 @@ pub async fn stream(
     headers: HeaderMap,
 ) -> Result<SseStream, GatewayError> {
     // Validate Accept header
-    if let Some(accept) = headers.get("accept").and_then(|v| v.to_str().ok()) {
-        if !accept.contains("text/event-stream") && !accept.contains("*/*") {
+    if let Some(accept) = headers.get("accept").and_then(|v| v.to_str().ok())
+        && !accept.contains("text/event-stream") && !accept.contains("*/*") {
             return Err(GatewayError::NotAcceptable);
         }
-    }
     let mut rx = state
         .tenant_manager
         .subscribe_events(&tenant_id.0, &id)
@@ -34,11 +33,10 @@ pub async fn stream(
 
     let handle = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
-            if let Some(server_event) = map_agent_event(event) {
-                if sse_tx.send(server_event).await.is_err() {
+            if let Some(server_event) = map_agent_event(event)
+                && sse_tx.send(server_event).await.is_err() {
                     break;
                 }
-            }
         }
     });
 

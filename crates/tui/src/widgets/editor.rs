@@ -520,7 +520,7 @@ impl Editor {
 
     pub fn history_next(&mut self) {
         match self.history_index {
-            None => return,
+            None => (),
             Some(i) if i + 1 < self.history.len() => {
                 self.history_index = Some(i + 1);
                 self.restore_history_entry(i + 1);
