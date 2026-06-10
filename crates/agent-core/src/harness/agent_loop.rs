@@ -17,6 +17,7 @@ use crate::hook::mutations::{
 };
 use crate::hook::timeout::with_timeout;
 use crate::prompt::PromptBuilder;
+use crate::tools::{build_tool_defs, build_tool_value_defs};
 use crate::types::{AgentMessage, AgentToolRef, ToolExecutionMode};
 use crate::utils::provider_opts::ProviderStreamOptions;
 
@@ -81,27 +82,6 @@ pub enum TurnResult {
     ToolUse,
     Stop,
     Error(AgentError),
-}
-
-fn build_tool_defs(tools: &[AgentToolRef]) -> Option<Vec<ai_provider::ToolDef>> {
-    if tools.is_empty() {
-        None
-    } else {
-        Some(
-            tools
-                .iter()
-                .map(|t| ai_provider::ToolDef {
-                    name: t.name().to_string(),
-                    description: t.description().to_string(),
-                    parameters: t.parameters(),
-                })
-                .collect(),
-        )
-    }
-}
-
-fn build_tool_value_defs(tools: &[AgentToolRef]) -> Vec<serde_json::Value> {
-    tools.iter().map(|t| serde_json::json!({"name": t.name(), "description": t.description(), "parameters": t.parameters()})).collect()
 }
 
 fn apply_provider_request_mutation(

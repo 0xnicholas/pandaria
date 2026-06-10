@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::error::AgentError;
@@ -12,7 +13,7 @@ use crate::skills::FileSystemSkillLoader;
 use crate::skills::loader::SkillLoader;
 use crate::space::AgentSpace;
 use crate::tools::{HttpProxyTool, MediaGenerationTool, ToolConfig};
-use crate::types::AgentToolRef;
+use crate::types::{AgentTool, AgentToolRef};
 
 use super::config::HarnessConfig;
 
@@ -31,6 +32,7 @@ pub struct BuiltSession {
 ///     .session_id("uuid")
 ///     .system_prompt("You are a helpful assistant.")
 ///     .model("gpt-4")
+///     .with_builtin_tools(vec![bash, read, write])
 ///     .with_external_tools(params.tools)
 ///     .build()
 ///     .await?;
@@ -41,6 +43,7 @@ pub struct SessionBuilder {
     session_id: String,
     system_prompt: String,
     model: String,
+    builtin_tools: Vec<AgentToolRef>,
     external_tools: Vec<ToolConfig>,
 }
 
@@ -53,6 +56,7 @@ impl SessionBuilder {
             session_id: String::new(),
             system_prompt: config.default_system_prompt.clone(),
             model: config.default_model.clone(),
+            builtin_tools: Vec::new(),
             external_tools: Vec::new(),
         }
     }
@@ -78,6 +82,15 @@ impl SessionBuilder {
     /// Set the LLM model for this session.
     pub fn model(mut self, model: impl Into<String>) -> Self {
         self.model = model.into();
+        self
+    }
+
+    /// Register built-in tools implemented in-process.
+    ///
+    /// These are registered before media generation and external tools.
+    /// External tools with the same name can intentionally shadow builtins.
+    pub fn with_builtin_tools(mut self, tools: Vec<AgentToolRef>) -> Self {
+        self.builtin_tools = tools;
         self
     }
 
@@ -119,9 +132,31 @@ impl SessionBuilder {
                 Arc::new(dispatcher)
             };
 
-        // 2. Tools
+        // 2. Tool assembly: external → media → builtin
+        //    Earlier entries win on `iter().find()` name lookup, so highest
+        //    priority tools go first. External (Tavern) tools have highest
+        //    priority, then media generation, then builtins.
         let mut tools: Vec<AgentToolRef> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
 
+        // 2a. External HTTP proxy tools (first — highest priority)
+        for tool_config in &self.external_tools {
+            let proxy = Arc::new(HttpProxyTool::new(
+                tool_config.clone(),
+                tenant_id.clone(),
+                session_id.clone(),
+                self.config.http_client.clone(),
+            ));
+            let name = proxy.name().to_string();
+            if seen.contains(&name) {
+                tracing::info!(%name, "external tool name collision, keeping first");
+                continue;
+            }
+            seen.insert(name);
+            tools.push(proxy);
+        }
+
+        // 2b. Media generation tool (if configured)
         if let (Some(media_provider), Some(media_registry)) =
             (&self.config.media_provider, &self.config.media_registry)
         {
@@ -131,16 +166,24 @@ impl SessionBuilder {
                 self.model.clone(),
                 &tenant_id,
             ));
-            tools.push(media_tool);
+            let name = media_tool.name().to_string();
+            if seen.contains(&name) {
+                tracing::warn!(%name, "media tool shadowed, skipping");
+            } else {
+                seen.insert(name);
+                tools.push(media_tool);
+            }
         }
 
-        for tool_config in &self.external_tools {
-            tools.push(Arc::new(HttpProxyTool::new(
-                tool_config.clone(),
-                tenant_id.clone(),
-                session_id.clone(),
-                self.config.http_client.clone(),
-            )));
+        // 2c. Built-in tools (last — lowest priority)
+        for tool in &self.builtin_tools {
+            let name = tool.name().to_string();
+            if seen.contains(&name) {
+                tracing::warn!(%name, "builtin tool shadowed, skipping");
+                continue;
+            }
+            seen.insert(name);
+            tools.push(tool.clone());
         }
 
         // 3. Compaction actor
@@ -262,5 +305,100 @@ mod tests {
 
         assert_eq!(built.tools.len(), 1);
         assert_eq!(built.tools[0].name(), "echo");
+    }
+
+    #[tokio::test]
+    async fn test_session_builder_with_builtin_tools() {
+        use crate::AgentToolResult;
+        use crate::tools::AgentTool;
+        use ai_provider::Content;
+        use async_trait::async_trait;
+
+        struct EchoTool;
+        #[async_trait]
+        impl AgentTool for EchoTool {
+            fn name(&self) -> &str { "echo" }
+            fn description(&self) -> &str { "echoes" }
+            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            async fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: serde_json::Value,
+                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+                _signal: tokio_util::sync::CancellationToken,
+            ) -> Result<AgentToolResult, AgentError> {
+                Ok(AgentToolResult {
+                    content: vec![Content::Text { text: "ok".into(), text_signature: None }],
+                    details: None,
+                    is_error: false,
+                    terminate: false,
+                })
+            }
+        }
+
+        let config = dummy_runtime_config();
+        let built = SessionBuilder::new(&config)
+            .tenant_id("test-tenant")
+            .session_id("sess-1")
+            .with_builtin_tools(vec![Arc::new(EchoTool)])
+            .build()
+            .await
+            .expect("build should succeed");
+
+        assert_eq!(built.tools.len(), 1);
+        assert_eq!(built.tools[0].name(), "echo");
+    }
+
+    #[tokio::test]
+    async fn test_session_builder_builtin_shadowed_by_external() {
+        use crate::AgentToolResult;
+        use crate::tools::AgentTool;
+        use ai_provider::Content;
+        use async_trait::async_trait;
+
+        struct BuiltinEcho;
+        #[async_trait]
+        impl AgentTool for BuiltinEcho {
+            fn name(&self) -> &str { "echo" }
+            fn description(&self) -> &str { "builtin echo" }
+            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
+            async fn execute(
+                &self,
+                _tool_call_id: &str,
+                _params: serde_json::Value,
+                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
+                _signal: tokio_util::sync::CancellationToken,
+            ) -> Result<AgentToolResult, AgentError> {
+                Ok(AgentToolResult {
+                    content: vec![Content::Text { text: "ok".into(), text_signature: None }],
+                    details: None,
+                    is_error: false,
+                    terminate: false,
+                })
+            }
+        }
+
+        let config = dummy_runtime_config();
+        let external = ToolConfig {
+            name: "echo".to_string(),
+            description: "external echo".to_string(),
+            parameters: serde_json::json!({}),
+            endpoint: "https://example.com/echo".to_string(),
+            timeout_ms: None,
+            headers: None,
+        };
+        let built = SessionBuilder::new(&config)
+            .tenant_id("test-tenant")
+            .session_id("sess-1")
+            .with_builtin_tools(vec![Arc::new(BuiltinEcho)])
+            .with_external_tools(vec![external])
+            .build()
+            .await
+            .expect("build should succeed");
+
+        // External registered first, shadows builtin by name collision (first-write-wins)
+        assert_eq!(built.tools.len(), 1);
+        assert_eq!(built.tools[0].name(), "echo");
+        assert_eq!(built.tools[0].description(), "external echo");
     }
 }
