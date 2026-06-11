@@ -17,13 +17,22 @@ termination ────┤
 
                 ┌─ Once         → 立刻执行（默认）
 rhythm ─────────┤
-  (怎么跑)       └─ Loop         → 按间隔反复执行
+  (怎么跑)       └─ Loop         → 后台循环，按间隔反复执行
 
                 ┌─ Accumulate   → 保留全部历史（默认）
 context ────────┤
   (记什么)       ├─ Compact      → 自动压缩旧上下文
                 └─ Clear        → 每次 run 后清空历史
 ```
+
+### 1.1 Loop 关键特性
+
+| 特性 | 说明 |
+|------|------|
+| **后台执行** | Loop 启动后立即返回，后续迭代在后台运行。会话保持活跃直到手动停止或 session 结束 |
+| **独立上下文** | 每次迭代拥有独立的上下文——不会把上一次迭代的消息堆到下一次，long-running loop 不会撑爆 context window |
+| **默认间隔** | 未指定 `interval` 时默认 **10 分钟** |
+| **全局开关** | `PANDARIA_DISABLE_CRON=1` 禁用调度器，所有 Loop 不可用 |
 
 | 组合示例 | 行为 |
 |----------|------|
@@ -106,17 +115,24 @@ pub enum GoalExhaustedAction {
 ### 2.2 RhythmStrategy
 
 ```rust
+/// 默认 Loop 间隔：10 分钟。
+pub const DEFAULT_LOOP_INTERVAL: Duration = Duration::from_secs(600);
+
 #[derive(Debug, Clone)]
 pub enum RhythmStrategy {
     /// 默认：立即执行一次。
     Once,
 
-    /// 按固定间隔反复执行，直到终止条件满足或达到上限。
+    /// 后台循环执行。
+    ///
+    /// 首次 prompt 调用立即返回，后续迭代在后台运行。
+    /// 会话保持活跃直到手动 abort 或终止条件满足。
+    ///
+    /// 当 `PANDARIA_DISABLE_CRON=1` 时，Loop 请求直接返回错误。
     Loop {
-        /// 两次 run 之间的等待时间。
-        interval: std::time::Duration,
-        /// 最大迭代次数。
-        /// None = 无限（直到 termination 条件触发或手动 abort）。
+        /// 两次迭代之间的等待时间。省略时默认 10 分钟。
+        interval: Option<std::time::Duration>,
+        /// 最大迭代次数。None = 无限（直到终止条件触发或手动 abort）。
         max_iterations: Option<u32>,
     },
 }
@@ -144,6 +160,83 @@ pub enum ContextStrategy {
 ---
 
 ## 3. SessionActor 执行流
+
+### 3.1 后台 Loop 模式
+
+Loop 首次 prompt 调用立即返回（不阻塞调用方），后续迭代在后台 `tokio::spawn` 中运行：
+
+```rust
+async fn prompt(&mut self, task: String) -> Result<Vec<AgentMessage>> {
+    match &self.strategy.rhythm {
+        RhythmStrategy::Once => {
+            // 同步执行（现有行为）
+            self.run_once(task).await
+        }
+        RhythmStrategy::Loop { interval, max_iterations } => {
+            // 检查全局开关
+            if std::env::var("PANDARIA_DISABLE_CRON").as_deref() == Ok("1") {
+                return Err(AgentError::LoopDisabled);
+            }
+
+            let delay = interval.unwrap_or(DEFAULT_LOOP_INTERVAL);
+
+            // 先跑第一轮（同步，让调用方拿到首轮结果）
+            let first_result = self.run_with_fresh_context(task.clone()).await?;
+
+            // 后续迭代在后台运行
+            let abort = self.abort_token.clone();
+            let strategy = self.strategy.clone();
+            let store = self.store.clone();
+            // ... clone what the background task needs
+
+            tokio::spawn(async move {
+                self.run_loop_background(task, delay, max_iterations, abort).await;
+            });
+
+            Ok(first_result)
+        }
+    }
+}
+```
+
+### 3.2 独立上下文
+
+Loop 的每次迭代创建全新的消息上下文，不累积历史：
+
+```rust
+async fn run_with_fresh_context(&mut self, task: String) -> Result<Vec<AgentMessage>> {
+    // 保存旧上下文（如果需要 compact summary）
+    let summary = if matches!(self.strategy.context, ContextStrategy::Compact { .. }) {
+        Some(self.compact_to_summary().await?)
+    } else {
+        None
+    };
+
+    // 清空消息历史
+    self.entries.clear();
+
+    // 重建 PromptBuilder
+    let mut builder = PromptBuilder::from_base(self.base_persona.clone());
+    if let Some(summary) = summary {
+        builder.upsert_fragment(PromptFragment {
+            id: "previous-iteration-summary".into(),
+            kind: FragmentKind::RuntimeInjection,
+            source: FragmentSource::System,
+            content: format!("## Summary of previous iteration\n\n{summary}"),
+            priority: 100,
+        });
+    }
+    crate::skills::inject_skills_into_builder(&mut builder, &self.skills);
+    self.prompt_builder = builder;
+
+    // 跑一轮
+    self.run_with_messages(Some(task)).await
+}
+```
+
+### 3.3 Goal 验证流
+
+Goal 模式仍然是同步的——每轮执行完立刻评估，不满足就继续：
 
 ```rust
 async fn run_with_strategy(&mut self, task: Option<String>) -> Result<Vec<AgentMessage>> {
@@ -205,9 +298,10 @@ async fn run_with_strategy(&mut self, task: Option<String>) -> Result<Vec<AgentM
                         return Ok(result);
                     }
                 }
+                let delay = interval.unwrap_or(DEFAULT_LOOP_INTERVAL);
                 if !self.abort_token.is_cancelled() {
                     tokio::select! {
-                        _ = tokio::time::sleep(*interval) => {}
+                        _ = tokio::time::sleep(delay) => {}
                         _ = self.abort_token.cancelled() => {
                             return Err(AgentError::Cancelled);
                         }
@@ -219,7 +313,7 @@ async fn run_with_strategy(&mut self, task: Option<String>) -> Result<Vec<AgentM
 }
 ```
 
-### 3.1 Goal 验证 prompt 注入
+### 3.4 Goal 验证 prompt 注入
 
 第二轮及以后，在原始 task 之前注入结构化反馈：
 
@@ -237,7 +331,7 @@ Please address the failing criteria and respond with the corrected implementatio
 
 通过 `PromptBuilder` 以 `FragmentKind::RuntimeInjection` (priority 200) 注入。
 
-### 3.2 Goal 验证执行
+### 3.5 Goal 验证执行
 
 ```rust
 async fn goal_satisfied(&self, result: &[AgentMessage], criteria: &[GoalCriterion])
@@ -315,7 +409,7 @@ Hook 不知道 strategy 的存在——每轮 run 对 hook 来说就是一个普
     "rhythm": {
       "type": "loop",
       "interval_ms": 30000,
-      "max_iterations": 20
+      "max_iterations": null
     },
     "context": {
       "type": "clear"
