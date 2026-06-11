@@ -308,7 +308,7 @@ impl SessionActor {
                     TerminationStrategy::Goal { .. } => {
                         self.run_goal_sync(text.clone()).await?.into_messages()
                     }
-                    _ => unreachable!(),
+                    _ => return Err(AgentError::LoopDisabled),
                 };
 
                 // Subsequent iterations: background
@@ -1126,13 +1126,11 @@ impl SessionActor {
         let context = self.strategy.context.clone();
         let provider = self.provider.clone();
         let hook_dispatcher = self.hook_dispatcher.clone();
-        let compaction_actor = self.compaction_actor.clone();
         let tools = self.tools.clone();
         let skills = self.skills.clone();
         let model = self.model.clone();
         let stream_options = self.stream_options.clone();
         let base_persona = self.base_persona.clone();
-        let prompt_builder = self.prompt_builder.clone();
         let tenant_id = self.tenant_id.clone();
         let session_id = self.session_id.clone();
 
@@ -1165,13 +1163,11 @@ impl SessionActor {
                     &context,
                     &provider,
                     &hook_dispatcher,
-                    &compaction_actor,
                     &tools,
                     &skills,
                     &model,
                     &stream_options,
                     &base_persona,
-                    &prompt_builder,
                     &tenant_id,
                     &session_id,
                     &abort,
@@ -1216,13 +1212,11 @@ impl SessionActor {
         context: &ContextStrategy,
         provider: &Arc<dyn ai_provider::LlmProvider>,
         hook_dispatcher: &Arc<dyn HookDispatcher>,
-        compaction_actor: &Arc<Compactor>,
         tools: &[AgentToolRef],
         skills: &[crate::skills::Skill],
         model: &str,
         stream_options: &ai_provider::StreamOptions,
         base_persona: &str,
-        _prompt_builder: &PromptBuilder,
         tenant_id: &str,
         session_id: &str,
         abort: &CancellationToken,
