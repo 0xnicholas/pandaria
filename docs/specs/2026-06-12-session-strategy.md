@@ -52,6 +52,8 @@ context ────────┤
 
 ## 2. 类型定义
 
+### 2.1 SessionStrategy
+
 ```rust
 /// 三维执行策略。
 #[derive(Debug, Clone)]
@@ -72,7 +74,7 @@ impl Default for SessionStrategy {
 }
 ```
 
-### 2.1 TerminationStrategy
+### 2.2 TerminationStrategy
 
 ```rust
 #[derive(Debug, Clone)]
@@ -83,7 +85,6 @@ pub enum TerminationStrategy {
     /// 目标驱动：agent 自我验证是否满足验收标准。
     /// 每轮 run 结束后注入验证 prompt，直到通过或超限。
     Goal {
-        /// 验收标准列表。
         criteria: Vec<GoalCriterion>,
         /// 最大尝试次数（含首轮）。
         max_attempts: u32,
@@ -101,7 +102,7 @@ pub struct GoalCriterion {
 
 #[derive(Debug, Clone)]
 pub enum GoalVerification {
-    /// Agent 自我评估是否满足。
+    /// Agent 自我评估。要求 agent 输出 `[CRITERION_RESULT: id: PASS|FAIL]` 标记。
     SelfAssessment,
     /// 运行命令，exit 0 = 通过。
     Command { command: String },
@@ -111,14 +112,19 @@ pub enum GoalVerification {
 
 #[derive(Debug, Clone)]
 pub enum GoalExhaustedAction {
-    /// 返回错误。
     Abort,
-    /// 返回最后一次结果（即使未通过）。
     ReturnLast,
+}
+
+/// Goal 执行结果，可区分"通过"和"耗尽次数"。
+#[derive(Debug, Clone)]
+pub enum GoalOutcome {
+    Passed { messages: Vec<AgentMessage>, attempts: u32 },
+    Exhausted { messages: Vec<AgentMessage>, attempts: u32 },
 }
 ```
 
-### 2.2 RhythmStrategy
+### 2.3 RhythmStrategy
 
 ```rust
 /// 默认 Loop 间隔：10 分钟。
@@ -132,19 +138,19 @@ pub enum RhythmStrategy {
     /// 后台循环执行。
     ///
     /// 首次 prompt 调用立即返回，后续迭代在后台运行。
-    /// 会话保持活跃直到手动 abort 或终止条件满足。
+    /// 每个后台迭代的结果通过 SSE 事件推送。
     ///
     /// 当 `PANDARIA_DISABLE_CRON=1` 时，Loop 请求直接返回错误。
     Loop {
         /// 两次迭代之间的等待时间。省略时默认 10 分钟。
-        interval: Option<std::time::Duration>,
+        interval: Option<Duration>,
         /// 最大迭代次数。None = 无限（直到终止条件触发或手动 abort）。
         max_iterations: Option<u32>,
     },
 }
 ```
 
-### 2.3 ContextStrategy
+### 2.4 ContextStrategy
 
 ```rust
 #[derive(Debug, Clone)]
@@ -152,14 +158,31 @@ pub enum ContextStrategy {
     /// 默认：保留全部会话历史。
     Accumulate,
 
-    /// 每次 run 后自动压缩，保留最近 N 轮上下文。
+    /// 每次 run 前自动压缩，保留最近 N 条 SessionEntry。
+    /// 被压缩的历史通过 CompactionActor 生成 summary 注入 prompt。
     Compact {
-        /// 保留最近多少条消息。
-        keep_last_n: usize,
+        keep_last_n: usize,  // 保留的 SessionEntry 数量
     },
 
-    /// 每次 run 后清空历史，下一次 run 从空白上下文开始。
+    /// 每次 run 前清空全部历史，下一次 run 从空白上下文开始。
     Clear,
+}
+```
+
+### 2.5 API 序列化说明
+
+`interval` 字段在 API 中以毫秒整数 (`interval_ms`) 传输，Rust 侧为 `Option<Duration>`。api-gateway types 层负责转换：
+
+```rust
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+enum RhythmStrategyApi {
+    Once,
+    Loop {
+        #[serde(default)]
+        interval_ms: Option<u64>,  // JSON 整数
+        max_iterations: Option<u32>,
+    },
 }
 ```
 
@@ -167,202 +190,240 @@ pub enum ContextStrategy {
 
 ## 3. SessionActor 执行流
 
-### 3.1 后台 Loop 模式
+### 3.1 分派表
 
-Loop 首次 prompt 调用立即返回（不阻塞调用方），后续迭代在后台 `tokio::spawn` 中运行：
+`prompt()` 根据三个维度的组合选择执行路径：
+
+| termination | rhythm | 行为 |
+|-------------|--------|------|
+| Once | Once | `run_once(task)` — 现有默认行为 |
+| Goal | Once | `run_goal_sync(task)` — 同步验证循环 |
+| Once | Loop | 首轮同步返回 → spawn 后台循环 |
+| Goal | Loop | 首轮同步返回 → spawn 后台循环（每轮内部走 Goal 验证） |
 
 ```rust
 async fn prompt(&mut self, task: String) -> Result<Vec<AgentMessage>> {
-    match &self.strategy.rhythm {
-        RhythmStrategy::Once => {
-            // 同步执行（现有行为）
+    match (&self.strategy.termination, &self.strategy.rhythm) {
+        // ── 同步路径 ──
+        (TerminationStrategy::Once, RhythmStrategy::Once) => {
             self.run_once(task).await
         }
-        RhythmStrategy::Loop { interval, max_iterations } => {
-            // 检查全局开关
+        (TerminationStrategy::Goal { .. }, RhythmStrategy::Once) => {
+            self.run_goal_sync(task).await.map(|outcome| outcome.messages())
+        }
+
+        // ── 后台路径 ──
+        (_, RhythmStrategy::Loop { interval, max_iterations }) => {
             if std::env::var("PANDARIA_DISABLE_CRON").as_deref() == Ok("1") {
                 return Err(AgentError::LoopDisabled);
             }
-
             let delay = interval.unwrap_or(DEFAULT_LOOP_INTERVAL);
 
-            // 先跑第一轮（同步，让调用方拿到首轮结果）
-            let first_result = self.run_with_fresh_context(task.clone()).await?;
+            // 首轮同步执行，立即返回结果给调用方
+            let first = match &self.strategy.termination {
+                TerminationStrategy::Once => self.run_one_iteration(task.clone()).await?,
+                TerminationStrategy::Goal { .. } =>
+                    self.run_goal_sync(task.clone()).await?.messages(),
+            };
 
-            // 后续迭代在后台运行
-            let abort = self.abort_token.clone();
-            let strategy = self.strategy.clone();
-            let store = self.store.clone();
-            // ... clone what the background task needs
+            // 后续迭代在后台运行，结果通过 SSE 推送
+            self.spawn_background_loop(task, delay, *max_iterations);
 
-            tokio::spawn(async move {
-                self.run_loop_background(task, delay, max_iterations, abort).await;
-            });
-
-            Ok(first_result)
+            Ok(first)
         }
     }
 }
 ```
 
-### 3.2 独立上下文
-
-Loop 的每次迭代创建全新的消息上下文，不累积历史：
+### 3.2 后台循环
 
 ```rust
-async fn run_with_fresh_context(&mut self, task: String) -> Result<Vec<AgentMessage>> {
-    // 保存旧上下文（如果需要 compact summary）
-    let summary = if matches!(self.strategy.context, ContextStrategy::Compact { .. }) {
-        Some(self.compact_to_summary().await?)
-    } else {
-        None
+fn spawn_background_loop(&self, task: String, delay: Duration, max: Option<u32>) {
+    let abort = self.abort_token.clone();
+    let event_tx = self.event_tx.clone();
+    let termination = self.strategy.termination.clone();
+    let context = self.strategy.context.clone();
+    // ... clone other needed state
+
+    tokio::spawn(async move {
+        let mut iteration: u32 = 1; // 首轮已由 prompt() 执行
+
+        loop {
+            if abort.is_cancelled() { break; }
+            if let Some(max) = max && iteration >= max { break; }
+
+            tokio::select! {
+                _ = tokio::time::sleep(delay) => {}
+                _ = abort.cancelled() => { break; }
+            }
+            if abort.is_cancelled() { break; }
+
+            iteration += 1;
+
+            let result = match &termination {
+                TerminationStrategy::Once => run_one_iteration(...).await,
+                TerminationStrategy::Goal { .. } =>
+                    run_goal_sync(...).await.map(|o| o.messages()),
+            };
+
+            match result {
+                Ok(msgs) => {
+                    let _ = event_tx.send(AgentEvent::LoopIterationComplete {
+                        iteration,
+                        messages: msgs,
+                    });
+                }
+                Err(e) => {
+                    tracing::error!(iteration, error = %e,
+                        "background loop iteration failed, continuing");
+                    let _ = event_tx.send(AgentEvent::LoopIterationError {
+                        iteration,
+                        error: e.to_string(),
+                    });
+                    // 继续下一轮，不停止 loop
+                }
+            }
+        }
+    });
+}
+```
+
+| 规则 | 行为 |
+|------|------|
+| 单轮失败 | 记录 error 日志 + 推送 `LoopIterationError` → **继续**下一轮 |
+| Cancelled | 退出 loop |
+| 结果可观测 | 首轮：`prompt()` 返回值；后续轮：SSE event stream |
+
+### 3.3 Goal 同步验证
+
+```rust
+async fn run_goal_sync(&mut self, task: String) -> Result<GoalOutcome> {
+    let (criteria, max_attempts, on_exhausted) = match &self.strategy.termination {
+        TerminationStrategy::Goal { criteria, max_attempts, on_exhausted } =>
+            (criteria.clone(), *max_attempts, on_exhausted.clone()),
+        _ => unreachable!(),
     };
 
-    // 清空消息历史
-    self.entries.clear();
+    for attempt in 0..max_attempts {
+        self.apply_context_strategy().await?;
 
-    // 重建 PromptBuilder
-    let mut builder = PromptBuilder::from_base(self.base_persona.clone());
-    if let Some(summary) = summary {
-        builder.upsert_fragment(PromptFragment {
-            id: "previous-iteration-summary".into(),
-            kind: FragmentKind::RuntimeInjection,
-            source: FragmentSource::System,
-            content: format!("## Summary of previous iteration\n\n{summary}"),
-            priority: 100,
-        });
-    }
-    crate::skills::inject_skills_into_builder(&mut builder, &self.skills);
-    self.prompt_builder = builder;
-
-    // 跑一轮
-    self.run_with_messages(Some(task)).await
-}
-```
-
-### 3.3 Goal 验证流
-
-Goal 模式仍然是同步的——每轮执行完立刻评估，不满足就继续：
-
-```rust
-async fn run_with_strategy(&mut self, task: Option<String>) -> Result<Vec<AgentMessage>> {
-    let mut iteration: u32 = 0;
-
-    loop {
-        // ── context preparation ──
-        match self.strategy.context {
-            ContextStrategy::Accumulate => { /* 什么都不做 */ }
-            ContextStrategy::Compact { keep_last_n } => {
-                self.compact_to_last_n(keep_last_n).await?;
-            }
-            ContextStrategy::Clear => {
-                self.entries.clear();
-                self.prompt_builder = PromptBuilder::from_base(self.base_persona.clone());
-                crate::skills::inject_skills_into_builder(&mut self.prompt_builder, &self.skills);
-            }
-        }
-
-        // ── run ──
-        let task_prompt = if iteration > 0
-            && matches!(self.strategy.termination, TerminationStrategy::Goal { .. })
-        {
-            self.build_verification_prompt(task.as_deref())
+        let prompt = if attempt == 0 {
+            self.build_initial_goal_prompt(&task, &criteria)
         } else {
-            task.clone()
+            self.build_retry_prompt(&task, &criteria, attempt, max_attempts)
         };
 
-        let result = self.run_with_messages(task_prompt).await?;
-        iteration += 1;
+        let result = self.run_with_messages(Some(prompt)).await?;
 
-        // ── termination check ──
-        match &self.strategy.termination {
-            TerminationStrategy::Once => return Ok(result),
-            TerminationStrategy::Goal { criteria, max_attempts, on_exhausted } => {
-                if self.goal_satisfied(&result, criteria).await {
-                    return Ok(result);
-                }
-                if iteration >= *max_attempts {
-                    return match on_exhausted {
-                        GoalExhaustedAction::Abort => Err(AgentError::GoalNotMet { .. }),
-                        GoalExhaustedAction::ReturnLast => Ok(result),
-                    };
-                }
-                // 继续下一轮
-            }
+        if self.goal_satisfied(&result, &criteria).await {
+            return Ok(GoalOutcome::Passed { messages: result, attempts: attempt + 1 });
         }
+    }
 
-        // ── rhythm ──
-        match &self.strategy.rhythm {
-            RhythmStrategy::Once => {
-                // termination 没停但 rhythm 是 Once → 不应该发生
-                // (loop 中 termination=Once 时首轮就返回了)
-                return Ok(result);
-            }
-            RhythmStrategy::Loop { interval, max_iterations } => {
-                if let Some(max) = max_iterations {
-                    if iteration >= *max {
-                        return Ok(result);
-                    }
-                }
-                let delay = interval.unwrap_or(DEFAULT_LOOP_INTERVAL);
-                if !self.abort_token.is_cancelled() {
-                    tokio::select! {
-                        _ = tokio::time::sleep(delay) => {}
-                        _ = self.abort_token.cancelled() => {
-                            return Err(AgentError::Cancelled);
-                        }
-                    }
-                }
-            }
+    match on_exhausted {
+        GoalExhaustedAction::Abort => Err(AgentError::GoalNotMet {
+            criteria: criteria.iter().map(|c| c.id.clone()).collect(),
+            attempts: max_attempts,
+        }),
+        GoalExhaustedAction::ReturnLast => {
+            let result = self.run_with_messages(Some(task)).await?;
+            Ok(GoalOutcome::Exhausted { messages: result, attempts: max_attempts })
         }
     }
 }
 ```
 
-### 3.4 Goal 验证 prompt 注入
+**`GoalOutcome` 区分两种成功**：`Passed` 表示满足全部 criteria，`Exhausted` 表示耗尽次数但策略允许返回。调用方可据此决定后续行为。
 
-第二轮及以后，在原始 task 之前注入结构化反馈：
+### 3.4 Context 策略
+
+```rust
+async fn apply_context_strategy(&mut self) -> Result<(), AgentError> {
+    match &self.strategy.context {
+        ContextStrategy::Accumulate => { /* 保留全部历史 */ }
+        ContextStrategy::Compact { keep_last_n } => {
+            if self.entries.len() > *keep_last_n {
+                let split_at = self.entries.len() - *keep_last_n;
+                let old = self.entries.drain(..split_at).collect::<Vec<_>>();
+                let summary = self.compaction_actor.summarize(&old).await?;
+                self.prompt_builder.upsert_fragment(PromptFragment {
+                    id: "compaction-summary".into(),
+                    kind: FragmentKind::RuntimeInjection,
+                    source: FragmentSource::System,
+                    content: format!("## Prior context (compacted)\n\n{summary}"),
+                    priority: 150,
+                });
+            }
+        }
+        ContextStrategy::Clear => {
+            self.entries.clear();
+            self.prompt_builder = PromptBuilder::from_base(self.base_persona.clone());
+            crate::skills::inject_skills_into_builder(&mut self.prompt_builder, &self.skills);
+        }
+    }
+    Ok(())
+}
+```
+
+`Compact::keep_last_n` 的单位是 **SessionEntry 数量**（含 Message 和 Compaction 两种 Entry 类型）。
+
+### 3.5 Goal 验证 prompt
+
+**首轮 prompt**（含结构化输出要求）：
+
+```
+## Task
+{task}
+
+## Acceptance Criteria
+You must satisfy ALL of the following before responding:
+
+1. [tests-pass] All tests pass — `cargo test` must exit 0
+2. [no-unwrap] No unwrap() calls remain in production code
+
+After completing the task, end your response with a criteria checklist:
+
+[CRITERION_RESULT: tests-pass: PASS|FAIL]
+[CRITERION_RESULT: no-unwrap: PASS|FAIL]
+```
+
+**重试 prompt**（第二次及以后）：
 
 ```
 ## Acceptance Criteria Check (attempt 2/5)
 
 The previous response did not meet all criteria:
 
-✗ criterion-1: All tests pass — `cargo test` returned exit code 1
-✓ criterion-2: No unwrap() in production code
-✗ criterion-3: Documentation added for new public API
+✗ tests-pass — `cargo test` returned exit code 1
+✓ no-unwrap
 
-Please address the failing criteria and respond with the corrected implementation.
+Please fix the failing criteria and respond with the corrected implementation.
+End with [CRITERION_RESULT: ...] as before.
 ```
 
 通过 `PromptBuilder` 以 `FragmentKind::RuntimeInjection` (priority 200) 注入。
 
-### 3.5 Goal 验证执行
+**结构化输出**：agent 必须在响应末尾输出 `[CRITERION_RESULT: id: PASS|FAIL]` 标记，`SelfAssessment` 验证器解析这些标记而非自然语言来判断通过与否。
+
+### 3.6 Goal 验证执行
 
 ```rust
 async fn goal_satisfied(&self, result: &[AgentMessage], criteria: &[GoalCriterion])
     -> bool
 {
     for c in criteria {
-        match &c.verification {
+        let passed = match &c.verification {
             GoalVerification::SelfAssessment => {
-                // 最后一轮 already included self-assessment in prompt
-                // Check if assistant response explicitly confirms passing
-                if !self.assistant_confirms_pass(result, &c.id) {
-                    return false;
-                }
+                self.parse_criterion_result(result, &c.id).unwrap_or(false)
             }
             GoalVerification::Command { command } => {
-                if !self.run_verification_command(command).await {
-                    return false;
-                }
+                self.run_verification_command(command).await
             }
             GoalVerification::OutputContains { text } => {
-                if !self.output_contains(result, text) {
-                    return false;
-                }
+                self.output_contains(result, text)
             }
-        }
+        };
+        if !passed { return false; }
     }
     true
 }
@@ -372,16 +433,12 @@ async fn goal_satisfied(&self, result: &[AgentMessage], criteria: &[GoalCriterio
 
 ## 4. 与现有 Hook 系统的关系
 
-所有三个维度都在 hook 系统**之外**——它们控制的是 session 级别的宏观执行策略，不拦截单个 tool call 或 turn：
+策略层在 hook 系统**之上**——控制"跑几次、多久跑一次、记多少"。每轮 run 内部仍然走完整 hook 链路：
 
 ```
 SessionStrategy (新增)
   │
-  │  控制"跑几次、多久跑一次、记多少"
-  │
   └→ run_with_messages() (现有)
-       │
-       │  内部仍然走完整 hook 链路：
        │
        ├── on_before_agent_start
        ├── on_context
@@ -430,11 +487,12 @@ Hook 不知道 strategy 的存在——每轮 run 对 hook 来说就是一个普
 
 | Phase | 内容 | 预计 |
 |-------|------|------|
-| 1 | 定义 `SessionStrategy` + 三个子 enum | ~100 行 |
-| 2 | `SessionActor` 加 `strategy` 字段，拆出 `run_once` / `run_with_strategy`；ContextStrategy 的 Compact/Clear 逻辑 | ~120 行 |
-| 3 | Goal 验证 prompt 构建 + `goal_satisfied` 实现 | ~80 行 |
-| 4 | API gateway types + session route | ~40 行 |
-| 5 | 测试 | ~80 行 |
+| 1 | 定义 `SessionStrategy` + 三个子 enum + `GoalOutcome` | ~120 行 |
+| 2 | `SessionActor` 加 `strategy` 字段 + 分派逻辑 + `apply_context_strategy` | ~150 行 |
+| 3 | `run_goal_sync` + goal prompt 构建 + `goal_satisfied` | ~100 行 |
+| 4 | `spawn_background_loop` + `AgentEvent::LoopIterationComplete/Error` | ~80 行 |
+| 5 | API gateway types + `interval_ms` 转换 | ~50 行 |
+| 6 | 测试 | ~100 行 |
 
 ---
 
@@ -442,6 +500,6 @@ Hook 不知道 strategy 的存在——每轮 run 对 hook 来说就是一个普
 
 | 不做 | 原因 |
 |------|------|
-| ContextStrategy 的跨 session 记忆共享 | 那是 `MemoryStore` trait 的职责，不在此 scope |
-| Loop 的自定义 termination 条件（用户回调） | Phase 1 仅支持 built-in 的 Goal + max_iterations |
-| Tavern 层的多 agent workflow（DAG / parallel / fan-out） | Tavern 职责 |
+| 跨 session 的 goal/loop 编排 | Tavern 职责 |
+| 自定义 termination 条件（用户回调） | Phase 1 仅 built-in 的 Goal + max_iterations |
+| `Compact` 策略使用外部记忆服务 | 当前 `CompactionActor` 已足够；未来可接入 `MemoryStore` |
