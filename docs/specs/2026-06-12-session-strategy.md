@@ -8,21 +8,27 @@
 
 ## 1. 设计
 
-一个 session 的执行行为由三个正交维度决定：
+每个维度对应一个 CLI 命令。单独看是功能，组合起来是 session 的运行策略：
+
+| 维度 | 命令 | 策略语义 | 默认值 |
+|------|------|----------|--------|
+| termination | `/goal` | "做到 X 为止" | `Once` — 跑一次就停 |
+| rhythm | `/loop` | "每隔 X 时间做一次" | `Once` — 立刻执行 |
+| context | `/compact` `/clear` | "压缩记忆继续跑" / "从零开始新一轮" | `Accumulate` — 保留全部历史 |
 
 ```
-                ┌─ Once         → 跑一次就停（默认）
+                ┌─ Once         → 跑一次就停
 termination ────┤
-  (何时停)       └─ Goal         → 验证验收标准，不满足则继续
+  (/goal)        └─ Goal         → 做到 X 为止
 
-                ┌─ Once         → 立刻执行（默认）
+                ┌─ Once         → 立刻执行
 rhythm ─────────┤
-  (怎么跑)       └─ Loop         → 后台循环，按间隔反复执行
+  (/loop)        └─ Loop         → 每隔 X 时间做一次
 
-                ┌─ Accumulate   → 保留全部历史（默认）
+                ┌─ Accumulate   → 保留全部历史
 context ────────┤
-  (记什么)       ├─ Compact      → 自动压缩旧上下文
-                └─ Clear        → 每次 run 后清空历史
+  (/compact)     ├─ Compact      → 压缩记忆，继续跑
+  (/clear)       └─ Clear        → 从零开始新一轮
 ```
 
 ### 1.1 Loop 关键特性
