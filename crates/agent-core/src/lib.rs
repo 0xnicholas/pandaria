@@ -42,6 +42,11 @@ pub use harness::{
     compaction,
     compaction::{CompactionConfig, CompactionPreparation, CompactionResult, Compactor},
     session::{SessionActor, SessionConfig, SessionState},
+    strategy::{
+        ContextStrategy, CriteriaEvaluation, GoalCriterion, GoalExhaustedAction, GoalOutcome,
+        GoalVerification, RhythmStrategy, SessionStrategy, TerminationStrategy,
+        DEFAULT_LOOP_INTERVAL,
+    },
     BuiltSession, HarnessConfig, HookConfig, SessionBuilder,
 };
 

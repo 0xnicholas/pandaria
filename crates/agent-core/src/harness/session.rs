@@ -12,6 +12,11 @@ use crate::harness::compaction::{
     CompactionResult, Compactor, estimate_context_tokens, should_compact,
 };
 use crate::harness::error_recovery::{RecoveryAction, RecoveryStateMachine};
+use crate::harness::strategy::{
+    ContextStrategy, CriteriaEvaluation, GoalCriterion, GoalExhaustedAction, GoalOutcome,
+    GoalVerification, RhythmStrategy, SessionStrategy, TerminationStrategy,
+    DEFAULT_LOOP_INTERVAL,
+};
 use crate::hook::context::{CompactCtx, CompactReason, SessionCtx};
 use crate::hook::dispatcher::HookDispatcher;
 use crate::persistence::entry::{SessionContextBuilder, SessionEntry};
@@ -77,6 +82,10 @@ pub struct SessionActor {
     event_processor_handle: Option<tokio::task::JoinHandle<()>>,
     state: AtomicU8, // 0=Idle, 1=Running, 2=Error
     error_reason: Mutex<Option<String>>,
+    /// Execution strategy for this session.
+    strategy: SessionStrategy,
+    /// Saved base persona for context-clear rebuilds.
+    base_persona: String,
 }
 
 /// Configuration for creating a new [`SessionActor`].
@@ -174,6 +183,7 @@ impl SessionActor {
         );
 
         let has_store = config.store.is_some();
+        let base_persona = config.system_prompt.clone();
 
         let mut actor = Self {
             tenant_id: config.tenant_id,
@@ -202,6 +212,8 @@ impl SessionActor {
             event_processor_handle: None,
             state: AtomicU8::new(0),
             error_reason: Mutex::new(None),
+            strategy: SessionStrategy::default(),
+            base_persona,
         };
         let event_tx = actor.spawn_event_processor();
         actor.event_tx = Some(event_tx);
@@ -257,11 +269,54 @@ impl SessionActor {
         )
     )]
     pub async fn prompt(&mut self, text: String) -> Result<Vec<AgentMessage>, AgentError> {
-        self.prompt_with_content(vec![Content::Text {
-            text,
+        let content = vec![Content::Text {
+            text: text.clone(),
             text_signature: None,
-        }])
-        .await
+        }];
+
+        // Extract strategy fields before matching to avoid borrow conflicts
+        let termination = self.strategy.termination.clone();
+        let rhythm = self.strategy.rhythm.clone();
+
+        match (&termination, &rhythm) {
+            // ── Default: single-shot ──
+            (TerminationStrategy::Once, RhythmStrategy::Once) => {
+                self.prompt_with_content(content).await
+            }
+
+            // ── Goal: sync verification loop ──
+            (TerminationStrategy::Goal { .. }, RhythmStrategy::Once) => {
+                let outcome = self.run_goal_sync(text).await?;
+                Ok(outcome.into_messages())
+            }
+
+            // ── Loop: background execution ──
+            (_, RhythmStrategy::Loop { interval, max_iterations }) => {
+                if std::env::var("PANDARIA_DISABLE_CRON")
+                    .as_deref() == Ok("1")
+                {
+                    return Err(AgentError::LoopDisabled);
+                }
+                let delay = interval.unwrap_or(DEFAULT_LOOP_INTERVAL);
+                let max = *max_iterations;
+
+                // First iteration: synchronous
+                let first = match &termination {
+                    TerminationStrategy::Once => {
+                        self.prompt_with_content(content).await?
+                    }
+                    TerminationStrategy::Goal { .. } => {
+                        self.run_goal_sync(text.clone()).await?.into_messages()
+                    }
+                    _ => unreachable!(),
+                };
+
+                // Subsequent iterations: background
+                self.spawn_background_loop(text, delay, max);
+
+                Ok(first)
+            }
+        }
     }
 
     pub async fn prompt_with_content(
@@ -980,6 +1035,284 @@ impl SessionActor {
         self.abort_token.cancel();
     }
 
+    /// Set the execution strategy for this session.
+    pub fn set_strategy(&mut self, strategy: SessionStrategy) {
+        self.strategy = strategy;
+    }
+
+    /// Get the current execution strategy.
+    pub fn strategy(&self) -> &SessionStrategy {
+        &self.strategy
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Strategy: Goal — synchronous verification loop
+    // ═══════════════════════════════════════════════════════════════
+
+    async fn run_goal_sync(&mut self, task: String) -> Result<GoalOutcome, AgentError> {
+        let (criteria, max_attempts, on_exhausted) =
+            match &self.strategy.termination {
+                TerminationStrategy::Goal {
+                    criteria,
+                    max_attempts,
+                    on_exhausted,
+                } => (criteria.clone(), *max_attempts, on_exhausted.clone()),
+                _ => unreachable!(),
+            };
+
+        let mut last_eval: Option<CriteriaEvaluation> = None;
+
+        for attempt in 0..max_attempts {
+            self.apply_context_strategy_before_run().await?;
+
+            let prompt = if attempt == 0 {
+                build_initial_goal_prompt(&task, &criteria)
+            } else {
+                build_retry_prompt(
+                    &task,
+                    &criteria,
+                    attempt,
+                    max_attempts,
+                    last_eval.as_ref(),
+                )
+            };
+
+            let result = self.prompt_with_content(vec![Content::Text {
+                text: prompt,
+                text_signature: None,
+            }]).await?;
+
+            let eval = evaluate_criteria(&result, &criteria);
+            if eval.all_passed() {
+                return Ok(GoalOutcome::Passed {
+                    messages: result,
+                    attempts: attempt + 1,
+                });
+            }
+            last_eval = Some(eval);
+        }
+
+        match on_exhausted {
+            GoalExhaustedAction::Abort => Err(AgentError::GoalNotMet {
+                criteria: criteria.iter().map(|c| c.id.clone()).collect(),
+                attempts: max_attempts,
+            }),
+            GoalExhaustedAction::ReturnLast => {
+                let result = self.prompt_with_content(vec![Content::Text {
+                    text: task,
+                    text_signature: None,
+                }]).await?;
+                Ok(GoalOutcome::Exhausted {
+                    messages: result,
+                    attempts: max_attempts,
+                })
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Strategy: Loop — background execution
+    // ═══════════════════════════════════════════════════════════════
+
+    fn spawn_background_loop(
+        &self,
+        task: String,
+        delay: std::time::Duration,
+        max: Option<u32>,
+    ) {
+        let abort = self.abort_token.clone();
+        let event_tx = self.event_tx.clone();
+        let termination = self.strategy.termination.clone();
+        let context = self.strategy.context.clone();
+        let provider = self.provider.clone();
+        let hook_dispatcher = self.hook_dispatcher.clone();
+        let compaction_actor = self.compaction_actor.clone();
+        let tools = self.tools.clone();
+        let skills = self.skills.clone();
+        let model = self.model.clone();
+        let stream_options = self.stream_options.clone();
+        let base_persona = self.base_persona.clone();
+        let prompt_builder = self.prompt_builder.clone();
+        let tenant_id = self.tenant_id.clone();
+        let session_id = self.session_id.clone();
+
+        tokio::spawn(async move {
+            let mut iteration: u32 = 1;
+
+            loop {
+                if abort.is_cancelled() {
+                    break;
+                }
+                if let Some(max) = max {
+                    if iteration >= max {
+                        break;
+                    }
+                }
+
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    _ = abort.cancelled() => { break; }
+                }
+                if abort.is_cancelled() {
+                    break;
+                }
+
+                iteration += 1;
+
+                let result = Self::run_background_iteration(
+                    &task,
+                    &termination,
+                    &context,
+                    &provider,
+                    &hook_dispatcher,
+                    &compaction_actor,
+                    &tools,
+                    &skills,
+                    &model,
+                    &stream_options,
+                    &base_persona,
+                    &prompt_builder,
+                    &tenant_id,
+                    &session_id,
+                    &abort,
+                )
+                .await;
+
+                match result {
+                    Ok(msgs) => {
+                        if let Some(tx) = &event_tx {
+                            let _ = tx.try_send(QueuedEvent {
+                                event: AgentEvent::LoopIterationComplete {
+                                    iteration,
+                                    messages: msgs,
+                                },
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            iteration,
+                            error = %e,
+                            "background loop iteration failed, continuing"
+                        );
+                        if let Some(tx) = &event_tx {
+                            let _ = tx.try_send(QueuedEvent {
+                                event: AgentEvent::LoopIterationError {
+                                    iteration,
+                                    error: e.to_string(),
+                                },
+                            });
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_background_iteration(
+        task: &str,
+        termination: &TerminationStrategy,
+        context: &ContextStrategy,
+        provider: &Arc<dyn ai_provider::LlmProvider>,
+        hook_dispatcher: &Arc<dyn HookDispatcher>,
+        compaction_actor: &Arc<Compactor>,
+        tools: &[AgentToolRef],
+        skills: &[crate::skills::Skill],
+        model: &str,
+        stream_options: &ai_provider::StreamOptions,
+        base_persona: &str,
+        _prompt_builder: &PromptBuilder,
+        tenant_id: &str,
+        session_id: &str,
+        abort: &CancellationToken,
+    ) -> Result<Vec<AgentMessage>, AgentError> {
+        let mut builder = match context {
+            ContextStrategy::Clear => {
+                let mut b = PromptBuilder::from_base(base_persona);
+                crate::skills::inject_skills_into_builder(&mut b, skills);
+                b
+            }
+            _ => PromptBuilder::default(),
+        };
+
+        let task_msg = if let TerminationStrategy::Goal { criteria, .. } = termination {
+            build_initial_goal_prompt(task, criteria)
+        } else {
+            task.to_string()
+        };
+
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
+            content: vec![Content::Text {
+                text: task_msg,
+                text_signature: None,
+            }],
+            timestamp: std::time::SystemTime::now(),
+        });
+
+        let config = AgentLoopConfig {
+            tenant_id: tenant_id.to_string(),
+            session_id: session_id.to_string(),
+            model: model.to_string(),
+            provider: provider.clone(),
+            hook_dispatcher: hook_dispatcher.clone(),
+            tools: tools.to_vec(),
+            prompt_builder: builder,
+            stream_options: stream_options.clone(),
+            steer_queue: Arc::new(Mutex::new(Vec::new())),
+            follow_up_queue: Arc::new(Mutex::new(Vec::new())),
+            event_sink: Arc::new(|_| {}),
+            circuit_breaker: None,
+            skills: skills.to_vec(),
+        };
+
+        AgentLoop::new(config)
+            .run(vec![user_msg], abort.child_token())
+            .await
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Strategy: Context
+    // ═══════════════════════════════════════════════════════════════
+
+    async fn apply_context_strategy_before_run(&mut self) -> Result<(), AgentError> {
+        match &self.strategy.context {
+            ContextStrategy::Accumulate => {}
+            ContextStrategy::Compact { keep_last_n } => {
+                if self.entries.len() > *keep_last_n {
+                    let split_at = self.entries.len() - *keep_last_n;
+                    let old: Vec<_> = self.entries.drain(..split_at).collect();
+                    let summary = self
+                        .compaction_actor
+                        .compact(&old, &self.abort_token)
+                        .await
+                        .map(|r| r.summary)
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(error = %e, "context strategy compact failed");
+                            "(compaction failed)".to_string()
+                        });
+                    self.prompt_builder.upsert_fragment(PromptFragment {
+                        id: "strategy-compaction".into(),
+                        kind: FragmentKind::RuntimeInjection,
+                        source: FragmentSource::System,
+                        content: format!("## Prior context (compacted)\n\n{summary}"),
+                        priority: 150,
+                    });
+                }
+            }
+            ContextStrategy::Clear => {
+                self.entries.clear();
+                self.prompt_builder =
+                    PromptBuilder::from_base(self.base_persona.clone());
+                crate::skills::inject_skills_into_builder(
+                    &mut self.prompt_builder,
+                    &self.skills,
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Persist the session lifecycle status to the configured store.
     ///
     /// No-op if no store is configured. Fire-and-forget — failures are
@@ -1096,6 +1429,114 @@ impl Drop for SessionActor {
         // A bare `drop()` will abort the in-flight save task, potentially
         // losing the last write.
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Goal prompt builders (free functions)
+// ═══════════════════════════════════════════════════════════════════
+
+fn build_initial_goal_prompt(task: &str, criteria: &[GoalCriterion]) -> String {
+    let mut p = format!("## Task\n\n{task}\n\n## Acceptance Criteria\n");
+    p.push_str("You must satisfy ALL of the following before responding:\n\n");
+    for (i, c) in criteria.iter().enumerate() {
+        p.push_str(&format!("{}. [{}] {}\n", i + 1, c.id, c.description));
+    }
+    p.push_str("\nAfter completing the task, end your response with a criteria checklist:\n\n");
+    for c in criteria {
+        p.push_str(&format!("[CRITERION_RESULT: {}: PASS|FAIL]\n", c.id));
+    }
+    p
+}
+
+fn build_retry_prompt(
+    task: &str,
+    criteria: &[GoalCriterion],
+    attempt: u32,
+    max_attempts: u32,
+    last_eval: Option<&CriteriaEvaluation>,
+) -> String {
+    let mut p = format!(
+        "## Acceptance Criteria Check (attempt {}/{})\n\n",
+        attempt + 1,
+        max_attempts
+    );
+    p.push_str("The previous response did not meet all criteria:\n\n");
+    if let Some(eval) = last_eval {
+        for (id, passed) in &eval.results {
+            let mark = if *passed { "✓" } else { "✗" };
+            let desc = criteria
+                .iter()
+                .find(|c| &c.id == id)
+                .map(|c| c.description.as_str())
+                .unwrap_or(id);
+            p.push_str(&format!("{mark} {id} — {desc}\n"));
+        }
+    }
+    p.push_str(&format!(
+        "\n## Original Task\n\n{task}\n\n"
+    ));
+    p.push_str("Please fix the failing criteria and respond with the corrected implementation.\n");
+    p.push_str("End with [CRITERION_RESULT: ...] as before.\n");
+    p
+}
+
+/// Evaluate all criteria against the agent response.
+///
+/// `Command` and `OutputContains` verifications are run by the framework.
+/// `SelfAssessment` parses the `[CRITERION_RESULT: id: PASS|FAIL]` markers
+/// from the agent's output.
+fn evaluate_criteria(messages: &[AgentMessage], criteria: &[GoalCriterion]) -> CriteriaEvaluation {
+    let mut results = Vec::new();
+    // Extract the assistant's text from the last assistant message
+    let assistant_text = messages
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            AgentMessage::Assistant(a) => {
+                let mut text = String::new();
+                for c in &a.content {
+                    if let Content::Text { text: t, .. } = c {
+                        text.push_str(t);
+                    }
+                }
+                Some(text)
+            }
+            _ => None,
+        })
+        .unwrap_or_default();
+
+    for c in criteria {
+        let passed = match &c.verification {
+            GoalVerification::SelfAssessment => {
+                parse_criterion_result(&assistant_text, &c.id).unwrap_or(false)
+            }
+            GoalVerification::Command { .. } => {
+                // Commands are run synchronously — for now, mark as
+                // pending (not evaluated at framework level).
+                // In production, this would invoke tokio::process::Command.
+                false
+            }
+            GoalVerification::OutputContains { text } => assistant_text.contains(text.as_str()),
+        };
+        results.push((c.id.clone(), passed));
+    }
+    CriteriaEvaluation { results }
+}
+
+fn parse_criterion_result(text: &str, id: &str) -> Option<bool> {
+    let marker = format!("[CRITERION_RESULT: {id}:");
+    // Find the marker line and extract PASS or FAIL
+    for line in text.lines() {
+        if let Some(rest) = line.trim().strip_prefix(&marker) {
+            let rest = rest.trim_end_matches(']');
+            return match rest.trim() {
+                "PASS" => Some(true),
+                "FAIL" => Some(false),
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 #[cfg(test)]

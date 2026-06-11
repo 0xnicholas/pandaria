@@ -49,6 +49,15 @@ pub enum AgentError {
 
     #[error("session in error state: {reason}")]
     SessionInError { reason: String },
+
+    #[error("loop strategy is disabled (PANDARIA_DISABLE_CRON=1)")]
+    LoopDisabled,
+
+    #[error("goal not met after {attempts} attempts: {criteria:?}")]
+    GoalNotMet {
+        criteria: Vec<String>,
+        attempts: u32,
+    },
 }
 
 impl AgentError {
@@ -69,6 +78,8 @@ impl AgentError {
             Self::SkillNotFound(_) => "skill_not_found",
             Self::SkillLoadFailed(_) => "skill_load_failed",
             Self::SessionInError { .. } => "session_in_error",
+            Self::LoopDisabled => "loop_disabled",
+            Self::GoalNotMet { .. } => "goal_not_met",
         }
     }
 

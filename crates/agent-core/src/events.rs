@@ -71,6 +71,16 @@ pub enum AgentEvent {
     StateChanged {
         state: crate::harness::SessionState,
     },
+    /// A background loop iteration completed successfully.
+    LoopIterationComplete {
+        iteration: u32,
+        messages: Vec<AgentMessage>,
+    },
+    /// A background loop iteration failed (loop continues).
+    LoopIterationError {
+        iteration: u32,
+        error: String,
+    },
 }
 
 #[async_trait]
