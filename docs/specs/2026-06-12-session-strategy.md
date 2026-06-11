@@ -35,7 +35,7 @@ context ────────┤
 
 | 特性 | 说明 |
 |------|------|
-| **后台执行** | `prompt()` 立即返回首轮结果，后续迭代在后台 `tokio::spawn` 中运行 |
+| **后台执行** | `prompt()` 立即返回首轮结果，后续迭代在后台 `tokio::spawn` 中运行。后台迭代通过 `Arc<Mutex<SessionActor>>`（tenant crate 的 `ActiveSession` 模式）获取可变访问 |
 | **上下文控制** | 每次迭代的上下文行为由 `ContextStrategy` 决定：`Clear` = 独立上下文（不撑爆窗口），`Accumulate` = 累积全量历史，`Compact` = 自动压缩 |
 | **默认间隔** | 未指定 `interval` 时默认 **10 分钟** |
 | **全局开关** | `PANDARIA_DISABLE_CRON=1` 禁用调度器，所有 Loop 不可用 |
@@ -115,6 +115,26 @@ pub enum GoalExhaustedAction {
 pub enum GoalOutcome {
     Passed { messages: Vec<AgentMessage>, attempts: u32 },
     Exhausted { messages: Vec<AgentMessage>, attempts: u32 },
+}
+
+/// 单次 Goal 验证的评估结果。
+#[derive(Debug, Clone)]
+pub struct CriteriaEvaluation {
+    /// (criterion_id, passed) 对。
+    pub results: Vec<(String, bool)>,
+}
+
+impl CriteriaEvaluation {
+    pub fn all_passed(&self) -> bool {
+        self.results.iter().all(|(_, p)| *p)
+    }
+
+    pub fn failures(&self) -> Vec<&str> {
+        self.results.iter()
+            .filter(|(_, p)| !*p)
+            .map(|(id, _)| id.as_str())
+            .collect()
+    }
 }
 ```
 
