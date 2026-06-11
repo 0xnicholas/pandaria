@@ -5,6 +5,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     tenant_id   TEXT NOT NULL,
     session_id  TEXT NOT NULL,
     entries     JSONB NOT NULL DEFAULT '[]',
+    status      VARCHAR(16) NOT NULL DEFAULT 'active',
+    metadata    JSONB NOT NULL DEFAULT '{}',
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (tenant_id, session_id)
 );

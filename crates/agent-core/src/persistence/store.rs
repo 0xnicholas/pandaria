@@ -49,4 +49,17 @@ pub trait SessionStore: Send + Sync {
         all.extend_from_slice(new_entries);
         self.save_session(tenant_id, session_id, &all).await
     }
+
+    /// Update the lifecycle status of a session.
+    ///
+    /// Default no-op for stores that do not track lifecycle status
+    /// (e.g., key-value caches like Redis).
+    async fn update_session_status(
+        &self,
+        _tenant_id: &str,
+        _session_id: &str,
+        _status: &str,
+    ) -> Result<(), AgentError> {
+        Ok(())
+    }
 }

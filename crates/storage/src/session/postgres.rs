@@ -21,39 +21,16 @@ impl PgSessionStore {
         Self { pool }
     }
 
-    /// Initialise the `sessions` table if it does not already exist.
+    /// Run all pending migrations.
+    ///
+    /// Idempotent — safe to call on every startup. Uses sqlx's embedded
+    /// migration runner so the SQL lives in `migrations/*.sql` files,
+    /// not in Rust source.
     pub async fn init(&self) -> Result<(), StorageError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS sessions (
-                tenant_id   TEXT NOT NULL,
-                session_id  TEXT NOT NULL,
-                entries     JSONB NOT NULL DEFAULT '[]',
-                updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                PRIMARY KEY (tenant_id, session_id)
-            )
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Idempotent index creation that survives concurrent init() calls
-        sqlx::query(
-            r#"
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_indexes
-                    WHERE indexname = 'idx_sessions_tenant'
-                ) THEN
-                    CREATE INDEX idx_sessions_tenant ON sessions (tenant_id, updated_at DESC);
-                END IF;
-            END
-            $$
-            "#,
-        )
-        .execute(&self.pool)
-        .await?;
+        sqlx::migrate!("./migrations")
+            .run(&self.pool)
+            .await
+            .map_err(|e| StorageError::Migration(e.to_string()))?;
 
         info!("pg session store initialised");
         Ok(())
@@ -83,6 +60,24 @@ impl PgSessionStore {
             .execute(&self.pool)
             .await?;
 
+        Ok(())
+    }
+
+    /// Update the lifecycle status of a session.
+    pub async fn update_status(
+        &self,
+        tenant_id: &str,
+        session_id: &str,
+        status: &str,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            "UPDATE sessions SET status = $1, updated_at = NOW() WHERE tenant_id = $2 AND session_id = $3",
+        )
+        .bind(status)
+        .bind(tenant_id)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 }
@@ -179,5 +174,16 @@ impl SessionStore for PgSessionStore {
         .map_err(|e| AgentError::Persistence(format!("pg append: {e}")))?;
 
         Ok(())
+    }
+
+    async fn update_session_status(
+        &self,
+        tenant_id: &str,
+        session_id: &str,
+        status: &str,
+    ) -> Result<(), AgentError> {
+        self.update_status(tenant_id, session_id, status)
+            .await
+            .map_err(|e| AgentError::Persistence(e.to_string()))
     }
 }

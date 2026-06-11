@@ -470,6 +470,7 @@ impl SessionActor {
 
         loop {
             self.state.store(1, Ordering::SeqCst);
+            self.persist_status("active");
             self.emit_event(AgentEvent::StateChanged {
                 state: SessionState::Running,
             });
@@ -549,6 +550,7 @@ impl SessionActor {
                     self.state.store(0, Ordering::SeqCst);
                     match e {
                         AgentError::Cancelled => {
+                            self.persist_status("aborted");
                             return Err(AgentError::Cancelled);
                         }
                         AgentError::ContextOverflow(msg) => {
@@ -622,6 +624,8 @@ impl SessionActor {
 
             break;
         }
+
+        self.persist_status("completed");
 
         // Emit final Idle event and clear any stale error reason.
         // State is already Idle set by the Ok(msgs) branch above.
@@ -972,7 +976,35 @@ impl SessionActor {
             session_id = %self.session_id,
             "session aborted",
         );
+        self.persist_status("aborted");
         self.abort_token.cancel();
+    }
+
+    /// Persist the session lifecycle status to the configured store.
+    ///
+    /// No-op if no store is configured. Fire-and-forget — failures are
+    /// logged but never block the agent loop.
+    fn persist_status(&self, status: &str) {
+        if let Some(ref store) = self.store {
+            let store = store.clone();
+            let tenant_id = self.tenant_id.clone();
+            let session_id = self.session_id.clone();
+            let status = status.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = store
+                    .update_session_status(&tenant_id, &session_id, &status)
+                    .await
+                {
+                    tracing::warn!(
+                        %tenant_id,
+                        %session_id,
+                        %status,
+                        error = %e,
+                        "failed to persist session status",
+                    );
+                }
+            });
+        }
     }
 
     /// Gracefully shut down the session.

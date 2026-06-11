@@ -472,6 +472,7 @@ Daypaw 是 Pandaria + Tavern 的「前端」——让开发者和运营人员通
 | 想了解... | 看这里 |
 |-----------|--------|
 | **📖 生态 Cookbook** | **[`cookbook/`](cookbook/README.md)** — 架构、集成、部署完整指南 |
+| **🗄️ 统一数据库设计** | **[`database-design.md`](database-design.md)** — 生态所有项目的数据库 schema 与部署方案 |
 | Pandaria 核心架构 | [`../AGENTS.md`](../AGENTS.md) |
 | Emerald 工作原理 | `../../Emerald/README.md` |
 | Pawbun 工具集 | `../../Pawbun/README.md` |

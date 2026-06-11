@@ -17,7 +17,7 @@ thiserror = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "json"], optional = true }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "json", "migrate"], optional = true }
 redis = { version = "0.27", features = ["tokio-comp", "aio"], optional = true }
 
 [dev-dependencies]
