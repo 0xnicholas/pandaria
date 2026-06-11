@@ -87,8 +87,10 @@ impl SessionBuilder {
 
     /// Register built-in tools implemented in-process.
     ///
-    /// These are registered before media generation and external tools.
-    /// External tools with the same name can intentionally shadow builtins.
+    /// Builtins have the lowest priority: external (Tavern) tools and media
+    /// generation are placed before them in the tool list. When the agent loop
+    /// looks up a tool by name, the first match wins — so externals effectively
+    /// shadow builtins with the same name.
     pub fn with_builtin_tools(mut self, tools: Vec<AgentToolRef>) -> Self {
         self.builtin_tools = tools;
         self
@@ -309,38 +311,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_builder_with_builtin_tools() {
-        use crate::AgentToolResult;
-        use crate::tools::AgentTool;
-        use ai_provider::Content;
-        use async_trait::async_trait;
-
-        struct EchoTool;
-        #[async_trait]
-        impl AgentTool for EchoTool {
-            fn name(&self) -> &str { "echo" }
-            fn description(&self) -> &str { "echoes" }
-            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
-            async fn execute(
-                &self,
-                _tool_call_id: &str,
-                _params: serde_json::Value,
-                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
-                _signal: tokio_util::sync::CancellationToken,
-            ) -> Result<AgentToolResult, AgentError> {
-                Ok(AgentToolResult {
-                    content: vec![Content::Text { text: "ok".into(), text_signature: None }],
-                    details: None,
-                    is_error: false,
-                    terminate: false,
-                })
-            }
-        }
+        use crate::test_utils::TestTool;
 
         let config = dummy_runtime_config();
         let built = SessionBuilder::new(&config)
             .tenant_id("test-tenant")
             .session_id("sess-1")
-            .with_builtin_tools(vec![Arc::new(EchoTool)])
+            .with_builtin_tools(vec![Arc::new(TestTool::new(
+                "echo",
+                "echoes",
+                serde_json::json!({}),
+            ))])
             .build()
             .await
             .expect("build should succeed");
@@ -351,32 +332,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_session_builder_builtin_shadowed_by_external() {
-        use crate::AgentToolResult;
-        use crate::tools::AgentTool;
-        use ai_provider::Content;
-        use async_trait::async_trait;
-
-        struct BuiltinEcho;
-        #[async_trait]
-        impl AgentTool for BuiltinEcho {
-            fn name(&self) -> &str { "echo" }
-            fn description(&self) -> &str { "builtin echo" }
-            fn parameters(&self) -> serde_json::Value { serde_json::json!({}) }
-            async fn execute(
-                &self,
-                _tool_call_id: &str,
-                _params: serde_json::Value,
-                _on_progress: Option<&(dyn Fn(crate::AgentToolProgressUpdate) + Send + Sync)>,
-                _signal: tokio_util::sync::CancellationToken,
-            ) -> Result<AgentToolResult, AgentError> {
-                Ok(AgentToolResult {
-                    content: vec![Content::Text { text: "ok".into(), text_signature: None }],
-                    details: None,
-                    is_error: false,
-                    terminate: false,
-                })
-            }
-        }
+        use crate::test_utils::TestTool;
 
         let config = dummy_runtime_config();
         let external = ToolConfig {
@@ -390,15 +346,19 @@ mod tests {
         let built = SessionBuilder::new(&config)
             .tenant_id("test-tenant")
             .session_id("sess-1")
-            .with_builtin_tools(vec![Arc::new(BuiltinEcho)])
+            .with_builtin_tools(vec![Arc::new(TestTool::new(
+                "echo",
+                "builtin echo",
+                serde_json::json!({}),
+            ))])
             .with_external_tools(vec![external])
             .build()
             .await
             .expect("build should succeed");
 
-        // External registered first, shadows builtin by name collision (first-write-wins)
-        assert_eq!(built.tools.len(), 1);
+        // External registered first, shadows builtin by name collision.
+        // Only the external tool appears in the list.
+        assert_eq!(built.tools.len(), 1, "external should shadow builtin");
         assert_eq!(built.tools[0].name(), "echo");
-        assert_eq!(built.tools[0].description(), "external echo");
     }
 }

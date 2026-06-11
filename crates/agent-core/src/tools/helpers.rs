@@ -38,45 +38,8 @@ pub fn build_tool_value_defs(tools: &[AgentToolRef]) -> Vec<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::AgentError;
-    use crate::tools::{AgentTool, AgentToolProgressUpdate, AgentToolResult};
-    use ai_provider::Content;
-    use async_trait::async_trait;
+    use crate::test_utils::TestTool;
     use std::sync::Arc;
-    use tokio_util::sync::CancellationToken;
-
-    struct MockTool {
-        name: &'static str,
-        desc: &'static str,
-        params: serde_json::Value,
-    }
-
-    #[async_trait]
-    impl AgentTool for MockTool {
-        fn name(&self) -> &str {
-            self.name
-        }
-        fn description(&self) -> &str {
-            self.desc
-        }
-        fn parameters(&self) -> serde_json::Value {
-            self.params.clone()
-        }
-        async fn execute(
-            &self,
-            _tool_call_id: &str,
-            _params: serde_json::Value,
-            _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
-            _signal: CancellationToken,
-        ) -> Result<AgentToolResult, AgentError> {
-            Ok(AgentToolResult {
-                content: vec![],
-                details: None,
-                is_error: false,
-                terminate: false,
-            })
-        }
-    }
 
     #[test]
     fn test_build_tool_defs_empty() {
@@ -86,11 +49,11 @@ mod tests {
 
     #[test]
     fn test_build_tool_defs_non_empty() {
-        let tool: AgentToolRef = Arc::new(MockTool {
-            name: "echo",
-            desc: "Echoes input",
-            params: serde_json::json!({"type": "object"}),
-        });
+        let tool: AgentToolRef = Arc::new(TestTool::new(
+            "echo",
+            "Echoes input",
+            serde_json::json!({"type": "object"}),
+        ));
         let defs = build_tool_defs(&[tool]).unwrap();
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0].name, "echo");
@@ -105,11 +68,11 @@ mod tests {
 
     #[test]
     fn test_build_tool_value_defs_non_empty() {
-        let tool: AgentToolRef = Arc::new(MockTool {
-            name: "grep",
-            desc: "Searches files",
-            params: serde_json::json!({"type": "object"}),
-        });
+        let tool: AgentToolRef = Arc::new(TestTool::new(
+            "grep",
+            "Searches files",
+            serde_json::json!({"type": "object"}),
+        ));
         let defs = build_tool_value_defs(&[tool]);
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0]["name"], "grep");

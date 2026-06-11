@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 /// Type alias for the LLM message type used throughout the agent system.
 pub type AgentMessage = ai_provider::Message;
 

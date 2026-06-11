@@ -308,3 +308,69 @@ pub struct AllowAllDispatcher;
 
 #[async_trait::async_trait]
 impl HookDispatcher for AllowAllDispatcher {}
+
+// ============================================================================
+// Shared test tool (covers the common case: name + description + params)
+// ============================================================================
+
+use crate::tools::{AgentTool, AgentToolProgressUpdate, AgentToolResult};
+use crate::error::AgentError;
+use async_trait::async_trait;
+
+/// A minimal [`AgentTool`] implementation for tests.
+///
+/// Returns a simple text result on execution. For tests that need panic,
+/// terminate flags, or progress callbacks, define an inline mock in the
+/// test module itself.
+pub struct TestTool {
+    name: String,
+    description: String,
+    parameters: serde_json::Value,
+}
+
+impl TestTool {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        parameters: serde_json::Value,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            description: description.into(),
+            parameters,
+        }
+    }
+}
+
+#[async_trait]
+impl AgentTool for TestTool {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        self.parameters.clone()
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        _params: serde_json::Value,
+        _on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
+        _signal: CancellationToken,
+    ) -> Result<AgentToolResult, AgentError> {
+        Ok(AgentToolResult {
+            content: vec![Content::Text {
+                text: "ok".into(),
+                text_signature: None,
+            }],
+            details: None,
+            is_error: false,
+            terminate: false,
+        })
+    }
+}
