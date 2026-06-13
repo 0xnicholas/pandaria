@@ -296,7 +296,7 @@ fn build_pawbun_tool_refs(
     _http_client: &reqwest::Client,
 ) -> Vec<AgentToolRef> {
     use crate::tools::pawbun_adapter::PawbunToolAdapter;
-    use pawbun_toolkit::{CodeExecuteTool, DirectoryListTool, FileReadTool, FileWriteTool};
+    use pawbun_toolkit::{DirectoryListTool, FileReadTool, FileWriteTool, LocalCodeExecutor};
     use std::sync::Arc;
 
     let make = |tool: Box<dyn pawbun_toolkit::Tool>| -> AgentToolRef {
@@ -309,7 +309,10 @@ fn build_pawbun_tool_refs(
         )),
         make(Box::new(FileWriteTool::new(workspace.to_path_buf()))),
         make(Box::new(DirectoryListTool::new(workspace.to_path_buf()))),
-        make(Box::new(CodeExecuteTool)),
+        make(Box::new(
+            LocalCodeExecutor::new(workspace.to_path_buf())
+                .with_timeout(std::time::Duration::from_secs(30)),
+        )),
     ];
 
     #[cfg(feature = "pawbun-http")]

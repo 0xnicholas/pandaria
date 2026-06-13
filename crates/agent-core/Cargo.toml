@@ -20,7 +20,7 @@ uuid = { workspace = true }
 dashmap = { workspace = true }
 url = "2"
 reqwest = { version = "0.12", features = ["json"] }
-pawbun-toolkit = { git = "https://github.com/0xnicholas/pawbun", branch = "main", default-features = false }
+pawbun-toolkit = { path = "/Users/nicholasl/Documents/build-whatever/Pawbun/crates/pawbun-toolkit", default-features = false, features = ["tokio"] }
 
 [features]
 testing = []

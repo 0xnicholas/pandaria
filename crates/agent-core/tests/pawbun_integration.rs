@@ -183,27 +183,55 @@ async fn test_path_guard_blocks_etc_passwd() {
 // ── code_execute ──
 
 #[tokio::test]
-async fn test_code_execute_placeholder() {
-    use pawbun_toolkit::CodeExecuteTool;
+async fn test_code_execute_echo() {
+    let _dir = setup_dir("code_execute_echo");
+    use pawbun_toolkit::LocalCodeExecutor;
+    use std::time::Duration;
 
-    let _dir = setup_dir("code_execute_placeholder");
-    let adapter = PawbunToolAdapter::new(Box::new(CodeExecuteTool));
+    let tool = LocalCodeExecutor::new(&_dir).with_timeout(Duration::from_secs(5));
+    let adapter = PawbunToolAdapter::new(Box::new(tool));
 
     let result = adapter
         .execute(
             "call_1",
-            json!({"code": "echo hello", "language": "bash"}),
+            json!({"command": "echo hello_from_bash"}),
             None,
             CancellationToken::new(),
         )
         .await
         .unwrap();
 
-    // CodeExecuteTool is currently a placeholder — it returns an error
-    assert!(result.is_error, "placeholder should return error");
+    assert!(!result.is_error, "echo failed: {:?}", result);
     let text = content_text(&result);
     assert!(
-        text.contains("placeholder") || text.contains("sandbox"),
-        "expected placeholder message, got: {text}"
+        text.contains("hello_from_bash"),
+        "expected 'hello_from_bash' in output, got: {text}"
+    );
+}
+
+#[tokio::test]
+async fn test_code_execute_timeout() {
+    let _dir = setup_dir("code_execute_timeout");
+    use pawbun_toolkit::LocalCodeExecutor;
+    use std::time::Duration;
+
+    let tool = LocalCodeExecutor::new(&_dir).with_timeout(Duration::from_millis(500));
+    let adapter = PawbunToolAdapter::new(Box::new(tool));
+
+    let result = adapter
+        .execute(
+            "call_1",
+            json!({"command": "sleep 60"}),
+            None,
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    assert!(result.is_error, "sleep 60 should timeout");
+    let text = content_text(&result);
+    assert!(
+        text.contains("timeout") || text.contains("killed") || text.contains("signal"),
+        "expected timeout/kill message, got: {text}"
     );
 }
