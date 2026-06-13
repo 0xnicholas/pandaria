@@ -28,4 +28,7 @@ pub struct ActiveSession {
     /// so that `MediaGenerationTool` and other built-ins are re-injected
     /// rather than lossily serialised back to `ToolConfig`).
     pub original_tools: Vec<agent_core::ToolConfig>,
+    /// Pawbun builtin tools config for clone propagation.
+    pub builtin_tools_enabled: bool,
+    pub builtin_tools_disabled: Vec<String>,
 }

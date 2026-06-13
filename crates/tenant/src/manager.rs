@@ -34,6 +34,10 @@ pub struct CreateSessionParams {
     pub tools: Vec<agent_core::ToolConfig>,
     /// Optional webhook configuration for event delivery.
     pub webhook: Option<WebhookConfig>,
+    /// Enable Pawbun built-in tools (default true).
+    pub builtin_tools_enabled: bool,
+    /// Pawbun tool names to exclude.
+    pub builtin_tools_disabled: Vec<String>,
 }
 
 /// Partial updates for an existing session.
@@ -334,6 +338,8 @@ impl TenantManagerImpl {
                 tools,
                 webhook: params.webhook.clone(),
                 original_tools: params.tools.clone(),
+                builtin_tools_enabled: params.builtin_tools_enabled,
+                builtin_tools_disabled: params.builtin_tools_disabled.clone(),
             },
         );
 
@@ -380,6 +386,10 @@ impl TenantManager for TenantManagerImpl {
             .system_prompt(system_prompt.clone())
             .model(self.runtime_config.default_model.clone())
             .with_external_tools(params.tools.clone())
+            .with_builtin_tools_config(
+                params.builtin_tools_enabled,
+                params.builtin_tools_disabled.clone(),
+            )
             .build()
             .await
             .map_err(|e| TenantError::Internal {
@@ -726,6 +736,8 @@ impl TenantManager for TenantManagerImpl {
             }),
             tools: entry.original_tools.clone(),
             webhook: entry.webhook.clone(),
+            builtin_tools_enabled: entry.builtin_tools_enabled,
+            builtin_tools_disabled: entry.builtin_tools_disabled.clone(),
         };
 
         self.create_session(tenant_id, template).await

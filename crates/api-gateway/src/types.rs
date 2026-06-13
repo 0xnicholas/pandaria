@@ -138,6 +138,29 @@ pub struct CreateSessionRequest {
     /// Optional webhook configuration for event delivery.
     #[serde(default)]
     pub webhook: Option<WebhookConfig>,
+    /// Built-in Pawbun tools configuration.
+    #[serde(default)]
+    pub builtin_tools: BuiltinToolsConfig,
+}
+
+/// Configuration for built-in Pawbun tools auto-registration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuiltinToolsConfig {
+    /// Enable built-in tools (default true).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Tool names to exclude from registration.
+    #[serde(default)]
+    pub disabled: Vec<String>,
+}
+
+impl Default for BuiltinToolsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            disabled: Vec::new(),
+        }
+    }
 }
 
 /// 消息内容片段，支持多模态。
@@ -230,6 +253,10 @@ pub struct ErrorBody {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SendMessageResponse {
     pub turn_index: u64,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]

@@ -41,6 +41,8 @@ pub async fn create(
             events: w.events,
             secret: w.secret,
         }),
+        builtin_tools_enabled: req.builtin_tools.enabled,
+        builtin_tools_disabled: req.builtin_tools.disabled,
     };
 
     let info = state
@@ -182,6 +184,8 @@ pub async fn batch_create(
             events: w.events,
             secret: w.secret,
         }),
+        builtin_tools_enabled: req.template.builtin_tools.enabled,
+        builtin_tools_disabled: req.template.builtin_tools.disabled,
     };
 
     let result = state
