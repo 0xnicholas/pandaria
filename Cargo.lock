@@ -3025,7 +3025,6 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 [[package]]
 name = "pawbun-mcp-core"
 version = "0.3.0"
-source = "git+https://github.com/0xnicholas/pawbun?branch=main#49562aaad983abfe16a3306c534cf5ddabc4ab7e"
 dependencies = [
  "serde",
  "serde_json",
@@ -3035,7 +3034,6 @@ dependencies = [
 [[package]]
 name = "pawbun-toolkit"
 version = "0.3.0"
-source = "git+https://github.com/0xnicholas/pawbun?branch=main#49562aaad983abfe16a3306c534cf5ddabc4ab7e"
 dependencies = [
  "async-trait",
  "pawbun-mcp-core",
