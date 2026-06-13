@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use pawbun_toolkit::{Tool, ToolParameter, ToolResult as PToolResult, ToolError as PToolError};
+use pawbun_toolkit::{Tool, ToolParameter, ToolResult as PToolResult};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
