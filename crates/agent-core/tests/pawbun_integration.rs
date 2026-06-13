@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 use serde_json::json;
 use agent_core::tools::pawbun_adapter::PawbunToolAdapter;
-use agent_core::types::{AgentTool, AgentToolProgressUpdate, AgentToolResult};
+use agent_core::types::{AgentTool, AgentToolResult};
 use pawbun_toolkit::{FileReadTool, FileWriteTool, DirectoryListTool};
 use ai_provider::Content;
 

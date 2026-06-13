@@ -522,7 +522,15 @@ mod tests {
             .expect("build should succeed");
 
         // No Pawbun tools (all disabled), but build succeeds
-        let _ = built;
+        let names: Vec<&str> = built.tools.iter().map(|t| t.name()).collect();
+        assert!(
+            !names.contains(&"file_read")
+                && !names.contains(&"file_write")
+                && !names.contains(&"directory_list")
+                && !names.contains(&"code_execute"),
+            "all Pawbun tools should be disabled, got: {:?}",
+            names
+        );
     }
 
     #[tokio::test]

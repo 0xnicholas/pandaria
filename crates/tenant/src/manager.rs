@@ -26,7 +26,7 @@ pub struct WebhookConfig {
 }
 
 /// Parameters for creating a new session.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CreateSessionParams {
     pub title: Option<String>,
     pub system_prompt: Option<String>,
@@ -38,6 +38,19 @@ pub struct CreateSessionParams {
     pub builtin_tools_enabled: bool,
     /// Pawbun tool names to exclude.
     pub builtin_tools_disabled: Vec<String>,
+}
+
+impl Default for CreateSessionParams {
+    fn default() -> Self {
+        Self {
+            title: None,
+            system_prompt: None,
+            tools: Vec::new(),
+            webhook: None,
+            builtin_tools_enabled: true,
+            builtin_tools_disabled: Vec::new(),
+        }
+    }
 }
 
 /// Partial updates for an existing session.
