@@ -117,3 +117,7 @@ path = "tests/e2e/e2e_rate_limit.rs"
 [[test]]
 name = "e2e_token_budget"
 path = "tests/e2e/e2e_token_budget.rs"
+
+[[test]]
+name = "e2e_builtin_tools"
+path = "tests/e2e/e2e_builtin_tools.rs"
