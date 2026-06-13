@@ -94,49 +94,82 @@ impl AgentTool for PawbunToolAdapter {
         let input_json = serde_json::to_string(&params)
             .map_err(|e| AgentError::ToolExecutionFailed(format!("serialization: {e}")))?;
 
-        // Use Arc for 'static lifetime required by spawn_blocking
-        let inner = Arc::clone(&self.inner);
-
-        // NOTE: tokio::select! only stops *waiting* for the JoinHandle.
-        // The blocking thread continues executing. CodeExecuteTool handles
-        // actual cancellation via Child::kill(); file tools have resource
-        // limits (max file size) to bound worst-case blocking time.
-        tokio::select! {
-            result = tokio::task::spawn_blocking(move || {
-                inner.execute(&input_json)
-            }) => {
-                match result {
-                    Ok(Ok(tr)) => pawbun_result_to_agent_result(tr),
-                    Ok(Err(e)) => Ok(AgentToolResult {
+        // Branch: async tools (WebFetchTool, WebSearchTool) run directly
+        // in the async context; sync tools run via spawn_blocking.
+        if let Some(async_tool) = self.inner.as_async() {
+            let input = input_json.clone();
+            tokio::select! {
+                result = async_tool.execute_async(&input) => {
+                    match result {
+                        Ok(tr) => pawbun_result_to_agent_result(tr),
+                        Err(e) => Ok(AgentToolResult {
+                            content: vec![ai_provider::Content::Text {
+                                text: e.to_string(),
+                                text_signature: None,
+                            }],
+                            details: None,
+                            is_error: true,
+                            terminate: false,
+                        }),
+                    }
+                }
+                _ = signal.cancelled() => {
+                    Ok(AgentToolResult {
                         content: vec![ai_provider::Content::Text {
-                            text: e.to_string(),
+                            text: "cancelled".into(),
                             text_signature: None,
                         }],
                         details: None,
                         is_error: true,
                         terminate: false,
-                    }),
-                    Err(join_err) => Ok(AgentToolResult {
-                        content: vec![ai_provider::Content::Text {
-                            text: format!("tool panicked: {join_err}"),
-                            text_signature: None,
-                        }],
-                        details: None,
-                        is_error: true,
-                        terminate: false,
-                    }),
+                    })
                 }
             }
-            _ = signal.cancelled() => {
-                Ok(AgentToolResult {
-                    content: vec![ai_provider::Content::Text {
-                        text: "cancelled".into(),
-                        text_signature: None,
-                    }],
-                    details: None,
-                    is_error: true,
-                    terminate: false,
-                })
+        } else {
+            // Use Arc for 'static lifetime required by spawn_blocking
+            let inner = Arc::clone(&self.inner);
+
+            // NOTE: tokio::select! only stops *waiting* for the JoinHandle.
+            // The blocking thread continues executing. CodeExecuteTool handles
+            // actual cancellation via Child::kill(); file tools have resource
+            // limits (max file size) to bound worst-case blocking time.
+            tokio::select! {
+                result = tokio::task::spawn_blocking(move || {
+                    inner.execute(&input_json)
+                }) => {
+                    match result {
+                        Ok(Ok(tr)) => pawbun_result_to_agent_result(tr),
+                        Ok(Err(e)) => Ok(AgentToolResult {
+                            content: vec![ai_provider::Content::Text {
+                                text: e.to_string(),
+                                text_signature: None,
+                            }],
+                            details: None,
+                            is_error: true,
+                            terminate: false,
+                        }),
+                        Err(join_err) => Ok(AgentToolResult {
+                            content: vec![ai_provider::Content::Text {
+                                text: format!("tool panicked: {join_err}"),
+                                text_signature: None,
+                            }],
+                            details: None,
+                            is_error: true,
+                            terminate: false,
+                        }),
+                    }
+                }
+                _ = signal.cancelled() => {
+                    Ok(AgentToolResult {
+                        content: vec![ai_provider::Content::Text {
+                            text: "cancelled".into(),
+                            text_signature: None,
+                        }],
+                        details: None,
+                        is_error: true,
+                        terminate: false,
+                    })
+                }
             }
         }
     }
