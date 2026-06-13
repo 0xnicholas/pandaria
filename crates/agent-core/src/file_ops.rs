@@ -24,8 +24,8 @@ pub struct DefaultFileOperationExtractor {
 impl Default for DefaultFileOperationExtractor {
     fn default() -> Self {
         Self {
-            read_tool_names: vec!["read".to_string()],
-            write_tool_names: vec!["write".to_string()],
+            read_tool_names: vec!["read".to_string(), "file_read".to_string()],
+            write_tool_names: vec!["write".to_string(), "file_write".to_string()],
             edit_tool_names: vec!["edit".to_string()],
             path_arg_name: "path".to_string(),
         }

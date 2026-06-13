@@ -16,6 +16,22 @@ pub struct HookConfig {
     pub cost_callback: Option<Arc<dyn Fn(&str, f64) + Send + Sync>>,
 }
 
+impl HookConfig {
+    /// Populate `path_guard_fields` with Pawbun tool field mappings
+    /// for the dual-layer sandbox defense.
+    pub fn with_pawbun_defaults(mut self) -> Self {
+        self.path_guard_fields
+            .insert("file_read".into(), vec!["path".into()]);
+        self.path_guard_fields
+            .insert("file_write".into(), vec!["path".into()]);
+        self.path_guard_fields
+            .insert("directory_list".into(), vec!["path".into()]);
+        self.path_guard_fields
+            .insert("code_execute".into(), vec!["work_dir".into()]);
+        self
+    }
+}
+
 impl std::fmt::Debug for HookConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HookConfig")
@@ -168,5 +184,48 @@ impl Default for HarnessConfig {
             hook_config: HookConfig::default(),
             memory_store: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_hook_config_with_pawbun_defaults() {
+        let config = HookConfig::default().with_pawbun_defaults();
+        assert_eq!(
+            config.path_guard_fields.get("file_read").unwrap(),
+            &vec!["path".to_string()]
+        );
+        assert_eq!(
+            config.path_guard_fields.get("file_write").unwrap(),
+            &vec!["path".to_string()]
+        );
+        assert_eq!(
+            config.path_guard_fields.get("directory_list").unwrap(),
+            &vec!["path".to_string()]
+        );
+        assert_eq!(
+            config.path_guard_fields.get("code_execute").unwrap(),
+            &vec!["work_dir".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_hook_config_with_pawbun_preserves_existing() {
+        let config = HookConfig {
+            path_guard_fields: {
+                let mut m = HashMap::new();
+                m.insert("custom".into(), vec!["file".into()]);
+                m
+            },
+            ..Default::default()
+        }
+        .with_pawbun_defaults();
+
+        assert!(config.path_guard_fields.contains_key("custom"));
+        assert!(config.path_guard_fields.contains_key("file_read"));
     }
 }
