@@ -43,8 +43,13 @@ pub struct SessionBuilder {
     session_id: String,
     system_prompt: String,
     model: String,
+    /// Built-in tools registered by the caller (via `with_builtin_tools()`).
     builtin_tools: Vec<AgentToolRef>,
     external_tools: Vec<ToolConfig>,
+    /// Enable Pawbun auto-registered built-in tools (default: true).
+    builtin_enabled: bool,
+    /// Pawbun tool names to exclude.
+    disabled_tools: Vec<String>,
 }
 
 impl SessionBuilder {
@@ -58,6 +63,8 @@ impl SessionBuilder {
             model: config.default_model.clone(),
             builtin_tools: Vec::new(),
             external_tools: Vec::new(),
+            builtin_enabled: true,
+            disabled_tools: Vec::new(),
         }
     }
 
@@ -100,6 +107,21 @@ impl SessionBuilder {
     pub fn with_external_tools(mut self, tools: Vec<ToolConfig>) -> Self {
         self.external_tools = tools;
         self
+    }
+
+    /// Enable Pawbun built-in tools with an optional disabled-tool list.
+    ///
+    /// Distinct from [`with_builtin_tools`] which registers arbitrary
+    /// in-process tools. This method auto-registers the Pawbun tool suite.
+    pub fn with_builtin_tools_config(mut self, enabled: bool, disabled: Vec<String>) -> Self {
+        self.builtin_enabled = enabled;
+        self.disabled_tools = disabled;
+        self
+    }
+
+    /// Resolve the workspace directory for this session's tenant.
+    fn resolve_workspace(&self) -> std::path::PathBuf {
+        self.config.agent_space.workspace_for(&self.tenant_id)
     }
 
     /// Assemble the session.
@@ -188,6 +210,25 @@ impl SessionBuilder {
             tools.push(tool.clone());
         }
 
+        // 2d. Pawbun built-in tools (auto-registered, lowest priority)
+        if self.builtin_enabled {
+            let workspace = self.resolve_workspace();
+            let pawbun_tools = build_pawbun_tool_refs(
+                &workspace,
+                &self.disabled_tools,
+                &self.config.http_client,
+            );
+            for tool in pawbun_tools {
+                let name = tool.name().to_string();
+                if seen.contains(&name) {
+                    tracing::info!(%name, "Pawbun tool shadowed by external, media, or user builtin");
+                    continue;
+                }
+                seen.insert(name);
+                tools.push(tool);
+            }
+        }
+
         // 3. Compaction actor
         let compaction_actor = Arc::new(Compactor::new(
             self.config.compaction_config.clone(),
@@ -244,6 +285,54 @@ impl SessionBuilder {
     }
 }
 
+/// Default max file size for file_read (10 MB).
+const DEFAULT_MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
+
+/// Build `AgentToolRef` list from Pawbun tools, wrapping each in
+/// a `PawbunToolAdapter`.
+fn build_pawbun_tool_refs(
+    workspace: &std::path::Path,
+    disabled: &[String],
+    _http_client: &reqwest::Client,
+) -> Vec<AgentToolRef> {
+    use crate::tools::pawbun_adapter::PawbunToolAdapter;
+    use pawbun_toolkit::{CodeExecuteTool, DirectoryListTool, FileReadTool, FileWriteTool};
+    use std::sync::Arc;
+
+    let make = |tool: Box<dyn pawbun_toolkit::Tool>| -> AgentToolRef {
+        Arc::new(PawbunToolAdapter::new(tool))
+    };
+
+    let mut tools: Vec<AgentToolRef> = vec![
+        make(Box::new(
+            FileReadTool::new(workspace.to_path_buf()).with_max_size(DEFAULT_MAX_FILE_SIZE),
+        )),
+        make(Box::new(FileWriteTool::new(workspace.to_path_buf()))),
+        make(Box::new(DirectoryListTool::new(workspace.to_path_buf()))),
+        make(Box::new(CodeExecuteTool)),
+    ];
+
+    #[cfg(feature = "pawbun-http")]
+    {
+        tools.push(make(Box::<pawbun_toolkit::WebFetchTool>::default()));
+        tools.push(make(Box::new(pawbun_toolkit::WebSearchTool::new(
+            "https://api.duckduckgo.com",
+        ))));
+    }
+
+    // Log warning for unknown disabled tool names
+    for name in disabled {
+        if !tools.iter().any(|t| t.name() == name.as_str()) {
+            tracing::warn!(%name, "disabled tool name not recognized among Pawbun builtins");
+        }
+    }
+
+    tools
+        .into_iter()
+        .filter(|t| !disabled.contains(&t.name().to_string()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +365,7 @@ mod tests {
             .session_id("sess-1")
             .system_prompt("Be helpful.")
             .model("gpt-4")
+            .with_builtin_tools_config(false, vec![])
             .build()
             .await
             .expect("build should succeed");
@@ -301,6 +391,7 @@ mod tests {
             .tenant_id("test-tenant")
             .session_id("sess-1")
             .with_external_tools(vec![tool])
+            .with_builtin_tools_config(false, vec![])
             .build()
             .await
             .expect("build should succeed");
@@ -322,6 +413,7 @@ mod tests {
                 "echoes",
                 serde_json::json!({}),
             ))])
+            .with_builtin_tools_config(false, vec![])
             .build()
             .await
             .expect("build should succeed");
@@ -352,6 +444,7 @@ mod tests {
                 serde_json::json!({}),
             ))])
             .with_external_tools(vec![external])
+            .with_builtin_tools_config(false, vec![])
             .build()
             .await
             .expect("build should succeed");
@@ -360,5 +453,90 @@ mod tests {
         // Only the external tool appears in the list.
         assert_eq!(built.tools.len(), 1, "external should shadow builtin");
         assert_eq!(built.tools[0].name(), "echo");
+    }
+
+    #[tokio::test]
+    async fn test_session_builder_with_pawbun_builtins() {
+        let config = dummy_runtime_config();
+        let built = SessionBuilder::new(&config)
+            .tenant_id("test-tenant")
+            .session_id("sess-1")
+            .with_builtin_tools_config(true, vec![])
+            .build()
+            .await
+            .expect("build should succeed");
+
+        let names: Vec<&str> = built.tools.iter().map(|t| t.name()).collect();
+        assert!(
+            names.contains(&"file_read"),
+            "expected file_read tool, got {:?}",
+            names
+        );
+        assert!(names.contains(&"file_write"), "expected file_write tool");
+        assert!(
+            names.contains(&"directory_list"),
+            "expected directory_list tool"
+        );
+        assert!(names.contains(&"code_execute"), "expected code_execute tool");
+    }
+
+    #[tokio::test]
+    async fn test_session_builder_pawbun_disabled_filter() {
+        let config = dummy_runtime_config();
+        let built = SessionBuilder::new(&config)
+            .tenant_id("test-tenant")
+            .session_id("sess-1")
+            .with_builtin_tools_config(true, vec!["code_execute".into()])
+            .build()
+            .await
+            .expect("build should succeed");
+
+        let names: Vec<&str> = built.tools.iter().map(|t| t.name()).collect();
+        assert!(names.contains(&"file_read"));
+        assert!(
+            !names.contains(&"code_execute"),
+            "code_execute should be disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_builder_pawbun_disabled_all() {
+        let config = dummy_runtime_config();
+        let built = SessionBuilder::new(&config)
+            .tenant_id("test-tenant")
+            .session_id("sess-1")
+            .with_builtin_tools_config(
+                true,
+                vec![
+                    "file_read".into(),
+                    "file_write".into(),
+                    "directory_list".into(),
+                    "code_execute".into(),
+                ],
+            )
+            .build()
+            .await
+            .expect("build should succeed");
+
+        // No Pawbun tools (all disabled), but build succeeds
+        let _ = built;
+    }
+
+    #[tokio::test]
+    async fn test_session_builder_pawbun_disabled() {
+        let config = dummy_runtime_config();
+        let built = SessionBuilder::new(&config)
+            .tenant_id("test-tenant")
+            .session_id("sess-1")
+            .with_builtin_tools_config(false, vec![])
+            .build()
+            .await
+            .expect("build should succeed");
+
+        let names: Vec<&str> = built.tools.iter().map(|t| t.name()).collect();
+        assert!(
+            !names.contains(&"file_read"),
+            "Pawbun tools should not be registered when disabled"
+        );
     }
 }
