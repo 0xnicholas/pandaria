@@ -116,3 +116,35 @@ mod tests {
         assert!(!config.is_default_secret());
     }
 }
+
+#[cfg(feature = "aspectus-auth")]
+#[derive(Debug, Clone)]
+pub struct AspectusConfig {
+    /// Aspectus service URL (default http://localhost:3100)
+    pub base_url: String,
+    /// Service token for calling /introspect (from ASPECTUS_SERVICE_TOKEN env)
+    pub service_token: String,
+    /// Introspection timeout in ms (default 2000)
+    pub timeout_ms: u64,
+}
+
+#[cfg(feature = "aspectus-auth")]
+impl AspectusConfig {
+    /// Load configuration from environment variables.
+    ///
+    /// - `ASPECTUS_BASE_URL` — default `http://localhost:3100`
+    /// - `ASPECTUS_SERVICE_TOKEN` — **required**, no default
+    /// - `ASPECTUS_TIMEOUT_MS` — default `2000`
+    pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self {
+            base_url: std::env::var("ASPECTUS_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:3100".into()),
+            service_token: std::env::var("ASPECTUS_SERVICE_TOKEN")
+                .map_err(|_| "ASPECTUS_SERVICE_TOKEN not set")?,
+            timeout_ms: std::env::var("ASPECTUS_TIMEOUT_MS")
+                .unwrap_or_else(|_| "2000".into())
+                .parse()
+                .unwrap_or(2000),
+        })
+    }
+}

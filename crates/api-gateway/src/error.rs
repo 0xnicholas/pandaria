@@ -23,6 +23,18 @@ pub enum GatewayError {
 
     #[error("not acceptable")]
     NotAcceptable,
+
+    /// Aspectus introspection failed or timed out → 503
+    #[error("service temporarily unavailable")]
+    ServiceUnavailable,
+
+    /// Tenant not configured for pandaria → 403
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+
+    /// Internal error → 500
+    #[error("internal error: {0}")]
+    Internal(String),
 }
 
 impl IntoResponse for GatewayError {
@@ -73,6 +85,13 @@ impl IntoResponse for GatewayError {
                         "internal error".into(),
                     )
                 }
+                tenant::TenantError::InvalidQuotasFormat(_)
+                | tenant::TenantError::IntrospectionInactive
+                | tenant::TenantError::TenantNotConfigured(_) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal",
+                    "internal error".into(),
+                ),
             },
             Self::InvalidSessionId => {
                 (StatusCode::BAD_REQUEST, "invalid_request", self.to_string())
@@ -96,6 +115,21 @@ impl IntoResponse for GatewayError {
                 StatusCode::NOT_ACCEPTABLE,
                 "not_acceptable",
                 "requested content type is not supported".into(),
+            ),
+            Self::ServiceUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "service_unavailable",
+                "service temporarily unavailable".into(),
+            ),
+            Self::Forbidden(msg) => (
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                msg.clone(),
+            ),
+            Self::Internal(msg) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                msg.clone(),
             ),
         };
 
