@@ -21,6 +21,9 @@ hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 
+[features]
+aspectus-auth = []
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tokio-util = { workspace = true }

@@ -128,7 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 4. Tenant Manager ---
     let tenant_manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
     );
 
     // --- 5. Server Config ---
@@ -148,10 +148,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState::with_aspectus(
         tenant_manager,
         config.clone(),
+        registry,
         &aspectus_config,
     )?);
     #[cfg(not(feature = "aspectus-auth"))]
-    let state = Arc::new(AppState::new(tenant_manager, config.clone()));
+    let state = Arc::new(AppState::new(tenant_manager, config.clone(), registry));
 
     // --- 6. Tavern Workflow Engine ---
     let tavern_runtime = Arc::new(tavern_comp::AgentRuntime::new());

@@ -38,7 +38,7 @@ path = "src/main.rs"
 
 [features]
 default = ["sqlite"]
-aspectus-auth = ["aspectus-client", "aspectus-core"]
+aspectus-auth = ["aspectus-client", "aspectus-core", "tenant/aspectus-auth"]
 sqlite = ["tavern-comp/sqlite"]
 postgres = ["tavern-comp/postgres"]
 bundled-sqlite = ["tavern-comp/bundled-sqlite"]
@@ -133,3 +133,18 @@ path = "tests/e2e/e2e_token_budget.rs"
 [[test]]
 name = "e2e_builtin_tools"
 path = "tests/e2e/e2e_builtin_tools.rs"
+
+[[test]]
+name = "e2e_aspectus_auth"
+path = "tests/e2e/e2e_aspectus_auth.rs"
+required-features = ["aspectus-auth"]
+
+[[test]]
+name = "e2e_aspectus_quotas"
+path = "tests/e2e/e2e_aspectus_quotas.rs"
+required-features = ["aspectus-auth"]
+
+[[test]]
+name = "e2e_aspectus_unavailable"
+path = "tests/e2e/e2e_aspectus_unavailable.rs"
+required-features = ["aspectus-auth"]

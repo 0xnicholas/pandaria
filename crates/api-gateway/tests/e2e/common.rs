@@ -12,6 +12,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 
 /// Build a test router with a real `TenantManagerImpl` and the given provider.
+#[cfg(not(feature = "aspectus-auth"))]
 pub fn build_test_app(provider: Arc<dyn ai_provider::LlmProvider>) -> Router {
     let registry = Arc::new(tenant::TenantRegistry::new());
     let test_tenant = tenant::Tenant::new(
@@ -48,11 +49,12 @@ pub fn build_test_app(provider: Arc<dyn ai_provider::LlmProvider>) -> Router {
         auth_secret: secrecy::SecretString::from(TEST_SECRET),
         ..Default::default()
     };
-    let state = Arc::new(AppState::new(manager, config));
+    let state = Arc::new(AppState::new(manager, config, registry.clone()));
     api_gateway::build_router(state)
 }
 
 /// Build a test router with a custom tenant registry.
+#[cfg(not(feature = "aspectus-auth"))]
 pub fn build_test_app_with_registry(
     provider: Arc<dyn ai_provider::LlmProvider>,
     registry: Arc<tenant::TenantRegistry>,
@@ -80,16 +82,12 @@ pub fn build_test_app_with_registry(
         auth_secret: secrecy::SecretString::from(TEST_SECRET),
         ..Default::default()
     };
-    let state = Arc::new(AppState::new(manager, config));
+    let state = Arc::new(AppState::new(manager, config, registry.clone()));
     api_gateway::build_router(state)
 }
 
 /// Build a test router with a custom HTTP client for external tools/webhooks.
-///
-/// The `client` is injected into `TenantManagerImpl` so that `HttpProxyTool`
-/// and `WebhookEventListener` use it for outbound requests. This allows E2E
-/// tests to route requests to local mock servers (e.g. wiremock) while using
-/// a public-looking domain that passes SSRF checks.
+#[cfg(not(feature = "aspectus-auth"))]
 pub fn build_test_app_with_client(
     provider: Arc<dyn ai_provider::LlmProvider>,
     client: reqwest::Client,
@@ -129,13 +127,14 @@ pub fn build_test_app_with_client(
         auth_secret: secrecy::SecretString::from(TEST_SECRET),
         ..Default::default()
     };
-    let state = Arc::new(AppState::new(manager, config));
+    let state = Arc::new(AppState::new(manager, config, registry.clone()));
     api_gateway::build_router(state)
 }
 
 pub const TEST_SECRET: &str = "test-secret-32-chars-long!!!";
 
 /// Generate a valid HMAC-SHA256 token for the given tenant.
+#[cfg(not(feature = "aspectus-auth"))]
 pub fn make_token(tenant_id: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -319,6 +318,7 @@ use storage::session::postgres::PgSessionStore;
 
 /// Build a test router with both a real TenantManagerImpl and a SessionStore.
 /// Delegates to `build_test_app_with_store_and_compaction` with default config.
+#[cfg(not(feature = "aspectus-auth"))]
 pub fn build_test_app_with_store(
     provider: Arc<dyn ai_provider::LlmProvider>,
     store: Arc<dyn agent_core::SessionStore>,
@@ -331,6 +331,7 @@ pub fn build_test_app_with_store(
 }
 
 /// Build a test router with a SessionStore and custom CompactionConfig.
+#[cfg(not(feature = "aspectus-auth"))]
 pub fn build_test_app_with_store_and_compaction(
     provider: Arc<dyn ai_provider::LlmProvider>,
     store: Arc<dyn agent_core::SessionStore>,
@@ -371,7 +372,7 @@ pub fn build_test_app_with_store_and_compaction(
         auth_secret: secrecy::SecretString::from(TEST_SECRET),
         ..Default::default()
     };
-    let state = Arc::new(AppState::new(manager, config));
+    let state = Arc::new(AppState::new(manager, config, registry.clone()));
     api_gateway::build_router(state)
 }
 
@@ -544,7 +545,7 @@ pub async fn build_test_app_with_aspectus(
         memory_store: None,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
     );
 
     let config = api_gateway::ServerConfig::default();
@@ -557,6 +558,7 @@ pub async fn build_test_app_with_aspectus(
         api_gateway::AppState::with_aspectus(
             manager,
             config,
+            registry,
             &aspectus_config,
         )
         .expect("build test app state"),

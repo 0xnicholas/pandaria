@@ -24,6 +24,7 @@ pub struct AppState {
     pub tenant_manager: Arc<dyn tenant::TenantManager>,
     pub config: ServerConfig,
     pub rate_limiter: rate_limit::RateLimiter,
+    pub registry: Arc<tenant::TenantRegistry>,
 
     #[cfg(feature = "aspectus-auth")]
     pub aspectus: aspectus_client::AspectusClient,
@@ -34,11 +35,16 @@ pub struct AppState {
 impl AppState {
     /// Create AppState without Aspectus (legacy HMAC auth).
     #[cfg(not(feature = "aspectus-auth"))]
-    pub fn new(tenant_manager: Arc<dyn tenant::TenantManager>, config: ServerConfig) -> Self {
+    pub fn new(
+        tenant_manager: Arc<dyn tenant::TenantManager>,
+        config: ServerConfig,
+        registry: Arc<tenant::TenantRegistry>,
+    ) -> Self {
         Self {
             tenant_manager,
             config,
             rate_limiter: rate_limit::RateLimiter::new(),
+            registry,
         }
     }
 
@@ -47,6 +53,7 @@ impl AppState {
     pub fn with_aspectus(
         tenant_manager: Arc<dyn tenant::TenantManager>,
         config: ServerConfig,
+        registry: Arc<tenant::TenantRegistry>,
         aspectus_config: &AspectusConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let reqwest_client = reqwest::Client::builder()
@@ -61,6 +68,7 @@ impl AppState {
             tenant_manager,
             config,
             rate_limiter: rate_limit::RateLimiter::new(),
+            registry,
             aspectus,
             tenant_cache: TenantCache::new(),
         })
