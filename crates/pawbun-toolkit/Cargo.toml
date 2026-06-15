@@ -1,0 +1,70 @@
+[package]
+name = "pawbun-toolkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Agent tools for the Pandaria ecosystem"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json"], optional = true }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros", "process"], optional = true }
+schemars = { version = "0.8", optional = true }
+pawbun-toolkit-macros = { path = "../pawbun-toolkit-macros", optional = true }
+jsonpath-rust = { version = "1.0", optional = true }
+csv = { version = "1.4", optional = true }
+tracing = { version = "0.1", optional = true }
+
+[features]
+default = []
+http = ["dep:reqwest", "tokio"]
+tokio = ["dep:tokio"]
+schemars = ["dep:schemars"]
+macros = ["dep:pawbun-toolkit-macros"]
+jsonpath = ["dep:jsonpath-rust"]
+csv = ["dep:csv"]
+tracing = ["dep:tracing"]
+full = ["http", "tokio", "schemars", "macros", "jsonpath", "csv", "tracing"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros", "fs", "process"] }
+wiremock = "0.6"
+schemars = { version = "0.8", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+base64 = "0.22"
+
+[[example]]
+name = "docker_code_executor"
+path = "examples/docker_code_executor.rs"
+required-features = ["tokio"]
+
+[[example]]
+name = "openai_vision"
+path = "examples/openai_vision.rs"
+required-features = ["http"]
+
+[[example]]
+name = "openai_embedding"
+path = "examples/openai_embedding.rs"
+required-features = ["http"]
+
+[[example]]
+name = "basic_toolkit"
+path = "examples/basic_toolkit.rs"
+
+[[example]]
+name = "custom_tool"
+path = "examples/custom_tool.rs"
+
+[[bench]]
+name = "toolkit"
+harness = false
+
+[[test]]
+name = "macros"
+required-features = ["macros"]

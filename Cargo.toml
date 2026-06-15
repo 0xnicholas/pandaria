@@ -10,11 +10,18 @@ members = [
     "crates/tavern-core",
     "crates/tavern-comp",
     "crates/tavern-flow-macros",
+    "crates/pawbun-toolkit",
+    "crates/pawbun-toolkit-macros",
+    "crates/pawbun-files",
+    "crates/pawbun-mcp-server",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/0xnicholas/pandaria"
+rust-version = "1.75"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

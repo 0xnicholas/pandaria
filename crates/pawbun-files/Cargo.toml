@@ -1,0 +1,45 @@
+[package]
+name = "pawbun-files"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "File handling utilities for Pandaria multimodal inputs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+base64 = "0.22"
+bytes = { version = "1", features = ["serde"] }
+reqwest = { version = "0.12", optional = true, features = ["blocking"] }
+tokio = { version = "1", features = ["fs", "rt"], optional = true }
+futures = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
+image = { version = "0.25", optional = true }
+tracing = { version = "0.1", optional = true }
+
+[features]
+default = []
+url-source = ["dep:reqwest"]
+image-meta = ["dep:image"]
+tracing = ["dep:tracing"]
+tokio = ["dep:tokio", "dep:futures"]
+full = ["url-source", "image-meta", "tracing", "tokio"]
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+wiremock = "0.6"
+
+[[example]]
+name = "load_image"
+path = "examples/load_image.rs"
+
+[[example]]
+name = "batch_load"
+path = "examples/batch_load.rs"
+
+[[bench]]
+name = "loader"
+harness = false

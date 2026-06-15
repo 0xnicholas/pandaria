@@ -1,0 +1,27 @@
+[package]
+name = "pawbun-toolkit-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Procedural macros for pawbun-toolkit"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
+
+[dev-dependencies]
+pawbun-toolkit = { path = "../pawbun-toolkit", features = ["macros"] }
+serde_json = "1"
+
+[[example]]
+name = "basic_macro"
+path = "examples/basic_macro.rs"
+
+[[example]]
+name = "custom_input"
+path = "examples/custom_input.rs"
