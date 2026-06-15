@@ -102,12 +102,10 @@ pub async fn serve(
     let listener = tokio::net::TcpListener::bind(&state.config.bind_addr).await?;
     let mut router = build_router(state.clone());
 
-    // Merge Tavern routes
+    // Merge Tavern routes (use Extension to avoid state type conflict)
     if let Some(tavern_state) = tavern {
-        let tavern_router = axum::Router::new()
-            .route("/health", axum::routing::get(crate::tavern::tavern_health))
-            .with_state(tavern_state);
-        router = router.nest("/tavern", tavern_router);
+        let ext: axum::Extension<Arc<crate::tavern::TavernState>> = axum::Extension(tavern_state);
+        router = router.nest("/tavern", crate::tavern::routes().layer(ext));
     }
 
     tracing::info!("api-gateway listening on {}", listener.local_addr()?);

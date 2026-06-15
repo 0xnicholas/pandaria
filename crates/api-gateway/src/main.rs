@@ -159,6 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         hero: hero.clone(),
         registry: workflow_registry.clone(),
         event_store,
+        tool_registry: Arc::new(tavern_core::ToolRegistry::new()),
     });
 
     // --- 7. Print startup info ---
