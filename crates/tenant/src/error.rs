@@ -40,4 +40,12 @@ pub enum TenantError {
     /// quotas.pandaria JSON has invalid format.
     #[error("invalid quotas format in introspection response: {0}")]
     InvalidQuotasFormat(String),
+
+    /// Aspectus introspection returned inactive token.
+    #[error("token introspection failed: inactive token")]
+    IntrospectionInactive,
+
+    /// Tenant exists in Aspectus but not configured for pandaria.
+    #[error("tenant {0} not configured for pandaria in Aspectus")]
+    TenantNotConfigured(String),
 }
