@@ -122,9 +122,12 @@ impl TenantContext {
 ///
 /// 不再自行创建租户。所有租户通过 `resolve_or_insert(TenantContext)` 懒加载。
 /// 内部使用 DashMap 缓存已解析的 TenantSupervisor。
+///
+/// 缓存 TTL 为 300s（5 分钟）——比 auth middleware 的 TenantCache TTL（60s）更长，
+/// 因为 TenantSupervisor 包含活跃 session 计数器等运行时状态，频繁重建会丢失计量数据。
 pub struct TenantRegistry {
     tenants: DashMap<String, Arc<TenantSupervisor>>,
-    cache_ttl: Duration,
+    cache_ttl: Duration,  // 默认 300s
 }
 
 impl TenantRegistry {
@@ -387,12 +390,24 @@ struct CachedContext {
 
 pub struct TenantCache {
     entries: DashMap<String, CachedContext>,
+    /// 每 N 次查询触发一次过期清理
+    check_counter: AtomicU64,
 }
 
 impl TenantCache {
-    pub fn get(&self, token: &str) -> Option<&CachedContext>;
-    pub fn insert(&self, token: String, ctx: CachedContext);
-    pub fn evict(&self, token: &str);
+    pub fn get(&self, token: &str) -> Option<TenantContext> {
+        // 每 1024 次查询触发一次全量清理（对齐 RateLimiter 模式）
+        if self.check_counter.fetch_add(1, Ordering::Relaxed) % 1024 == 0 {
+            let now = Instant::now();
+            self.entries.retain(|_, v| now.duration_since(v.cached_at) < Duration::from_secs(300));
+        }
+        self.entries.get(token)
+            .filter(|v| !v.is_stale(Duration::from_secs(60)))
+            .map(|v| v.ctx.clone())
+    }
+
+    pub fn insert(&self, token: String, ctx: TenantContext);
+    pub fn len(&self) -> usize;
 }
 ```
 
@@ -402,16 +417,39 @@ impl TenantCache {
 - `AppConfig.auth_secret` 字段（或标记 deprecated）
 - HMAC 相关依赖（若不再被其他模块使用）：`hmac`、`sha2` crate
 
-### 4.6 新增配置
+### 4.6 服务启动时 AppState 构建
+
+```rust
+// server.rs 或 main.rs 启动路径
+let aspectus_config = AspectusConfig::from_env()?;
+let reqwest_client = reqwest::Client::builder()
+    .timeout(Duration::from_millis(aspectus_config.timeout_ms))
+    .build()?;
+let aspectus = AspectusClient::with_reqwest(
+    &aspectus_config.base_url,
+    &aspectus_config.service_token,
+    reqwest_client,
+);
+
+let state = Arc::new(AppState {
+    tenant_manager,
+    config,
+    aspectus,
+    tenant_cache: TenantCache::new(),
+});
+```
+
+### 4.7 新增配置
 
 ```rust
 pub struct AspectusConfig {
-    /// Aspectus 服务 URL（默认 http://localhost:3100）
-    pub base_url: String,
-    /// api-gateway 的 Service Token（用于调用 /introspect）
-    pub service_token: String,
-    /// introspection 超时（默认 2s）
-    pub timeout_ms: u64,
+    pub base_url: String,        // ASPECTUS_BASE_URL，默认 http://localhost:3100
+    pub service_token: String,   // ASPECTUS_SERVICE_TOKEN，必填
+    pub timeout_ms: u64,         // ASPECTUS_TIMEOUT_MS，默认 2000
+}
+
+impl AspectusConfig {
+    pub fn from_env() -> Result<Self, GatewayError>;
 }
 ```
 
@@ -426,24 +464,27 @@ pub struct AspectusConfig {
 
 ### 5.1 `TenantManager` trait 签名
 
+> **⚠️ Breaking change**：`create_session` 的第一个参数从 `&str tenant_id` 改为 `&TenantContext`。
+> `TenantManager` 的唯一实现是 `TenantManagerImpl`（在 `tenant` crate 内部），
+> 唯一消费方是 `api-gateway`。没有其他下游项目受影响。
+
 ```rust
 #[async_trait]
 pub trait TenantManager: Send + Sync {
-    /// 创建 session（新增 tenant_context 参数）。
+    /// 创建 session。
+    ///
+    /// 从 `tenant_context` 中提取 tenant_id 和配额信息。
+    /// 其他方法（send_message, list_sessions 等）仍接受 `&str tenant_id`，
+    /// 因为这些操作在已有 session 上执行，不需要 Aspectus 上下文。
     async fn create_session(
         &self,
         tenant_context: &TenantContext,
         params: CreateSessionParams,
     ) -> Result<SessionInfo, TenantError>;
 
-    /// 其他方法不变（send_message, list_sessions, get_session, delete_session 等
-    /// 仍然接受 &str tenant_id — 因为这些操作在已有 session 上执行，
-    /// tenant_id 通过 route handler 从 TenantContext 提取后传入）。
+    // 其他方法不变...
 }
 ```
-
-> **设计说明**：只有 `create_session` 需要完整的 `TenantContext`（用于配额检查和 supervisor 创建）。
-> 其他方法仅需 `tenant_id` 查找已有 session，不需要 Aspectus 上下文。
 
 ### 5.2 `TenantManagerImpl` 实现
 
@@ -454,8 +495,14 @@ pub trait TenantManager: Send + Sync {
 ```rust
 impl TenantContext {
     pub fn from_introspect(response: &IntrospectResponse) -> Result<Self, TenantError> {
+        // 注：调用方（auth middleware）已检查 response.active，
+        // 此处仅防御性检查。若 active 为 true 但 tenant_id 为 None，
+        // 属于 Aspectus 的编程错误，使用 Internal 而非 IntrospectionInactive。
         let tenant_id = response.tenant_id.clone()
-            .ok_or(TenantError::IntrospectionInactive)?;
+            .ok_or_else(|| TenantError::Internal {
+                tenant_id: "unknown".into(),
+                message: "active token has no tenant_id — Aspectus server bug".into(),
+            })?;
 
         // 从 quotas HashMap 中提取 pandaria 配置
         let pandaria_quotas = response.quotas.as_ref()
@@ -477,12 +524,30 @@ impl TenantContext {
 }
 ```
 
-### 5.4 `TenantQuota::from_aspectus_quotas()` 设计说明
+### 5.4 `TenantQuota::from_aspectus_quotas()` 设计
 
-该方法为**不可失败**（infallible）——对缺失的个别配额字段使用合理默认值。
-而 `TenantContext::from_introspect()` 为**可失败**——仅在 `quotas.pandaria` key 完全缺失时返回错误。
+该方法为**可失败**（fallible）——当 `quotas.pandaria` 存在但值为非 JSON object（如字符串、数字、数组）时返回 `InvalidQuotasFormat`。
 
-理由：`pandaria` key 缺失 = 租户未授权使用 Pandaria（硬错误）；个别字段缺失 = Aspectus schema 演进（软降级）。
+```rust
+impl TenantQuota {
+    pub fn from_aspectus_quotas(quotas: &serde_json::Value) -> Result<Self, TenantError> {
+        let obj = quotas.as_object()
+            .ok_or_else(|| TenantError::InvalidQuotasFormat(
+                "quotas.pandaria must be a JSON object".into()
+            ))?;
+
+        Ok(Self {
+            max_concurrent_sessions: extract_u32(obj, "max_concurrent_sessions", 10),
+            max_tokens_per_day: extract_u64(obj, "max_tokens_per_day", 1_000_000),
+            max_tool_calls_per_minute: extract_u32(obj, "max_tool_calls_per_minute", 60),
+            cpu_time_budget_ms_per_day: extract_u64(obj, "cpu_time_budget_ms_per_day", 3_600_000),
+        })
+    }
+}
+```
+
+> **设计理由**：`pandaria` key 存在但值类型错误 = 配置错误（硬错误，返回 `InvalidQuotasFormat`）。
+> 个别字段缺失 = Aspectus schema 演进（软降级，使用默认值）。
 
 ### 5.5 无变更的模块
 
@@ -559,7 +624,12 @@ impl TenantContext {
 
 ### Phase 2: api-gateway 认证切换 + 清理本地注册（合并）
 
-1. 新增 `aspectus-client` 路径依赖到 `api-gateway/Cargo.toml`（`path = "../../Aspectus/crates/aspectus-client"`）
+> **降低风险**：使用 Cargo feature flag `aspectus-auth` 门控新认证路径。
+> Phase 1 在 `api-gateway/Cargo.toml` 中新增 `aspectus-auth` feature（默认关闭），
+> 所有新代码放在 `#[cfg(feature = "aspectus-auth")]` 下。
+> Phase 2 将 feature 设为默认开启，验证通过后移除 feature gate。
+
+1. 新增 `aspectus-client` 路径依赖到 `api-gateway/Cargo.toml`（`path = "../../Aspectus/crates/aspectus-client"`），置于 `aspectus-auth` feature gate 下
 2. 新增 `AspectusConfig` 和环境变量
 3. 实现 `introspect_with_retry()` 封装（指数退避 2 次）
 4. 实现 `TenantCache`（DashMap<String, CachedContext>，TTL 60s）
