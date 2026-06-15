@@ -2,13 +2,15 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use crate::context::TenantContext;
 use crate::error::TenantError;
 use crate::meter::SlidingWindowMeter;
 use crate::tenant::{QuotaCheck, Tenant, TenantQuota};
 
 /// Per-tenant resource supervisor. Tracks active sessions and usage meters.
 pub struct TenantSupervisor {
-    tenant: Tenant,
+    tenant_id: String,
+    quota: TenantQuota,
     active_sessions: AtomicUsize,
     token_meter: SlidingWindowMeter,     // 24h window
     tool_call_meter: SlidingWindowMeter, // 1min window
@@ -50,7 +52,20 @@ impl Drop for SessionGuard {
 impl TenantSupervisor {
     pub fn new(tenant: Tenant) -> Self {
         Self {
-            tenant,
+            tenant_id: tenant.id,
+            quota: tenant.quota,
+            active_sessions: AtomicUsize::new(0),
+            token_meter: SlidingWindowMeter::new(Duration::from_secs(86400)),
+            tool_call_meter: SlidingWindowMeter::new(Duration::from_secs(60)),
+            cpu_time_meter: SlidingWindowMeter::new(Duration::from_secs(86400)),
+        }
+    }
+
+    /// Create supervisor from Aspectus TenantContext.
+    pub fn from_context(ctx: &TenantContext) -> Self {
+        Self {
+            tenant_id: ctx.tenant_id.clone(),
+            quota: ctx.quotas,
             active_sessions: AtomicUsize::new(0),
             token_meter: SlidingWindowMeter::new(Duration::from_secs(86400)),
             tool_call_meter: SlidingWindowMeter::new(Duration::from_secs(60)),
@@ -59,18 +74,18 @@ impl TenantSupervisor {
     }
 
     pub fn tenant_id(&self) -> &str {
-        &self.tenant.id
+        &self.tenant_id
     }
 
     /// Attempt to reserve a session slot. Returns a `SessionGuard` that auto-releases on drop.
     /// Fails if at capacity.
     pub fn reserve_session(self: &Arc<Self>) -> Result<SessionGuard, TenantError> {
         let current = self.active_sessions.fetch_add(1, Ordering::SeqCst) + 1;
-        if current > self.tenant.quota.max_concurrent_sessions as usize {
+        if current > self.quota.max_concurrent_sessions as usize {
             self.active_sessions.fetch_sub(1, Ordering::SeqCst);
             return Err(TenantError::SessionLimitExceeded {
-                tenant_id: self.tenant.id.clone(),
-                max: self.tenant.quota.max_concurrent_sessions,
+                tenant_id: self.tenant_id.clone(),
+                max: self.quota.max_concurrent_sessions,
                 current: (current - 1) as u32,
             });
         }
@@ -109,30 +124,30 @@ impl TenantSupervisor {
         match check {
             QuotaCheck::SessionCreation => {
                 let current = self.active_sessions.load(Ordering::SeqCst) as u32;
-                if current >= self.tenant.quota.max_concurrent_sessions {
+                if current >= self.quota.max_concurrent_sessions {
                     return Err(TenantError::SessionLimitExceeded {
-                        tenant_id: self.tenant.id.clone(),
-                        max: self.tenant.quota.max_concurrent_sessions,
+                        tenant_id: self.tenant_id.clone(),
+                        max: self.quota.max_concurrent_sessions,
                         current,
                     });
                 }
             }
             QuotaCheck::ToolCall => {
                 let calls = self.tool_call_meter.count();
-                if calls >= self.tenant.quota.max_tool_calls_per_minute as usize {
+                if calls >= self.quota.max_tool_calls_per_minute as usize {
                     return Err(TenantError::ToolCallRateLimitExceeded {
-                        tenant_id: self.tenant.id.clone(),
+                        tenant_id: self.tenant_id.clone(),
                         calls,
                     });
                 }
             }
             QuotaCheck::TokenUsage { input, output } => {
                 let total = self.token_meter.sum() + input + output;
-                if total > self.tenant.quota.max_tokens_per_day {
+                if total > self.quota.max_tokens_per_day {
                     return Err(TenantError::TokenBudgetExceeded {
-                        tenant_id: self.tenant.id.clone(),
+                        tenant_id: self.tenant_id.clone(),
                         consumed: self.token_meter.sum(),
-                        budget: self.tenant.quota.max_tokens_per_day,
+                        budget: self.quota.max_tokens_per_day,
                     });
                 }
             }
@@ -143,7 +158,7 @@ impl TenantSupervisor {
     /// Get current quota consumption snapshot.
     pub fn quota_status(&self) -> QuotaStatus {
         QuotaStatus {
-            tenant_id: self.tenant.id.clone(),
+            tenant_id: self.tenant_id.clone(),
             active_sessions: self.active_sessions.load(Ordering::SeqCst) as u32,
             tokens_consumed: self.token_meter.sum(),
             tool_calls_in_window: self.tool_call_meter.count(),
@@ -153,7 +168,7 @@ impl TenantSupervisor {
 
     /// Return the tenant's quota configuration.
     pub fn quota(&self) -> &TenantQuota {
-        &self.tenant.quota
+        &self.quota
     }
 
     /// Return the number of currently active sessions.
@@ -163,6 +178,65 @@ impl TenantSupervisor {
 
     /// Return the maximum allowed concurrent sessions.
     pub fn max_concurrent_sessions(&self) -> usize {
-        self.tenant.quota.max_concurrent_sessions as usize
+        self.quota.max_concurrent_sessions as usize
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_context_creates_supervisor_with_correct_fields() {
+        let ctx = TenantContext {
+            tenant_id: "acme".into(),
+            user_id: Some("user-1".into()),
+            scopes: vec!["pandaria:session:create".into()],
+            quotas: TenantQuota {
+                max_concurrent_sessions: 20,
+                max_tokens_per_day: 2_000_000,
+                max_tool_calls_per_minute: 100,
+                cpu_time_budget_ms_per_day: 7_200_000,
+            },
+            cached_at: std::time::Instant::now(),
+        };
+
+        let supervisor = TenantSupervisor::from_context(&ctx);
+
+        assert_eq!(supervisor.tenant_id(), "acme");
+        assert_eq!(supervisor.quota().max_concurrent_sessions, 20);
+        assert_eq!(supervisor.quota().max_tokens_per_day, 2_000_000);
+        assert_eq!(supervisor.quota().max_tool_calls_per_minute, 100);
+        assert_eq!(supervisor.quota().cpu_time_budget_ms_per_day, 7_200_000);
+        assert_eq!(supervisor.active_session_count(), 0);
+    }
+
+    #[test]
+    fn from_context_and_new_produce_equivalent_supervisors() {
+        let tenant = Tenant::new(
+            "acme",
+            TenantQuota {
+                max_concurrent_sessions: 10,
+                max_tokens_per_day: 500_000,
+                max_tool_calls_per_minute: 30,
+                cpu_time_budget_ms_per_day: 1_800_000,
+            },
+        );
+
+        let from_new = TenantSupervisor::new(tenant.clone());
+
+        let ctx = TenantContext {
+            tenant_id: tenant.id.clone(),
+            user_id: None,
+            scopes: vec![],
+            quotas: tenant.quota,
+            cached_at: std::time::Instant::now(),
+        };
+
+        let from_ctx = TenantSupervisor::from_context(&ctx);
+
+        assert_eq!(from_new.tenant_id(), from_ctx.tenant_id());
+        assert_eq!(from_new.quota(), from_ctx.quota());
+        assert_eq!(from_new.active_session_count(), from_ctx.active_session_count());
     }
 }
