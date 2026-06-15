@@ -401,6 +401,54 @@ impl AspectusMock {
             .mount(&self.server)
             .await;
     }
+
+    /// Mock introspection that returns different tenants based on the token value.
+    /// Takes a map of token → (tenant_id, max_sessions).
+    /// Each request's `token` form field is matched against the map keys.
+    pub async fn mock_tenants(
+        &self,
+        tenants: &[(&str, &str, u32)],
+    ) {
+        use std::collections::HashMap;
+
+        let responses: HashMap<String, serde_json::Value> = tenants
+            .iter()
+            .map(|(token, tenant_id, max_sessions)| {
+                (token.to_string(), serde_json::json!({
+                    "active": true,
+                    "tenant_id": tenant_id,
+                    "user_id": "test-user",
+                    "scope": "pandaria:session:create pandaria:session:read",
+                    "quotas": {
+                        "pandaria": {
+                            "max_concurrent_sessions": max_sessions,
+                            "max_tokens_per_day": 1000000,
+                            "max_tool_calls_per_minute": 60,
+                            "cpu_time_budget_ms_per_day": 3600000
+                        }
+                    }
+                }))
+            })
+            .collect();
+
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/introspect"))
+            .respond_with(move |req: &wiremock::Request| {
+                // Parse the form body to extract the token
+                let body = String::from_utf8_lossy(&req.body);
+                for (token, response) in &responses {
+                    if body.contains(&format!("token={}", token)) {
+                        return wiremock::ResponseTemplate::new(200)
+                            .set_body_json(response.clone());
+                    }
+                }
+                // Unknown token → inactive
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"active": false}))
+            })
+            .mount(&self.server)
+            .await;
+    }
 }
 
 /// Build a test app with Aspectus auth enabled (internal driver).

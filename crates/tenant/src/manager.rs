@@ -540,15 +540,28 @@ impl TenantManager for TenantManagerImpl {
             .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?
             .1;
 
+        // Immediately drop the session guard to release the slot BEFORE
+        // any async operations. This ensures concurrent requests can
+        // acquire the slot without waiting for graceful shutdown.
+        let (actor, abort_token, _guard, _info, _bridge, _turn_counter) = (
+            entry.actor,
+            entry.abort_token,
+            entry._guard,
+            entry.info,
+            entry.bridge,
+            entry.turn_counter,
+        );
+        drop(_guard); // slot released here
+
         // Gracefully shut down the actor so buffered events are drained
         // (e.g. webhook deliveries) before the session is dropped.
         {
-            let mut actor = entry.actor.lock().await;
+            let mut actor = actor.lock().await;
             actor.shutdown().await;
         }
 
         // Cancel any in-flight operation.
-        entry.abort_token.lock().expect("abort_token lock poisoned").cancel();
+        abort_token.lock().expect("abort_token lock poisoned").cancel();
 
         // Notify external memory system of session deletion (optional).
         if let Some(ref mem) = self.runtime_config.memory_store {

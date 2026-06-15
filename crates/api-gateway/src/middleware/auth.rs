@@ -75,8 +75,13 @@ pub async fn auth_middleware(
         _ => GatewayError::Internal(e.to_string()),
     })?;
 
-    // Cache and inject
+    // Cache and inject. Also ensure supervisor exists in registry for all routes.
     state.tenant_cache.insert(token_str.to_string(), ctx.clone());
+    // Ensure tenant supervisor exists (required by get_quota, batch_create, etc.)
+    if let Err(e) = state.registry.resolve_or_insert(&ctx) {
+        tracing::error!(error = %e, tenant_id = %ctx.tenant_id, "failed to resolve tenant");
+        return Err(GatewayError::Internal(e.to_string()));
+    }
     req.extensions_mut().insert(TenantId(ctx.tenant_id.clone()));
     req.extensions_mut().insert(ctx.clone());
 
