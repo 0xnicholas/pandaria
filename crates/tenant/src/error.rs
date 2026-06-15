@@ -36,4 +36,8 @@ pub enum TenantError {
 
     #[error("internal error: {message}")]
     Internal { tenant_id: String, message: String },
+
+    /// quotas.pandaria JSON has invalid format.
+    #[error("invalid quotas format in introspection response: {0}")]
+    InvalidQuotasFormat(String),
 }
