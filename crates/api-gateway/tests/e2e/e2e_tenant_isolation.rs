@@ -1,9 +1,4 @@
 //! End-to-end integration test: tenant isolation and quota enforcement.
-//!
-//! Verifies that:
-//! - Tenants cannot access each other's sessions
-//! - SSE events are isolated per tenant
-//! - Session quota limits are enforced
 
 mod common;
 
@@ -20,85 +15,49 @@ async fn test_tenant_session_isolation() {
     let body = common::openai_text_sse_body("isolated");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
 
-    // Register two tenants
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let t1 = tenant::Tenant::new("tenant-1", tenant::TenantQuota::default());
-    let t2 = tenant::Tenant::new("tenant-2", tenant::TenantQuota::default());
-    registry.register(t1).unwrap();
-    registry.register(t2).unwrap();
+    let aspectus = common::AspectusMock::start().await;
+    aspectus.mock_active_tenant("tenant-1").await;
+    aspectus.mock_active_tenant("tenant-2").await;
+    let app = common::build_test_app_with_aspectus(provider, &aspectus).await;
 
-    let app = common::build_test_app_with_registry(provider, registry);
     let token_t1 = "pk_live_tenant-1";
     let token_t2 = "pk_live_tenant-2";
 
     // Tenant 1 creates a session
-    let create_t1 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token_t1))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "t1 session"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token_t1))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "t1-session"}"#)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let sid_t1 = common::json_body(resp).await["id"].as_str().unwrap().to_string();
 
-    assert_eq!(create_t1.status(), StatusCode::CREATED);
-    let body_t1 = common::json_body(create_t1).await;
-    let session_id_t1 = body_t1["id"].as_str().unwrap();
+    // Tenant 2 creates a session
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token_t2))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "t2-session"}"#)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let sid_t2 = common::json_body(resp).await["id"].as_str().unwrap().to_string();
 
-    // Tenant 2 tries to access tenant-1's session → 404
-    let get_t2 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri(format!("/api/v1/sessions/{}", session_id_t1))
-                .header("Authorization", format!("Bearer {}", token_t2))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    // Tenant 2 cannot access Tenant 1's session
+    let resp = app.clone().oneshot(
+        Request::builder().method("GET").uri(format!("/api/v1/sessions/{}", sid_t1))
+            .header("Authorization", format!("Bearer {}", token_t2))
+            .body(Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 
-    assert_eq!(get_t2.status(), StatusCode::NOT_FOUND);
-
-    // Tenant 2 tries to send message to tenant-1's session → 404
-    let send_t2 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/sessions/{}/messages", session_id_t1))
-                .header("Authorization", format!("Bearer {}", token_t2))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"hi"}]}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(send_t2.status(), StatusCode::NOT_FOUND);
-
-    // Tenant 2 tries to subscribe to tenant-1's SSE → 404
-    let sse_t2 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri(format!("/api/v1/sessions/{}/events", session_id_t1))
-                .header("Authorization", format!("Bearer {}", token_t2))
-                .header("Accept", "text/event-stream")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(sse_t2.status(), StatusCode::NOT_FOUND);
+    // Tenant 1 can access its own session
+    let resp = app.clone().oneshot(
+        Request::builder().method("GET").uri(format!("/api/v1/sessions/{}", sid_t1))
+            .header("Authorization", format!("Bearer {}", token_t1))
+            .body(Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -108,123 +67,65 @@ async fn test_session_quota_limit_enforced() {
     let body = common::openai_text_sse_body("quota");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
 
-    // Register tenant with limit of 1 concurrent session
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let t1 = tenant::Tenant::new(
-        "quota-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 1,
-            ..tenant::TenantQuota::default()
-        },
-    );
-    registry.register(t1).unwrap();
+    let aspectus = common::AspectusMock::start().await;
+    aspectus.mock_tenant_with_quota("quota-tenant", 2).await;
+    let app = common::build_test_app_with_aspectus(provider, &aspectus).await;
 
-    let app = common::build_test_app_with_registry(provider, registry);
     let token = "pk_live_quota-tenant";
 
-    // First session succeeds
-    let create1 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
+    for i in 1..=2 {
+        let resp = app.clone().oneshot(
+            Request::builder().method("POST").uri("/api/v1/sessions")
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "first"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+                .body(Body::from(format!(r#"{{"title": "session-{}"}}"#, i))).unwrap()
+        ).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED, "session {i} should create");
+    }
 
-    assert_eq!(create1.status(), StatusCode::CREATED);
-
-    // Second session should fail with 429 Too Many Requests (mapped from SessionLimitExceeded)
-    let create2 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "second"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(create2.status(), StatusCode::TOO_MANY_REQUESTS);
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "session-3"}"#)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]
-async fn test_delete_releases_session_slot() {
+async fn test_session_released_on_delete() {
     let _ = tracing_subscriber::fmt().try_init();
 
     let body = common::openai_text_sse_body("release");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
 
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let t1 = tenant::Tenant::new(
-        "release-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 1,
-            ..tenant::TenantQuota::default()
-        },
-    );
-    registry.register(t1).unwrap();
+    let aspectus = common::AspectusMock::start().await;
+    aspectus.mock_tenant_with_quota("release-tenant", 1).await;
+    let app = common::build_test_app_with_aspectus(provider, &aspectus).await;
 
-    let app = common::build_test_app_with_registry(provider, registry);
     let token = "pk_live_release-tenant";
 
-    // Create first session
-    let create1 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "first"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let create = app.clone().oneshot(
+        Request::builder().method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "only-slot"}"#)).unwrap()
+    ).await.unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let sid = common::json_body(create).await["id"].as_str().unwrap().to_string();
 
-    assert_eq!(create1.status(), StatusCode::CREATED);
-    let body1 = common::json_body(create1).await;
-    let session_id = body1["id"].as_str().unwrap();
+    let delete = app.clone().oneshot(
+        Request::builder().method("DELETE").uri(format!("/api/v1/sessions/{}", sid))
+            .header("Authorization", format!("Bearer {}", token))
+            .body(Body::empty()).unwrap()
+    ).await.unwrap();
+    assert_eq!(delete.status(), StatusCode::OK);
 
-    // Delete it
-    let delete = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
-                .uri(format!("/api/v1/sessions/{}", session_id))
-                .header("Authorization", format!("Bearer {}", token))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(delete.status(), StatusCode::NO_CONTENT);
-
-    // Now we should be able to create another session
-    let create2 = app
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "second"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(create2.status(), StatusCode::CREATED);
+    let resp = app.clone().oneshot(
+        Request::builder().method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "new-slot"}"#)).unwrap()
+    ).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
 }

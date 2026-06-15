@@ -43,7 +43,7 @@ async fn test_compaction_persistence() {
         provider.clone(),
         store.clone(),
         compaction_config,
-    );
+    ).await;
     let token = "pk_live_test-tenant";
 
     // Create session

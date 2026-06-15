@@ -27,7 +27,7 @@ async fn test_session_limit_enforced_from_aspectus_quota() {
         ),
     );
 
-    let router = build_test_app_with_aspectus(provider, aspectus.base_url()).await;
+    let router = build_test_app_with_aspectus(provider, &aspectus).await;
 
     // First session: should succeed
     let resp1 = router

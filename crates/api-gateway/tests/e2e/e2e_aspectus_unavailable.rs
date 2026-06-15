@@ -25,7 +25,7 @@ async fn test_aspectus_unavailable_returns_503() {
     );
 
     // Use a port that likely has nothing listening
-    let router = build_test_app_with_aspectus(provider, "http://127.0.0.1:19999".to_string()).await;
+    let router = common::build_test_app_with_aspectus_url(provider, "http://127.0.0.1:19999".to_string()).await;
 
     let resp = router
         .oneshot(
@@ -54,7 +54,7 @@ async fn test_aspectus_server_error_returns_503() {
         ),
     );
 
-    let router = build_test_app_with_aspectus(provider, aspectus.base_url()).await;
+    let router = common::build_test_app_with_aspectus(provider, &aspectus).await;
 
     let resp = router
         .oneshot(

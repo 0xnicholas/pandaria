@@ -225,45 +225,24 @@ impl TenantManager for MockTenantManager {
     }
 }
 
-/// Build a test router with the mock tenant manager and a test auth secret.
+/// Build a test router with the mock tenant manager.
+/// NOTE: The router still uses Aspectus auth middleware (default feature).
+/// For tests that call the router directly, use `test_token` to pass a valid-looking token.
 pub fn test_router() -> axum::Router {
+    use api_gateway::config::AspectusConfig;
     let manager = Arc::new(MockTenantManager::new()) as Arc<dyn TenantManager>;
-    let config = ServerConfig {
-        auth_secret: secrecy::SecretString::from("test-secret-32-chars-long!!!"),
-        ..Default::default()
+    let registry = Arc::new(tenant::TenantRegistry::new());
+    let config = ServerConfig::default();
+    let aspectus_config = AspectusConfig {
+        base_url: "http://localhost:1".into(),
+        service_token: "test".into(),
+        timeout_ms: 100,
     };
-    let state = Arc::new(AppState::new(manager, config));
+    let state = Arc::new(AppState::new(manager, config, registry, &aspectus_config).unwrap());
     api_gateway::build_router(state)
 }
 
-/// Create a valid test token signed with the test secret.
-pub fn test_token(tenant_id: &str) -> String {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let payload = serde_json::json!({
-        "tenant_id": tenant_id,
-        "iat": now,
-        "exp": now + 86400,
-    });
-    let payload_json = serde_json::to_vec(&payload).unwrap();
-    let payload_b64 = base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        &payload_json,
-    );
-
-    let mut mac = Hmac::<Sha256>::new_from_slice(b"test-secret-32-chars-long!!!").unwrap();
-    mac.update(&payload_json);
-    let signature = mac.finalize().into_bytes();
-    let sig_b64 = base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        &signature,
-    );
-
-    format!("{}.{}", payload_b64, sig_b64)
+/// Simple test token string for use in Authorization headers.
+pub fn test_token(_tenant_id: &str) -> String {
+    "pk_live_test".to_string()
 }

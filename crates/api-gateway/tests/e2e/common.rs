@@ -411,6 +411,43 @@ pub async fn build_test_app_with_aspectus(
     build_test_app_with_aspectus_impl(provider, None, aspectus).await
 }
 
+/// Build a test app pointing at a raw Aspectus URL (for unavailable/scenario tests).
+pub async fn build_test_app_with_aspectus_url(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    aspectus_url: String,
+) -> Router {
+    let registry = Arc::new(tenant::TenantRegistry::new());
+    let runtime_config = Arc::new(agent_core::HarnessConfig {
+        provider,
+        default_model: "gpt-4".to_string(),
+        default_system_prompt: "You are a helpful assistant.".to_string(),
+        default_context_window: 128_000,
+        store: None,
+        media_provider: None,
+        media_registry: None,
+        http_client: reqwest::Client::new(),
+        available_models: vec!["gpt-4".to_string()],
+        compaction_config: agent_core::CompactionConfig::default(),
+        agent_space: agent_core::AgentSpace::default(),
+        hook_config: agent_core::HookConfig::default(),
+        memory_store: None,
+    });
+    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
+    );
+    let config = api_gateway::ServerConfig::default();
+    let aspectus_config = api_gateway::config::AspectusConfig {
+        base_url: aspectus_url,
+        service_token: "test-service-token".into(),
+        timeout_ms: 2000,
+    };
+    let state = Arc::new(
+        api_gateway::AppState::new(manager, config, registry, &aspectus_config)
+            .expect("build test app state"),
+    );
+    api_gateway::build_router(state)
+}
+
 /// Build with a custom HTTP client.
 pub async fn build_test_app_with_aspectus_and_client(
     provider: Arc<dyn ai_provider::LlmProvider>,

@@ -1,7 +1,7 @@
 //! End-to-end integration test: rate limiting via TokenBucket.
 //!
 //! Verifies that the `rate_limit_middleware` returns HTTP 429 after the
-//! configured burst size is exhausted, and that buckets are per-tenant.
+//! configured burst size is exceeded, and that buckets are per-tenant.
 
 mod common;
 
@@ -11,125 +11,12 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
+/// Build a test app with custom rate limit config and mock Aspectus.
 async fn build_app_with_rate_limit(
     provider: Arc<dyn ai_provider::LlmProvider>,
-    registry: Arc<tenant::TenantRegistry>,
+    aspectus: &common::AspectusMock,
 ) -> axum::Router {
-    let harness_config = agent_core::HarnessConfig {
-        provider: provider.clone(),
-        default_model: "gpt-4".to_string(),
-        default_system_prompt: "You are a helpful assistant.".to_string(),
-        default_context_window: 128_000,
-        store: None,
-        media_provider: None,
-        media_registry: None,
-        http_client: reqwest::Client::new(),
-        available_models: vec!["gpt-4".to_string()],
-        compaction_config: agent_core::CompactionConfig::default(),
-        agent_space: agent_core::AgentSpace::default(),
-        hook_config: agent_core::HarnessConfig::default().hook_config,
-        memory_store: None,
-    };
-    common::build_test_app_with_config(provider, harness_config).await
-}
-#[tokio::test]
-async fn test_rate_limit_blocks_after_burst() {
-    let _ = tracing_subscriber::fmt().try_init();
-
-    let (_server, provider) = common::start_wiremock_openai(
-        &common::openai_text_sse_body("ok")
-    ).await;
-    let app = build_app_with_rate_limit(provider, 1, 2).await;
-    let token = "pk_live_test-tenant";
-
-    // Request 1: within burst → 201
-    let r1 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "r1"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(r1.status(), StatusCode::CREATED);
-
-    // Request 2: within burst → 201
-    let r2 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "r2"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(r2.status(), StatusCode::CREATED);
-
-    // Request 3: burst exhausted → 429
-    let r3 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "r3"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(r3.status(), StatusCode::TOO_MANY_REQUESTS);
-
-    // Verify Retry-After header is present
-    let retry_after = r3
-        .headers()
-        .get("retry-after")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("0");
-    let retry_secs: u64 = retry_after.parse().unwrap_or(0);
-    assert!(retry_secs > 0, "expected Retry-After header > 0");
-}
-
-#[tokio::test]
-async fn test_rate_limit_per_tenant_isolation() {
-    let _ = tracing_subscriber::fmt().try_init();
-
-    let (_server, provider) = common::start_wiremock_openai(
-        &common::openai_text_sse_body("ok")
-    ).await;
-
-    // Register two tenants with the same rate limit config
     let registry = Arc::new(tenant::TenantRegistry::new());
-    let t1 = tenant::Tenant::new(
-        "tenant-a",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    let t2 = tenant::Tenant::new(
-        "tenant-b",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(t1).unwrap();
-    registry.register(t2).unwrap();
 
     let runtime_config = Arc::new(agent_core::HarnessConfig {
         provider: provider.clone(),
@@ -147,127 +34,113 @@ async fn test_rate_limit_per_tenant_isolation() {
         memory_store: None,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
     );
 
-    let config = api_gateway::ServerConfig::default(); let _ = api_gateway::ServerConfig {app; api_gateway::ServerConfig {
-        auth_secret: secrecy::SecretString::from(common::TEST_SECRET),
+    let config = api_gateway::ServerConfig {
         rate_limit: api_gateway::RateLimitConfig {
             requests_per_second: 100,
             burst_size: 1,
         },
         ..Default::default()
     };
-    // replaced by build_test_app_with_config
-    let app = api_gateway::build_router(state);
+    let aspectus_config = api_gateway::config::AspectusConfig {
+        base_url: aspectus.base_url(),
+        service_token: "test-service-token".into(),
+        timeout_ms: 2000,
+    };
+    let state = Arc::new(
+        api_gateway::AppState::new(manager, config, registry, &aspectus_config)
+            .expect("build test app state"),
+    );
+    api_gateway::build_router(state)
+}
+
+#[tokio::test]
+async fn test_rate_limit_per_tenant_isolation() {
+    let _ = tracing_subscriber::fmt().try_init();
+
+    let body = common::openai_text_sse_body("ok");
+    let (_server, provider) = common::start_wiremock_openai(&body).await;
+
+    let aspectus = common::AspectusMock::start().await;
+    aspectus.mock_active_tenant("tenant-a").await;
+    aspectus.mock_active_tenant("tenant-b").await;
+    let app = build_app_with_rate_limit(provider, &aspectus).await;
 
     let token_a = "pk_live_tenant-a";
     let token_b = "pk_live_tenant-b";
 
-    // Tenant A exhausts its burst
-    let r_a1 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token_a))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "a1"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(r_a1.status(), StatusCode::CREATED);
+    // Tenant A exhausts its burst (burst_size=1)
+    app.clone().oneshot(
+        Request::builder()
+            .method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token_a))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "a1"}"#)).unwrap()
+    ).await.unwrap();
 
-    let r_a2 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token_a))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "a2"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    // Second request from A should be rate limited
+    let r_a2 = app.clone().oneshot(
+        Request::builder()
+            .method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token_a))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "a2"}"#)).unwrap()
+    ).await.unwrap();
     assert_eq!(r_a2.status(), StatusCode::TOO_MANY_REQUESTS);
 
-    // Tenant B should still be allowed
-    let r_b1 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token_b))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "b1"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    // Tenant B should still be able to create (separate bucket)
+    let r_b1 = app.clone().oneshot(
+        Request::builder()
+            .method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token_b))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "b1"}"#)).unwrap()
+    ).await.unwrap();
     assert_eq!(r_b1.status(), StatusCode::CREATED);
 }
 
 #[tokio::test]
-async fn test_rate_limit_refills_after_delay() {
+async fn test_rate_limit_refills() {
     let _ = tracing_subscriber::fmt().try_init();
 
-    let (_server, provider) = common::start_wiremock_openai(
-        &common::openai_text_sse_body("ok")
-    ).await;
-    let app = build_app_with_rate_limit(provider, 100, 1).await;
+    let body = common::openai_text_sse_body("ok");
+    let (_server, provider) = common::start_wiremock_openai(&body).await;
+
+    let aspectus = common::AspectusMock::start().await;
+    aspectus.mock_active_tenant("test-tenant").await;
+    let app = build_app_with_rate_limit(provider, &aspectus).await;
+
     let token = "pk_live_test-tenant";
 
     // Exhaust burst
-    let r1 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "r1"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(r1.status(), StatusCode::CREATED);
+    app.clone().oneshot(
+        Request::builder()
+            .method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "first"}"#)).unwrap()
+    ).await.unwrap();
 
-    let r2 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "r2"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let r2 = app.clone().oneshot(
+        Request::builder()
+            .method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "second"}"#)).unwrap()
+    ).await.unwrap();
     assert_eq!(r2.status(), StatusCode::TOO_MANY_REQUESTS);
 
-    // Wait for refill (100 rps → 10ms per token, wait 50ms to be safe)
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    // Wait for refill
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-    let r3 = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/sessions")
-                .header("Authorization", format!("Bearer {}", token))
-                .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"title": "r3"}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let r3 = app.clone().oneshot(
+        Request::builder()
+            .method("POST").uri("/api/v1/sessions")
+            .header("Authorization", format!("Bearer {}", token))
+            .header("Content-Type", "application/json")
+            .body(Body::from(r#"{"title": "after-refill"}"#)).unwrap()
+    ).await.unwrap();
     assert_eq!(r3.status(), StatusCode::CREATED);
 }

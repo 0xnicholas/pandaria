@@ -26,7 +26,7 @@ async fn test_create_session_with_aspectus_auth() {
         ),
     );
 
-    let router = build_test_app_with_aspectus(provider, aspectus.base_url()).await;
+    let router = build_test_app_with_aspectus(provider, &aspectus).await;
 
     let resp = router
         .oneshot(
@@ -60,7 +60,7 @@ async fn test_inactive_token_rejected() {
         ),
     );
 
-    let router = build_test_app_with_aspectus(provider, aspectus.base_url()).await;
+    let router = build_test_app_with_aspectus(provider, &aspectus).await;
 
     let resp = router
         .oneshot(
@@ -89,7 +89,7 @@ async fn test_no_pandaria_quota_rejected() {
         ),
     );
 
-    let router = build_test_app_with_aspectus(provider, aspectus.base_url()).await;
+    let router = build_test_app_with_aspectus(provider, &aspectus).await;
 
     let resp = router
         .oneshot(

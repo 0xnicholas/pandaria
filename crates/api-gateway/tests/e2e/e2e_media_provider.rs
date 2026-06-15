@@ -65,7 +65,7 @@ use tokio_util::sync::CancellationToken;
 async fn build_app_with_media(
     provider: Arc<dyn ai_provider::LlmProvider>,
     media_provider: Option<Arc<dyn ai_provider::media::MediaProvider>>,
-    media_registry: Option<Arc<dyn ai_provider::media::MediaGenerationRegistry>>,
+    media_registry: Option<Arc<ai_provider::MediaModelRegistry>>,
 ) -> axum::Router {
     let harness_config = agent_core::HarnessConfig {
         provider: provider.clone(),
@@ -146,7 +146,7 @@ async fn test_media_generation_returns_inline_image() {
     let (_server, provider) = common::start_wiremock_openai_dynamic(responder).await;
     let media_provider: Arc<dyn ai_provider::media::MediaProvider> =
         Arc::new(MockMediaProvider::new(media_response));
-    let app = build_app_with_media(provider, media_provider).await;
+    let app = build_app_with_media(provider, Some(media_provider), None).await;
     let token = "pk_live_test-tenant";
 
     let create = app
@@ -263,7 +263,7 @@ async fn test_media_generation_saves_large_image_to_workspace() {
     let (_server, provider) = common::start_wiremock_openai_dynamic(responder).await;
     let media_provider: Arc<dyn ai_provider::media::MediaProvider> =
         Arc::new(MockMediaProvider::new(media_response));
-    let app = build_app_with_media(provider, media_provider).await;
+    let app = build_app_with_media(provider, Some(media_provider), None).await;
     let token = "pk_live_test-tenant";
 
     let create = app
