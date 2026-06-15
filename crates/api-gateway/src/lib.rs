@@ -15,6 +15,8 @@ pub mod tavern_tools;
 pub mod types;
 
 pub use config::{RateLimitConfig, ServerConfig};
+#[cfg(feature = "aspectus-auth")]
+pub use config::AspectusConfig;
 pub use server::{AppState, build_router, serve};
 pub use types::{
     ApiError, CreateSessionRequest, ErrorBody, SendMessageRequest, SendMessageResponse,

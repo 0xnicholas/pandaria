@@ -408,3 +408,159 @@ pub async fn create_test_pg_store() -> PgSessionStore {
     store.init().await.expect("pg init failed");
     store
 }
+
+// ── Aspectus Integration Test Helpers ──
+
+#[cfg(feature = "aspectus-auth")]
+/// Mock Aspectus server backed by wiremock.
+pub struct AspectusMock {
+    pub server: wiremock::MockServer,
+}
+
+#[cfg(feature = "aspectus-auth")]
+impl AspectusMock {
+    pub async fn start() -> Self {
+        Self {
+            server: wiremock::MockServer::start().await,
+        }
+    }
+
+    pub fn base_url(&self) -> String {
+        self.server.uri()
+    }
+
+    /// Mock a successful introspection response for a tenant.
+    pub async fn mock_active_tenant(&self, tenant_id: &str) {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/introspect"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "active": true,
+                    "tenant_id": tenant_id,
+                    "user_id": "test-user",
+                    "scope": "pandaria:session:create pandaria:session:read",
+                    "quotas": {
+                        "pandaria": {
+                            "max_concurrent_sessions": 10,
+                            "max_tokens_per_day": 1000000,
+                            "max_tool_calls_per_minute": 60,
+                            "cpu_time_budget_ms_per_day": 3600000
+                        }
+                    }
+                }),
+            ))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mock a successful introspection with custom quota (for testing limits).
+    pub async fn mock_tenant_with_quota(
+        &self,
+        tenant_id: &str,
+        max_sessions: u32,
+    ) {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/introspect"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "active": true,
+                    "tenant_id": tenant_id,
+                    "user_id": "test-user",
+                    "scope": "pandaria:session:create pandaria:session:read",
+                    "quotas": {
+                        "pandaria": {
+                            "max_concurrent_sessions": max_sessions,
+                            "max_tokens_per_day": 1000000,
+                            "max_tool_calls_per_minute": 60,
+                            "cpu_time_budget_ms_per_day": 3600000
+                        }
+                    }
+                }),
+            ))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mock an inactive token response.
+    pub async fn mock_inactive(&self) {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/introspect"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"active": false})),
+            )
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mock a tenant not configured for pandaria (no quotas.pandaria key).
+    pub async fn mock_no_pandaria_quota(&self, tenant_id: &str) {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/introspect"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({
+                    "active": true,
+                    "tenant_id": tenant_id,
+                    "user_id": "test-user",
+                    "scope": "pandaria:session:create",
+                }),
+            ))
+            .mount(&self.server)
+            .await;
+    }
+
+    /// Mock an internal server error from Aspectus (503 simulation).
+    pub async fn mock_server_error(&self) {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/introspect"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .mount(&self.server)
+            .await;
+    }
+}
+
+#[cfg(feature = "aspectus-auth")]
+/// Build a test app with Aspectus auth enabled.
+/// Uses real AspectusClient pointed at a wiremock server.
+pub async fn build_test_app_with_aspectus(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    aspectus_url: String,
+) -> axum::Router {
+    let registry = Arc::new(tenant::TenantRegistry::new());
+
+    let runtime_config = Arc::new(agent_core::HarnessConfig {
+        provider,
+        default_model: "gpt-4".to_string(),
+        default_system_prompt: "You are a helpful assistant.".to_string(),
+        default_context_window: 128_000,
+        store: None,
+        media_provider: None,
+        media_registry: None,
+        http_client: reqwest::Client::new(),
+        available_models: vec!["gpt-4".to_string()],
+        compaction_config: agent_core::CompactionConfig::default(),
+        agent_space: agent_core::AgentSpace::default(),
+        hook_config: agent_core::HookConfig::default(),
+        memory_store: None,
+    });
+    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
+        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
+    );
+
+    let config = api_gateway::ServerConfig::default();
+    let aspectus_config = api_gateway::config::AspectusConfig {
+        base_url: aspectus_url,
+        service_token: "test-service-token".into(),
+        timeout_ms: 2000,
+    };
+    let state = Arc::new(
+        api_gateway::AppState::with_aspectus(
+            manager,
+            config,
+            &aspectus_config,
+        )
+        .expect("build test app state"),
+    );
+
+    api_gateway::build_router(state)
+}
