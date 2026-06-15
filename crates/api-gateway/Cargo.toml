@@ -29,6 +29,7 @@ tavern-core = { path = "../tavern-core" }
 tavern-comp = { path = "../tavern-comp" }
 reqwest = { version = "0.12", features = ["json"] }
 aspectus-client = { path = "../../../Aspectus/crates/aspectus-client", optional = true }
+aspectus-core = { path = "../../../Aspectus/crates/aspectus-core", optional = true }
 urlencoding = "2"
 
 [[bin]]
@@ -37,7 +38,7 @@ path = "src/main.rs"
 
 [features]
 default = ["sqlite"]
-aspectus-auth = ["aspectus-client"]
+aspectus-auth = ["aspectus-client", "aspectus-core"]
 sqlite = ["tavern-comp/sqlite"]
 postgres = ["tavern-comp/postgres"]
 bundled-sqlite = ["tavern-comp/bundled-sqlite"]
