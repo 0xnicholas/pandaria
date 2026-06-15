@@ -1,20 +1,36 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use dashmap::DashMap;
 
+use crate::context::TenantContext;
 use crate::error::TenantError;
 use crate::supervisor::TenantSupervisor;
 use crate::tenant::Tenant;
 
 /// Global registry of all tenants and their supervisors.
+///
+/// Supports both legacy registration (`register`) and Aspectus-driven
+/// resolution (`resolve_or_insert` with TTL cache).
 pub struct TenantRegistry {
     tenants: DashMap<String, Arc<TenantSupervisor>>,
+    cache_ttl: Duration,
 }
 
 impl TenantRegistry {
+    /// Create a new registry with default TTL (300s).
     pub fn new() -> Self {
         Self {
             tenants: DashMap::new(),
+            cache_ttl: Duration::from_secs(300),
+        }
+    }
+
+    /// Create a new registry with a custom cache TTL.
+    pub fn with_ttl(cache_ttl: Duration) -> Self {
+        Self {
+            tenants: DashMap::new(),
+            cache_ttl,
         }
     }
 
@@ -29,6 +45,37 @@ impl TenantRegistry {
                 Ok(())
             }
         }
+    }
+
+    /// Resolve or create a TenantSupervisor from TenantContext.
+    /// Returns cached supervisor if present and not stale (within cache_ttl).
+    pub fn resolve_or_insert(
+        &self,
+        ctx: &TenantContext,
+    ) -> Result<Arc<TenantSupervisor>, TenantError> {
+        if let Some(existing) = self.tenants.get(&ctx.tenant_id) {
+            if !existing.is_stale(self.cache_ttl) {
+                return Ok(existing.clone());
+            }
+        }
+        let supervisor = Arc::new(TenantSupervisor::from_context(ctx));
+        self.tenants.insert(ctx.tenant_id.clone(), supervisor.clone());
+        Ok(supervisor)
+    }
+
+    /// Force refresh a tenant's supervisor from new context.
+    pub fn refresh(
+        &self,
+        ctx: &TenantContext,
+    ) -> Result<Arc<TenantSupervisor>, TenantError> {
+        let supervisor = Arc::new(TenantSupervisor::from_context(ctx));
+        self.tenants.insert(ctx.tenant_id.clone(), supervisor.clone());
+        Ok(supervisor)
+    }
+
+    /// Evict a tenant from the cache.
+    pub fn evict(&self, tenant_id: &str) -> Option<Arc<TenantSupervisor>> {
+        self.tenants.remove(tenant_id).map(|(_, v)| v)
     }
 
     /// Look up a tenant's supervisor.

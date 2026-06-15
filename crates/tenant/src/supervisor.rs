@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::context::TenantContext;
 use crate::error::TenantError;
@@ -15,6 +15,7 @@ pub struct TenantSupervisor {
     token_meter: SlidingWindowMeter,     // 24h window
     tool_call_meter: SlidingWindowMeter, // 1min window
     cpu_time_meter: SlidingWindowMeter,  // 24h window
+    created_at: Instant,
 }
 
 /// Snapshot of current quota consumption.
@@ -58,6 +59,7 @@ impl TenantSupervisor {
             token_meter: SlidingWindowMeter::new(Duration::from_secs(86400)),
             tool_call_meter: SlidingWindowMeter::new(Duration::from_secs(60)),
             cpu_time_meter: SlidingWindowMeter::new(Duration::from_secs(86400)),
+            created_at: Instant::now(),
         }
     }
 
@@ -70,7 +72,13 @@ impl TenantSupervisor {
             token_meter: SlidingWindowMeter::new(Duration::from_secs(86400)),
             tool_call_meter: SlidingWindowMeter::new(Duration::from_secs(60)),
             cpu_time_meter: SlidingWindowMeter::new(Duration::from_secs(86400)),
+            created_at: Instant::now(),
         }
+    }
+
+    /// Whether this supervisor's cached data is older than `ttl`.
+    pub fn is_stale(&self, ttl: Duration) -> bool {
+        self.created_at.elapsed() > ttl
     }
 
     pub fn tenant_id(&self) -> &str {
