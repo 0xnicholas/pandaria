@@ -42,45 +42,9 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some(t) => t,
         None => {
             let url = &config.server.url;
-            let dev_tokens = dev_token::dev_tokens(url);
-            if dev_tokens.is_empty() {
-                return Err(
-                    "No auth token. Set PANDARIA_TOKEN env var, --token flag, or config file."
-                        .into(),
-                );
-            }
-
-            let mut last_err = None;
-            for candidate in &dev_tokens {
-                match rest.list_sessions(candidate).await {
-                    Ok(_) => {
-                        tracing::info!("Auto-generated dev token for local server at {}", url);
-                        config.auth.token = Some(candidate.clone());
-                        break;
-                    }
-                    Err(e) => {
-                        last_err = Some(e);
-                    }
-                }
-            }
-
-            match config.auth.token.clone() {
-                Some(t) => t,
-                None => {
-                    tracing::error!(
-                        "Failed to auto-authenticate with local server at {}. \
-                         Is the server running? Last error: {:?}",
-                        url,
-                        last_err
-                    );
-                    return Err(format!(
-                        "Could not connect to local server at {}. \
-                         Ensure pandaria-server is running, or provide an explicit token.",
-                        url
-                    )
-                    .into());
-                }
-            }
+            let hint = dev_token::dev_setup_hint(url)
+                .unwrap_or_else(|| "No auth token. Set PANDARIA_TOKEN env var, --token flag, or config file.".into());
+            return Err(hint.into());
         }
     };
 
