@@ -7,7 +7,14 @@ members = [
     "crates/storage",
     "crates/tui",
     "crates/tenant",
+    "crates/tavern-core",
+    "crates/tavern-comp",
+    "crates/tavern-flow-macros",
 ]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
@@ -25,6 +32,14 @@ serde_yaml = "0.9"
 base64 = "0.22"
 uuid = { version = "1", features = ["v4", "serde"] }
 dashmap = "6"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+chrono = { version = "0.4", features = ["serde"] }
+minijinja = "2"
+hmac = "0.12"
+sha2 = "0.10"
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "migrate", "json"] }
+notify = "7"
+dotenvy = "0.15"
 testcontainers = "0.27"
 testcontainers-modules = { version = "0.15", features = ["postgres", "redis"] }
 

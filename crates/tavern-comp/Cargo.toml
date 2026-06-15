@@ -1,0 +1,39 @@
+[package]
+name = "tavern-comp"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tavern-core = { path = "../tavern-core" }
+tavern-flow-macros = { path = "../tavern-flow-macros" }
+agent-core = { path = "../agent-core" }
+ai-provider = { path = "../ai-provider" }
+serde = { workspace = true }
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+chrono = { workspace = true }
+minijinja = { workspace = true }
+tracing = { workspace = true }
+futures-util = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+sqlx = { workspace = true }
+reqwest = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+tokio-util = { workspace = true }
+libsqlite3-sys = { version = "0.30", features = ["bundled"], optional = true }
+
+[features]
+default = ["sqlite"]
+sqlite = ["sqlx/sqlite"]
+postgres = ["sqlx/postgres"]
+bundled-sqlite = ["sqlx/sqlite", "dep:libsqlite3-sys"]
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
+ai-provider = { path = "../ai-provider", features = ["test-utils"] }
+dotenvy = { workspace = true }
