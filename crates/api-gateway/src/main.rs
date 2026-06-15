@@ -5,7 +5,13 @@ use api_gateway::server::{AppState, serve};
 use secrecy::ExposeSecret;
 use tracing::info;
 
-/// Generate an HMAC-signed token for the given tenant.
+#[cfg(not(feature = "aspectus-auth"))]
+use hmac::{Hmac, Mac};
+#[cfg(not(feature = "aspectus-auth"))]
+use sha2::Sha256;
+
+/// Generate an HMAC-signed token for the given tenant (legacy, only without aspectus-auth).
+#[cfg(not(feature = "aspectus-auth"))]
 fn generate_token(secret: &str, tenant_id: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
@@ -38,8 +44,8 @@ fn generate_token(secret: &str, tenant_id: &str) -> String {
     format!("{}.{}", payload_b64, sig_b64)
 }
 
-/// Register a dev tenant when `PANDARIA_DEV_TENANT` is set.
-/// The tenant ID and quota are read from environment variables.
+/// Register a dev tenant when `PANDARIA_DEV_TENANT` is set (legacy, only without aspectus-auth).
+#[cfg(not(feature = "aspectus-auth"))]
 fn register_dev_tenant(registry: &tenant::TenantRegistry) -> Option<String> {
     let tenant_id = std::env::var("PANDARIA_DEV_TENANT").ok()?;
 
@@ -108,6 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 2. Tenant Registry ---
     let registry = Arc::new(tenant::TenantRegistry::new());
+    #[cfg(not(feature = "aspectus-auth"))]
     let dev_tenant_id = register_dev_tenant(&registry);
 
     // --- 3. Runtime Config (from environment variables) ---
@@ -127,6 +134,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- 5. Server Config ---
     let config = ServerConfig::from_env();
 
+    #[cfg(feature = "aspectus-auth")]
+    let aspectus_config = api_gateway::config::AspectusConfig::from_env()?;
+
     if config.is_default_secret() {
         panic!(
             "PANDARIA_AUTH_SECRET is not set. \
@@ -134,6 +144,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
+    #[cfg(feature = "aspectus-auth")]
+    let state = Arc::new(AppState::with_aspectus(
+        tenant_manager,
+        config.clone(),
+        &aspectus_config,
+    )?);
+    #[cfg(not(feature = "aspectus-auth"))]
     let state = Arc::new(AppState::new(tenant_manager, config.clone()));
 
     // --- 6. Tavern Workflow Engine ---
@@ -172,6 +189,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("========================================");
     println!("  pandaria-server ready");
     println!("  bind: {}", config.bind_addr);
+    #[cfg(feature = "aspectus-auth")]
+    println!("  auth:  Aspectus ({})", aspectus_config.base_url);
+    #[cfg(not(feature = "aspectus-auth"))]
     if let Some(ref tenant_id) = dev_tenant_id {
         let secret = config.auth_secret.expose_secret();
         let token = generate_token(secret, tenant_id);

@@ -9,8 +9,13 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::ServerConfig;
+#[cfg(feature = "aspectus-auth")]
+use crate::config::AspectusConfig;
 use crate::middleware::{auth, rate_limit};
 use crate::routes::{events, health, messages, metrics, sessions};
+
+#[cfg(feature = "aspectus-auth")]
+use crate::middleware::TenantCache;
 
 use crate::types::SessionInfo;
 
@@ -19,15 +24,46 @@ pub struct AppState {
     pub tenant_manager: Arc<dyn tenant::TenantManager>,
     pub config: ServerConfig,
     pub rate_limiter: rate_limit::RateLimiter,
+
+    #[cfg(feature = "aspectus-auth")]
+    pub aspectus: aspectus_client::AspectusClient,
+    #[cfg(feature = "aspectus-auth")]
+    pub tenant_cache: TenantCache,
 }
 
 impl AppState {
+    /// Create AppState without Aspectus (legacy HMAC auth).
+    #[cfg(not(feature = "aspectus-auth"))]
     pub fn new(tenant_manager: Arc<dyn tenant::TenantManager>, config: ServerConfig) -> Self {
         Self {
             tenant_manager,
             config,
             rate_limiter: rate_limit::RateLimiter::new(),
         }
+    }
+
+    /// Create AppState with Aspectus auth.
+    #[cfg(feature = "aspectus-auth")]
+    pub fn with_aspectus(
+        tenant_manager: Arc<dyn tenant::TenantManager>,
+        config: ServerConfig,
+        aspectus_config: &AspectusConfig,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let reqwest_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(aspectus_config.timeout_ms))
+            .build()?;
+        let aspectus = aspectus_client::AspectusClient::with_reqwest(
+            &aspectus_config.base_url,
+            &aspectus_config.service_token,
+            reqwest_client,
+        );
+        Ok(Self {
+            tenant_manager,
+            config,
+            rate_limiter: rate_limit::RateLimiter::new(),
+            aspectus,
+            tenant_cache: TenantCache::new(),
+        })
     }
 
     /// Enrich tenant `SessionInfo` with gateway-level defaults.
