@@ -18,9 +18,14 @@ Agent loop 核心运行时。驱动 LLM tool use 协议的双层循环，管理 
 ```
 src/
 ├── harness/          # 核心运行时（AgentLoop、SessionActor、ToolExecutor、CompactionActor）
-├── hook/             # Hook 协议（HookDispatcher trait、*Ctx、*Mutation、超时边界）
+├── hook/             # Hook 协议（HookDispatcher trait、DefaultHookDispatcher、CombinedDispatcher、*Ctx、*Mutation、超时保护）
+├── memory/           # Memory 系统（MemoryStore trait、MemoryHookDispatcher、Conversation Formatter、EmeraldMemoryStore）
 ├── persistence/      # 持久化边界（SessionStore trait、SessionEntry）
-├── utils/            # 工具函数与选项（ProviderStreamOptions、catch_panic）
+├── prompt/           # Prompt 构建（PromptBuilder、PromptMutation）
+├── skills/           # Skill 扫描、加载、注入
+├── circuit_breaker.rs # LLM provider 调用熔断器
+├── space.rs          # AgentSpace 统一目录抽象
+├── utils/            # 工具函数与选项（sanitize、provider options）
 ├── types.rs          # 基础类型（AgentMessage、AgentTool trait 等）
 ├── error.rs          # 错误类型（AgentError、CompactionError）
 ├── events.rs         # 事件系统（AgentEvent）
@@ -38,12 +43,23 @@ src/
 | `harness` | `compaction` | `CompactionActor`、`CompactionConfig`、`should_compact` |
 | `harness` | `error_recovery` | `RecoveryAction`、`RecoveryStateMachine` |
 | `hook` | `dispatcher` | `HookDispatcher` trait |
+| `hook` | `default_dispatcher` | `DefaultHookDispatcher` |
+| `hook` | `combined` | `CombinedDispatcher` |
 | `hook` | `context` | `ToolCallCtx`、`ToolResultCtx`、`TurnEndCtx`、`AgentEndCtx`、`SessionCtx`、`ContextCtx` |
 | `hook` | `mutations` | `HookDecision`、`ToolResultMutation`、`ContextMutation`、`ToolCallMutation` |
 | `hook` | `timeout` | `with_timeout` |
+| `circuit_breaker` | — | `CircuitBreaker` |
+| `memory` | `store` | `MemoryStore` trait |
+| `memory` | `hook` | `MemoryHookDispatcher` |
+| `memory` | `formatter` | Conversation Formatter |
+| `memory` | `emerald` | `EmeraldMemoryStore`（HTTP adapter） |
 | `persistence` | `store` | `SessionStore` trait |
 | `persistence` | `entry` | `SessionEntry`、`CompactionDetails`、`SessionContextBuilder` |
+| `prompt` | — | `PromptBuilder`、`PromptMutation` |
+| `skills` | — | Skill 扫描、加载、注入 |
+| `space` | — | `AgentSpace` |
 | `utils` | `provider_opts` | `ProviderStreamOptions` |
+| `utils` | `sanitize` | 敏感数据脱敏 |
 | `types` | — | `AgentMessage`、`AgentTool` trait、`AgentToolResult`、`AgentToolRef`、`ToolExecutionMode` |
 | `error` | — | `AgentError`、`CompactionError` |
 | `events` | — | `AgentEvent`、`AgentEventListener` |
@@ -60,6 +76,7 @@ src/
 ## 依赖
 
 - `ai-provider` — 消息类型、LlmProvider trait
+- `pawbun-toolkit` — 工具抽象（Tool trait、ToolKit registry）
 - `tokio` — 异步运行时
 - `async-trait` — async trait 支持
 - `thiserror` — 错误类型

@@ -83,18 +83,27 @@ TenantSupervisor
 crates/
   agent-core/        # Agent loop、Tool pipeline、Session 生命周期、Compaction、HookDispatcher trait
     harness/         #   核心运行时（AgentLoop、SessionActor、ToolExecutor、CompactionActor）
-    hook/            #   HookDispatcher trait、DefaultHookDispatcher、*Ctx、*Mutation
+    hook/            #   HookDispatcher trait、DefaultHookDispatcher、CombinedDispatcher、*Ctx、*Mutation
+    circuit_breaker.rs # LLM provider 调用熔断器（连续失败 fast-fail）
+    memory/          #   Memory 系统（MemoryStore trait、MemoryHookDispatcher、Conversation Formatter、EmeraldMemoryStore）
     space.rs         #   AgentSpace 统一目录抽象
     skills/          #   Skill 扫描、加载、注入
     persistence/     #   持久化边界（SessionStore trait、SessionEntry）
     prompt/          #   PromptBuilder、PromptMutation
-    utils/           #   工具与选项
+    utils/           #   工具与选项（sanitize 等）
   tenant/            # Tenant Scheduler、配额管理、Session 注册表
   storage/          # 通用存储层（Session 状态序列化、Redis/PG 适配器）
   # observability crate 已删除（v0.1.3）。sanitize（敏感数据脱敏）移至 agent-core/src/utils/sanitize.rs。
   # metrics/tracing 功能若未来需要，将重新设计更轻量的集成方案。
   ai-provider/        # LLM provider 抽象、流式 SSE 解析、HTTP 通信协议
     media/             # 生成型多模态抽象（MediaProvider trait、MediaRequest/Response）
+  pawbun-files/       # 多模态文件处理（text/image/PDF/audio/video），统一 FileLoader + ProviderFormat
+  pawbun-toolkit/     # Agent 工具抽象层（Tool trait、ToolKit registry、MCP client adapter）
+  pawbun-toolkit-macros/ # pawbun-toolkit 过程宏
+  pawbun-mcp-server/  # MCP Server（暴露 Pawbun 工具为 MCP 协议，支持 stdio/SSE transport）
+  tavern-core/        # 工作流/Agent 组合核心类型（AgentConfig、Plan、ToolRegistry）
+  tavern-comp/        # 工作流引擎（WorkflowEngine、StepExecutor、EventStore、replay、DAG 校验）
+  tavern-flow-macros/ # 工作流 DSL 过程宏
   api-gateway/       # REST + SSE 接入、认证、限流
   tui/               # 终端客户端（ratatui + REST client + SSE 订阅）
 ```
@@ -109,10 +118,18 @@ crates/
 **依赖方向严格单向**（禁止反向依赖）：
 
 ```
-api-gateway → tenant → agent-core → ai-provider
-                   ↓
-              storage
+api-gateway → tavern-comp → agent-core → pawbun-toolkit → pawbun-files
+    │              │              │
+    │         tavern-core    ai-provider
+    │              │
+    └────── tenant ──────────┘
+                ↓
+            storage
+
+pawbun-mcp-server → pawbun-toolkit, pawbun-files
 ```
+
+> **注意**：`tavern-comp` 是 agent-core 之上的工作流编排层，通过 `api-gateway` 暴露。`pawbun-*` 是工具生态（文件处理、工具抽象、MCP 协议适配），`agent-core` 通过 `pawbun-toolkit` 接入。
 
 ---
 
@@ -234,6 +251,13 @@ api-gateway → tenant → agent-core → ai-provider
 | AgentSpace 统一目录 | ✅ 已实现（`agent-core/src/space.rs`）。统一根目录（默认 `~/.pandaria/`），含 config/cache/logs/temp/skills/workspaces 子目录。PathGuard、Skills Scanner、TUI 均已接入。`PANDARIA_SPACE_ROOT` 环境变量可覆盖根目录。 |
 | 理解型多模态（Image/Video/Audio 输入） | ✅ 已支持 |
 | 生成型多模态（MediaProvider + MediaGenerationTool） | ✅ 已支持 |
+| pawbun-toolkit（Agent 工具抽象） | ✅ 已实现（Tool trait、ToolKit registry、MCP client adapter、async tool 支持） |
+| pawbun-files（多模态文件处理） | ✅ 已实现（text/image/PDF/audio/video、Local/URL/Bytes source、OpenAI/Anthropic/Gemini/Azure format） |
+| pawbun-mcp-server（MCP 协议适配） | ✅ 已实现（stdio + SSE transport、toolkit 桥接、file loader 集成） |
+| tavern（工作流引擎） | 🟡 核心已实现（WorkflowEngine、StepExecutor、EventStore + PG/SQLite/Memory backend、replay、DAG 校验、Webhook、Timer），持续迭代中 |
+| Circuit Breaker（LLM 调用熔断） | ✅ 已实现（agent-core/src/circuit_breaker.rs，Closed→Open→HalfOpen 状态机） |
+| CombinedDispatcher（Hook 组合） | ✅ 已实现（agent-core/src/hook/combined.rs，多 HookDispatcher 链式组合） |
+| Hook 超时保护 | ✅ 已实现（agent-core/src/hook/timeout.rs，panic 捕获 + 超时兜底） |
 
 ---
 

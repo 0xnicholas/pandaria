@@ -112,8 +112,7 @@ Pandaria 通过 **`EmeraldMemoryStore`**（`agent-core/src/memory/emerald.rs`）
 | `pawbun-toolkit` | `Tool` / `AsyncTool` trait、`ToolKit` 注册中心、内置工具、MCP 客户端 |
 | `pawbun-toolkit-macros` | `#[pawbun_tool]` 过程宏 |
 | `pawbun-files` | 多模态文件处理——加载 + 多 Provider 格式化 + 安全约束 |
-| `pawbun-mcp-core` | MCP 协议核心类型（JSON-RPC 2.0、Transport trait） |
-| `pawbun-mcp-server` | MCP 服务器（stdio / SSE） |
+| `pawbun-mcp-server` | MCP 服务器（stdio / SSE）、handler 状态机 |
 
 **对标参考**：CrewAI Tools + CrewAI Files，Rust 实现。
 
@@ -125,18 +124,15 @@ Pandaria 通过 **`EmeraldMemoryStore`**（`agent-core/src/memory/emerald.rs`）
 
 | Crate | 用途 |
 |-------|------|
-| `tavern-core` | 共享类型：`AgentConfig`、`Runtime` trait |
-| `tavern-adapters` | Pandaria HTTP adapter + Mock adapter |
-| `tavern-hero` | Agent 注册表、YAML 配置加载 |
-| `tavern-comp` | 事件溯源 Workflow 引擎——DAG 调度、重试/信号/超时 |
-| `tavern-flow` | 方法级事件驱动编排（`#[start]` / `#[listen]` / `#[router]`） |
-| `tavern-server` | HTTP 服务（axum） |
+| `tavern-core` | 共享类型：`AgentConfig`、`Plan`、`ToolRegistry` trait |
+| `tavern-comp` | 事件溯源 Workflow 引擎（DAG 调度、重试/信号/超时、EventStore、replay）+ Agent 注册表（hero）+ HTTP adapter（agent） |
+| `tavern-flow-macros` | 方法级事件驱动编排宏（`#[start]` / `#[listen]` / `#[router]`） |
 
 **对标参考**：LangGraph 编排能力，Rust + 事件溯源 + YAML 声明式。
 
 ### 与 Pandaria 的集成
 
-Tavern 消费 Pandaria 作为 Agent 执行运行时。每个 workflow step 通过 `PandariaRuntime` HTTP adapter 调用 Session API。
+Tavern 消费 Pandaria 作为 Agent 执行运行时。每个 workflow step 通过 tavern-comp 的 agent 模块（HTTP adapter）调用 Pandaria Session API。
 
 ---
 
@@ -437,7 +433,7 @@ Daypaw 是 Pandaria + Tavern 的「前端」——让开发者和运营人员通
 | 关系 | 谁依赖谁 | 方式 | 状态 |
 |------|----------|------|:--:|
 | Pandaria → Emerald | Pandaria 依赖 Emerald | HTTP (`EmeraldMemoryStore`) | ✅ |
-| Pandaria → Pawbun | Pandaria 依赖 Pawbun | Cargo dependency | 📋 |
+| Pandaria → Pawbun | Pandaria 依赖 Pawbun | Cargo dependency | ✅ |
 | Pandaria → Tokencamp | Pandaria 通过 Tokencamp 调用 LLM | HTTP | 💡 |
 | Pandaria → Heirloom | Pandaria Agent 通过 HeirloomTool 查询 | HTTP | 📋 |
 | Tavern → Pandaria | Tavern 依赖 Pandaria | HTTP (`PandariaRuntime`) | ✅ |
@@ -457,7 +453,7 @@ Daypaw 是 Pandaria + Tavern 的「前端」——让开发者和运营人员通
 | Pandaria | Rust | tokio | PostgreSQL / Redis | ✅ |
 | Emerald | Python | FastAPI / async | 图数据库 + 向量存储 + S3 | ✅ |
 | Pawbun | Rust | tokio | 无持久化（库） | ✅ |
-| Tavern | Rust | tokio / axum | SQLite / PostgreSQL (EventStore) | ✅ |
+| Tavern | Rust | tokio | SQLite / PostgreSQL (EventStore) | ✅ |
 | Constell | TypeScript | Node.js 24 | PostgreSQL + ClickHouse + Redis + MinIO | 🟡 v0.3 |
 | Heirloom | 待定（可能 Rust） | 待定 | PostgreSQL JSONB → 独立图存储 → ... | 📐 设计期 |
 | Aspectus | 待定 | 待定 | PostgreSQL | 💡 规划中 |

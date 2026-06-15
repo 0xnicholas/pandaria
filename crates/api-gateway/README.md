@@ -20,12 +20,16 @@ pandaria 服务端 HTTP 入口层。
 ## 依赖方向
 
 ```
-api-gateway → tenant → agent-core → ai-provider
-                   ↓
-              storage
+api-gateway → tavern-comp → agent-core → pawbun-toolkit → pawbun-files
+    │              │              │
+    │         tavern-core    ai-provider
+    │
+    └── tenant → storage
 ```
 
 api-gateway **禁止**直接依赖 `ai-provider`。所有 LLM 相关类型通过 `agent-core` re-export 或内部重新定义。
+
+api-gateway 通过 `tavern-comp` 接入工作流编排能力，通过 `pawbun-toolkit` 接入工具抽象。
 
 ## API 端点
 
