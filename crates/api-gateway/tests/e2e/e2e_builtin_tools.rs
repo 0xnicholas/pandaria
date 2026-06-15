@@ -13,8 +13,8 @@ async fn test_builtin_tools_registered_by_default() {
 
     let body = common::openai_text_sse_body("ok");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let response = app
         .oneshot(
@@ -41,8 +41,8 @@ async fn test_builtin_tools_disabled_filter() {
 
     let body = common::openai_text_sse_body("ok");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let response = app
         .oneshot(
@@ -69,8 +69,8 @@ async fn test_builtin_tools_disabled_all() {
 
     let body = common::openai_text_sse_body("ok");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let response = app
         .oneshot(
@@ -97,8 +97,8 @@ async fn test_builtin_tools_off() {
 
     let body = common::openai_text_sse_body("ok");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let response = app
         .oneshot(
@@ -123,8 +123,8 @@ async fn test_external_shadows_builtin() {
 
     let body = common::openai_text_sse_body("ok");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let response = app
         .oneshot(

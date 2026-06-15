@@ -11,24 +11,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-fn build_app_with_rate_limit(
+async fn build_app_with_rate_limit(
     provider: Arc<dyn ai_provider::LlmProvider>,
-    rps: u32,
-    burst: u32,
+    registry: Arc<tenant::TenantRegistry>,
 ) -> axum::Router {
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let test_tenant = tenant::Tenant::new(
-        "test-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(test_tenant).unwrap();
-
-    let runtime_config = Arc::new(agent_core::HarnessConfig {
+    let harness_config = agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "gpt-4".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
@@ -40,25 +27,11 @@ fn build_app_with_rate_limit(
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
-        hook_config: agent_core::HookConfig::default(),
+        hook_config: agent_core::HarnessConfig::default().hook_config,
         memory_store: None,
-    });
-    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
-    );
-
-    let config = api_gateway::ServerConfig {
-        auth_secret: secrecy::SecretString::from(common::TEST_SECRET),
-        rate_limit: api_gateway::RateLimitConfig {
-            requests_per_second: rps,
-            burst_size: burst,
-        },
-        ..Default::default()
     };
-    let state = Arc::new(api_gateway::AppState::new(manager, config));
-    api_gateway::build_router(state)
+    common::build_test_app_with_config(provider, harness_config).await
 }
-
 #[tokio::test]
 async fn test_rate_limit_blocks_after_burst() {
     let _ = tracing_subscriber::fmt().try_init();
@@ -66,8 +39,8 @@ async fn test_rate_limit_blocks_after_burst() {
     let (_server, provider) = common::start_wiremock_openai(
         &common::openai_text_sse_body("ok")
     ).await;
-    let app = build_app_with_rate_limit(provider, 1, 2);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_rate_limit(provider, 1, 2).await;
+    let token = "pk_live_test-tenant";
 
     // Request 1: within burst → 201
     let r1 = app
@@ -177,7 +150,7 @@ async fn test_rate_limit_per_tenant_isolation() {
         tenant::manager::TenantManagerImpl::new(registry, runtime_config),
     );
 
-    let config = api_gateway::ServerConfig {
+    let config = api_gateway::ServerConfig::default(); let _ = api_gateway::ServerConfig {app; api_gateway::ServerConfig {
         auth_secret: secrecy::SecretString::from(common::TEST_SECRET),
         rate_limit: api_gateway::RateLimitConfig {
             requests_per_second: 100,
@@ -185,11 +158,11 @@ async fn test_rate_limit_per_tenant_isolation() {
         },
         ..Default::default()
     };
-    let state = Arc::new(api_gateway::AppState::new(manager, config));
+    // replaced by build_test_app_with_config
     let app = api_gateway::build_router(state);
 
-    let token_a = common::make_token("tenant-a");
-    let token_b = common::make_token("tenant-b");
+    let token_a = "pk_live_tenant-a";
+    let token_b = "pk_live_tenant-b";
 
     // Tenant A exhausts its burst
     let r_a1 = app
@@ -246,8 +219,8 @@ async fn test_rate_limit_refills_after_delay() {
     let (_server, provider) = common::start_wiremock_openai(
         &common::openai_text_sse_body("ok")
     ).await;
-    let app = build_app_with_rate_limit(provider, 100, 1);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_rate_limit(provider, 100, 1).await;
+    let token = "pk_live_test-tenant";
 
     // Exhaust burst
     let r1 = app

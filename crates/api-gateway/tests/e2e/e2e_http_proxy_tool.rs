@@ -88,8 +88,8 @@ data: [DONE]
         .build()
         .unwrap();
 
-    let app = common::build_test_app_with_client(provider, http_client);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app_with_client(provider, http_client).await;
+    let token = "pk_live_test-tenant";
 
     // 3. Create session with the external tool (use mock-tool.test to pass SSRF)
     let tool_endpoint = format!("http://mock-tool.test:{}/invoke", tool_port);
@@ -232,8 +232,8 @@ async fn test_http_proxy_tool_ssrf_blocked() {
 
     let body = common::openai_text_sse_body("ssrf test");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Try to create a session with an internal endpoint
     let create_body = serde_json::json!({

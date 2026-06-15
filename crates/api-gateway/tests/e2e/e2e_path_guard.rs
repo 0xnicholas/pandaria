@@ -17,29 +17,16 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 /// Build a test app with custom PathGuard configuration.
-fn build_app_with_path_guard(
+async fn build_app_with_path_guard(
     provider: Arc<dyn ai_provider::LlmProvider>,
     path_guard_fields: HashMap<String, Vec<String>>,
     scan_unknown: bool,
 ) -> axum::Router {
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let test_tenant = tenant::Tenant::new(
-        "test-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(test_tenant).unwrap();
-
     let space = AgentSpace::from_env_or_default();
     let mut hook_config = HookConfig::default();
     hook_config.path_guard_fields = path_guard_fields;
     hook_config.path_guard_scan_unknown = scan_unknown;
-
-    let runtime_config = Arc::new(agent_core::HarnessConfig {
+    let harness_config = agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "gpt-4".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
@@ -53,19 +40,9 @@ fn build_app_with_path_guard(
         agent_space: space,
         hook_config,
         memory_store: None,
-    });
-    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
-    );
-
-    let config = api_gateway::ServerConfig {
-        auth_secret: secrecy::SecretString::from(common::TEST_SECRET),
-        ..Default::default()
     };
-    let state = Arc::new(api_gateway::AppState::new(manager, config));
-    api_gateway::build_router(state)
+    common::build_test_app_with_config(provider, harness_config).await
 }
-
 /// OpenAI SSE body that emits a `read_file` tool call targeting `path`.
 fn read_file_sse_body(path: &str) -> String {
     let args = serde_json::json!({"path": path}).to_string();
@@ -123,8 +100,8 @@ async fn test_path_guard_blocks_file_outside_workspace() {
     };
 
     let (_server, provider) = common::start_wiremock_openai_dynamic(responder).await;
-    let app = build_app_with_path_guard(provider, path_fields, false);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_path_guard(provider, path_fields, false).await;
+    let token = "pk_live_test-tenant";
 
     // Create session with a registered "read_file" external tool
     let create = app
@@ -272,8 +249,8 @@ async fn test_path_guard_allows_file_inside_workspace() {
     };
 
     let (_server, provider) = common::start_wiremock_openai_dynamic(responder).await;
-    let app = build_app_with_path_guard(provider, path_fields, false);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_path_guard(provider, path_fields, false).await;
+    let token = "pk_live_test-tenant";
 
     let create = app
         .clone()
@@ -418,8 +395,8 @@ data: [DONE]
     };
 
     let (_server, provider) = common::start_wiremock_openai_dynamic(responder).await;
-    let app = build_app_with_path_guard(provider, path_fields, true);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_path_guard(provider, path_fields, true).await;
+    let token = "pk_live_test-tenant";
 
     let create = app
         .clone()

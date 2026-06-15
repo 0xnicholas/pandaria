@@ -28,8 +28,8 @@ async fn test_tenant_session_isolation() {
     registry.register(t2).unwrap();
 
     let app = common::build_test_app_with_registry(provider, registry);
-    let token_t1 = common::make_token("tenant-1");
-    let token_t2 = common::make_token("tenant-2");
+    let token_t1 = "pk_live_tenant-1";
+    let token_t2 = "pk_live_tenant-2";
 
     // Tenant 1 creates a session
     let create_t1 = app
@@ -120,7 +120,7 @@ async fn test_session_quota_limit_enforced() {
     registry.register(t1).unwrap();
 
     let app = common::build_test_app_with_registry(provider, registry);
-    let token = common::make_token("quota-tenant");
+    let token = "pk_live_quota-tenant";
 
     // First session succeeds
     let create1 = app
@@ -175,7 +175,7 @@ async fn test_delete_releases_session_slot() {
     registry.register(t1).unwrap();
 
     let app = common::build_test_app_with_registry(provider, registry);
-    let token = common::make_token("release-tenant");
+    let token = "pk_live_release-tenant";
 
     // Create first session
     let create1 = app

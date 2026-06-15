@@ -12,7 +12,7 @@ use futures::{SinkExt, StreamExt};
 async fn start_test_server(
     provider: Arc<dyn ai_provider::LlmProvider>,
 ) -> (String, tokio::task::JoinHandle<()>) {
-    let app = common::build_test_app(provider);
+    let app = common::build_test_app(provider).await;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
@@ -28,7 +28,7 @@ async fn test_websocket_receives_events() {
     let body = common::openai_text_sse_body("ws test");
     let (_llm_server, provider) = common::start_wiremock_openai(&body).await;
     let (base_url, _server_handle) = start_test_server(provider).await;
-    let token = common::make_token("test-tenant");
+    let token = "pk_live_test-tenant";
 
     // Create session via HTTP
     let client = reqwest::Client::new();
@@ -126,7 +126,7 @@ async fn test_websocket_auth_failure() {
     let (base_url, _server_handle) = start_test_server(provider).await;
 
     // Create session with valid token first
-    let token = common::make_token("test-tenant");
+    let token = "pk_live_test-tenant";
     let client = reqwest::Client::new();
     let create_resp = client
         .post(format!("{}/api/v1/sessions", base_url))
@@ -169,7 +169,7 @@ data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"delta":{"
 
     let (_llm_server, provider) = common::start_wiremock_openai(&slow_body).await;
     let (base_url, _server_handle) = start_test_server(provider).await;
-    let token = common::make_token("test-tenant");
+    let token = "pk_live_test-tenant";
 
     let client = reqwest::Client::new();
     let create_resp = client

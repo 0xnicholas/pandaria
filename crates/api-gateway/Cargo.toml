@@ -37,7 +37,7 @@ name = "pandaria-server"
 path = "src/main.rs"
 
 [features]
-default = ["sqlite"]
+default = ["sqlite", "aspectus-auth"]
 aspectus-auth = ["aspectus-client", "aspectus-core", "tenant/aspectus-auth"]
 sqlite = ["tavern-comp/sqlite"]
 postgres = ["tavern-comp/postgres"]

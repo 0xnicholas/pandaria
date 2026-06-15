@@ -14,8 +14,8 @@ async fn test_session_lifecycle() {
 
     let body = common::openai_text_sse_body("Hello from E2E");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // 1. Create session
     let create_response = app

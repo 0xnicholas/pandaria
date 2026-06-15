@@ -13,26 +13,14 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-fn build_app_with_token_budget(
+async fn build_app_with_token_budget(
     provider: Arc<dyn ai_provider::LlmProvider>,
     max_turns: usize,
 ) -> axum::Router {
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let test_tenant = tenant::Tenant::new(
-        "test-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(test_tenant).unwrap();
-
     let mut hook_config = HookConfig::default();
     hook_config.max_turns_per_session = max_turns;
 
-    let runtime_config = Arc::new(agent_core::HarnessConfig {
+    let harness_config = agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "gpt-4".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
@@ -46,17 +34,8 @@ fn build_app_with_token_budget(
         agent_space: agent_core::AgentSpace::default(),
         hook_config,
         memory_store: None,
-    });
-    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
-    );
-
-    let config = api_gateway::ServerConfig {
-        auth_secret: secrecy::SecretString::from(common::TEST_SECRET),
-        ..Default::default()
     };
-    let state = Arc::new(api_gateway::AppState::new(manager, config));
-    api_gateway::build_router(state)
+    common::build_test_app_with_config(provider, harness_config).await
 }
 
 #[tokio::test]
@@ -66,8 +45,8 @@ async fn test_token_budget_does_not_block() {
     // LLM always returns simple text (no tool calls)
     let body = common::openai_text_sse_body("ok");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = build_app_with_token_budget(provider, 1);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_token_budget(provider, 1).await;
+    let token = "pk_live_test-tenant";
 
     let create = app
         .clone()
@@ -143,8 +122,8 @@ async fn test_token_budget_turn_count_tracked() {
 
     let body = common::openai_text_sse_body("ok");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = build_app_with_token_budget(provider, 5);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_token_budget(provider, 5).await;
+    let token = "pk_live_test-tenant";
 
     let create = app
         .clone()

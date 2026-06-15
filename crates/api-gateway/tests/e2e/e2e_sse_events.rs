@@ -15,8 +15,8 @@ async fn test_sse_stream_receives_events() {
 
     let body = common::openai_text_sse_body("SSE works");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create session
     let create_response = app
@@ -132,8 +132,8 @@ async fn test_sse_text_delta_content() {
 
     let body = common::openai_text_sse_body("delta content");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create session
     let create_response = app

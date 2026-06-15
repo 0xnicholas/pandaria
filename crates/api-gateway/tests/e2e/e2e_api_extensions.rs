@@ -12,8 +12,8 @@ async fn test_get_quota() {
 
     let body = common::openai_text_sse_body("quota");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let response = app
         .oneshot(
@@ -47,8 +47,8 @@ async fn test_batch_create_sessions() {
 
     let body = common::openai_text_sse_body("batch");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let response = app
         .clone()
@@ -88,8 +88,8 @@ async fn test_clone_session() {
 
     let body = common::openai_text_sse_body("clone");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create original session
     let create_response = app
@@ -161,8 +161,8 @@ async fn test_reset_session() {
 
     let body = common::openai_text_sse_body("reset");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create session
     let create_response = app
@@ -241,8 +241,8 @@ async fn test_sync_wait_success() {
 
     let body = common::openai_text_sse_body("sync wait");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create session
     let create_response = app

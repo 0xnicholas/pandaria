@@ -1,173 +1,123 @@
 //! Shared helpers for api-gateway end-to-end integration tests.
 //!
 //! These tests use the *real* `TenantManagerImpl` (not mocks) backed by
-//! a `wiremock` LLM server, so they exercise the full stack:
-//! HTTP → auth → tenant → agent-core → ai-provider.
+//! wiremock servers (LLM + Aspectus), so they exercise the full stack:
+//! HTTP → Aspectus auth → tenant → agent-core → ai-provider.
 
 use std::sync::Arc;
 
-use api_gateway::{AppState, ServerConfig};
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::Response;
 
+// ── Primary builders (async, Aspectus-backed) ──
+
 /// Build a test router with a real `TenantManagerImpl` and the given provider.
-#[cfg(not(feature = "aspectus-auth"))]
-pub fn build_test_app(provider: Arc<dyn ai_provider::LlmProvider>) -> Router {
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let test_tenant = tenant::Tenant::new(
-        "test-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(test_tenant).unwrap();
-
-    let runtime_config = Arc::new(agent_core::HarnessConfig {
-        provider: provider.clone(),
-        default_model: "gpt-4".to_string(),
-        default_system_prompt: "You are a helpful assistant.".to_string(),
-        default_context_window: 128_000,
-        store: None,
-        media_provider: None,
-        media_registry: None,
-        http_client: reqwest::Client::new(),
-        available_models: vec!["gpt-4".to_string()],
-        compaction_config: agent_core::CompactionConfig::default(),
-        agent_space: agent_core::AgentSpace::default(),
-        hook_config: agent_core::HookConfig::default(),
-        memory_store: None,
-    });
-    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
-    );
-
-    let config = ServerConfig {
-        auth_secret: secrecy::SecretString::from(TEST_SECRET),
-        ..Default::default()
-    };
-    let state = Arc::new(AppState::new(manager, config, registry.clone()));
-    api_gateway::build_router(state)
-}
-
-/// Build a test router with a custom tenant registry.
-#[cfg(not(feature = "aspectus-auth"))]
-pub fn build_test_app_with_registry(
-    provider: Arc<dyn ai_provider::LlmProvider>,
-    registry: Arc<tenant::TenantRegistry>,
-) -> Router {
-    let runtime_config = Arc::new(agent_core::HarnessConfig {
-        provider: provider.clone(),
-        default_model: "gpt-4".to_string(),
-        default_system_prompt: "You are a helpful assistant.".to_string(),
-        default_context_window: 128_000,
-        store: None,
-        media_provider: None,
-        media_registry: None,
-        http_client: reqwest::Client::new(),
-        available_models: vec!["gpt-4".to_string()],
-        compaction_config: agent_core::CompactionConfig::default(),
-        agent_space: agent_core::AgentSpace::default(),
-        hook_config: agent_core::HookConfig::default(),
-        memory_store: None,
-    });
-    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
-    );
-
-    let config = ServerConfig {
-        auth_secret: secrecy::SecretString::from(TEST_SECRET),
-        ..Default::default()
-    };
-    let state = Arc::new(AppState::new(manager, config, registry.clone()));
-    api_gateway::build_router(state)
+/// Starts a wiremock Aspectus server automatically with "test-tenant" configured.
+pub async fn build_test_app(provider: Arc<dyn ai_provider::LlmProvider>) -> Router {
+    let aspectus = AspectusMock::start().await;
+    aspectus.mock_active_tenant("test-tenant").await;
+    build_test_app_with_aspectus(provider, &aspectus).await
 }
 
 /// Build a test router with a custom HTTP client for external tools/webhooks.
-#[cfg(not(feature = "aspectus-auth"))]
-pub fn build_test_app_with_client(
+pub async fn build_test_app_with_client(
     provider: Arc<dyn ai_provider::LlmProvider>,
     client: reqwest::Client,
 ) -> Router {
+    let aspectus = AspectusMock::start().await;
+    aspectus.mock_active_tenant("test-tenant").await;
+    build_test_app_with_aspectus_and_client(provider, client, &aspectus).await
+}
+
+/// Build a test router with both a real TenantManagerImpl and a SessionStore.
+pub async fn build_test_app_with_store(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    store: Arc<dyn agent_core::SessionStore>,
+) -> Router {
+    build_test_app_with_store_and_compaction(
+        provider,
+        store,
+        agent_core::CompactionConfig::default(),
+    )
+    .await
+}
+
+/// Build a test router with a SessionStore and custom CompactionConfig.
+pub async fn build_test_app_with_store_and_compaction(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    store: Arc<dyn agent_core::SessionStore>,
+    compaction_config: agent_core::CompactionConfig,
+) -> Router {
+    let aspectus = AspectusMock::start().await;
+    aspectus.mock_active_tenant("test-tenant").await;
+
     let registry = Arc::new(tenant::TenantRegistry::new());
-    let test_tenant = tenant::Tenant::new(
-        "test-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(test_tenant).unwrap();
 
     let runtime_config = Arc::new(agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "gpt-4".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
         default_context_window: 128_000,
-        store: None,
+        store: Some(store),
         media_provider: None,
         media_registry: None,
-        http_client: client,
+        http_client: reqwest::Client::new(),
         available_models: vec!["gpt-4".to_string()],
-        compaction_config: agent_core::CompactionConfig::default(),
+        compaction_config,
         agent_space: agent_core::AgentSpace::default(),
         hook_config: agent_core::HookConfig::default(),
         memory_store: None,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
     );
 
-    let config = ServerConfig {
-        auth_secret: secrecy::SecretString::from(TEST_SECRET),
-        ..Default::default()
+    let config = api_gateway::ServerConfig::default();
+    let aspectus_config = api_gateway::config::AspectusConfig {
+        base_url: aspectus.base_url(),
+        service_token: "test-service-token".into(),
+        timeout_ms: 2000,
     };
-    let state = Arc::new(AppState::new(manager, config, registry.clone()));
+    let state = Arc::new(
+        api_gateway::AppState::new(manager, config, registry, &aspectus_config)
+            .expect("build test app state"),
+    );
+
     api_gateway::build_router(state)
 }
 
-pub const TEST_SECRET: &str = "test-secret-32-chars-long!!!";
+// ── Custom-config builders ──
 
-/// Generate a valid HMAC-SHA256 token for the given tenant.
-#[cfg(not(feature = "aspectus-auth"))]
-pub fn make_token(tenant_id: &str) -> String {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    use std::time::{SystemTime, UNIX_EPOCH};
+/// Build a test app with fully custom HarnessConfig.
+pub async fn build_test_app_with_config(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    harness_config: agent_core::HarnessConfig,
+) -> Router {
+    let aspectus = AspectusMock::start().await;
+    aspectus.mock_active_tenant("test-tenant").await;
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let payload = serde_json::json!({
-        "tenant_id": tenant_id,
-        "iat": now,
-        "exp": now + 86400,
-    });
-    let payload_json = serde_json::to_vec(&payload).unwrap();
-    let payload_b64 = base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        &payload_json,
+    let registry = Arc::new(tenant::TenantRegistry::new());
+    let runtime_config = Arc::new(harness_config);
+    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
     );
 
-    let mut mac = Hmac::<Sha256>::new_from_slice(TEST_SECRET.as_bytes()).unwrap();
-    mac.update(&payload_json);
-    let signature = mac.finalize().into_bytes();
-    let sig_b64 = base64::Engine::encode(
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        &signature,
+    let config = api_gateway::ServerConfig::default();
+    let aspectus_config = api_gateway::config::AspectusConfig {
+        base_url: aspectus.base_url(),
+        service_token: "test-service-token".into(),
+        timeout_ms: 2000,
+    };
+    let state = Arc::new(
+        api_gateway::AppState::new(manager, config, registry, &aspectus_config)
+            .expect("build test app state"),
     );
 
-    format!("{}.{}", payload_b64, sig_b64)
+    api_gateway::build_router(state)
 }
 
-/// Start a wiremock server that responds with the given SSE body for OpenAI
-/// chat completions, and return the provider + base URL.
+/// Start a wiremock server that responds with an OpenAI SSE body.
 pub async fn start_wiremock_openai(
     body: &str,
 ) -> (wiremock::MockServer, Arc<dyn ai_provider::LlmProvider>) {
@@ -214,6 +164,8 @@ where
     (server, provider)
 }
 
+// ── Response parsing helpers ──
+
 /// Parse an HTTP response body into a JSON value.
 /// Panics if the status code is not success (2xx).
 pub async fn json_body(response: Response) -> serde_json::Value {
@@ -231,11 +183,7 @@ pub async fn json_body(response: Response) -> serde_json::Value {
     value
 }
 
-/// Collect SSE events from an HTTP response body with a timeout.
-///
-/// Parses the `event: ...\ndata: ...\n\n` format produced by `SseStream`.
-/// Because SSE streams may be kept alive indefinitely, this function reads
-/// until `timeout` expires and then returns whatever events were captured.
+/// Collect SSE events from an HTTP response body.
 pub async fn collect_sse_events(response: Response) -> Vec<api_gateway::types::ServerEvent> {
     collect_sse_events_with_timeout(response, std::time::Duration::from_secs(10)).await
 }
@@ -260,8 +208,6 @@ pub async fn collect_sse_events_with_timeout(
                 if let Ok(text) = std::str::from_utf8(&chunk) {
                     buffer.push_str(text);
                 }
-
-                // Parse SSE events from buffer (separated by double-newline)
                 while let Some(pos) = buffer.find("\n\n") {
                     let event_text = buffer[..pos].to_string();
                     buffer = buffer[pos + 2..].to_string();
@@ -312,69 +258,9 @@ data: [DONE]
     )
 }
 
-// ── Persistence-aware test fixtures ──
+// ── Persistence helpers ──
 
 use storage::session::postgres::PgSessionStore;
-
-/// Build a test router with both a real TenantManagerImpl and a SessionStore.
-/// Delegates to `build_test_app_with_store_and_compaction` with default config.
-#[cfg(not(feature = "aspectus-auth"))]
-pub fn build_test_app_with_store(
-    provider: Arc<dyn ai_provider::LlmProvider>,
-    store: Arc<dyn agent_core::SessionStore>,
-) -> Router {
-    build_test_app_with_store_and_compaction(
-        provider,
-        store,
-        agent_core::CompactionConfig::default(),
-    )
-}
-
-/// Build a test router with a SessionStore and custom CompactionConfig.
-#[cfg(not(feature = "aspectus-auth"))]
-pub fn build_test_app_with_store_and_compaction(
-    provider: Arc<dyn ai_provider::LlmProvider>,
-    store: Arc<dyn agent_core::SessionStore>,
-    compaction_config: agent_core::CompactionConfig,
-) -> Router {
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let test_tenant = tenant::Tenant::new(
-        "test-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(test_tenant).unwrap();
-
-    let runtime_config = Arc::new(agent_core::HarnessConfig {
-        provider: provider.clone(),
-        default_model: "gpt-4".to_string(),
-        default_system_prompt: "You are a helpful assistant.".to_string(),
-        default_context_window: 128_000,
-        store: Some(store),
-        media_provider: None,
-        media_registry: None,
-        http_client: reqwest::Client::new(),
-        available_models: vec!["gpt-4".to_string()],
-        compaction_config,
-        agent_space: agent_core::AgentSpace::default(),
-        hook_config: agent_core::HookConfig::default(),
-        memory_store: None,
-    });
-    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
-    );
-
-    let config = ServerConfig {
-        auth_secret: secrecy::SecretString::from(TEST_SECRET),
-        ..Default::default()
-    };
-    let state = Arc::new(AppState::new(manager, config, registry.clone()));
-    api_gateway::build_router(state)
-}
 
 /// Verify Docker containers are running before persistence-dependent tests.
 pub async fn ensure_test_containers() {
@@ -384,7 +270,6 @@ pub async fn ensure_test_containers() {
         .unwrap_or_else(|_| "redis://:redis@localhost:16379".to_string());
 
     let pg_ok = sqlx::PgPool::connect(&pg_url).await.is_ok();
-    // Simple connectivity check: try to open a client and get connection
     let redis_ok = redis::Client::open(redis_url.as_str())
         .map(|_| ())
         .is_ok();
@@ -412,13 +297,11 @@ pub async fn create_test_pg_store() -> PgSessionStore {
 
 // ── Aspectus Integration Test Helpers ──
 
-#[cfg(feature = "aspectus-auth")]
 /// Mock Aspectus server backed by wiremock.
 pub struct AspectusMock {
-    pub server: wiremock::MockServer,
+    server: wiremock::MockServer,
 }
 
-#[cfg(feature = "aspectus-auth")]
 impl AspectusMock {
     pub async fn start() -> Self {
         Self {
@@ -454,7 +337,7 @@ impl AspectusMock {
             .await;
     }
 
-    /// Mock a successful introspection with custom quota (for testing limits).
+    /// Mock a successful introspection with custom quota.
     pub async fn mock_tenant_with_quota(
         &self,
         tenant_id: &str,
@@ -494,7 +377,7 @@ impl AspectusMock {
             .await;
     }
 
-    /// Mock a tenant not configured for pandaria (no quotas.pandaria key).
+    /// Mock a tenant not configured for pandaria.
     pub async fn mock_no_pandaria_quota(&self, tenant_id: &str) {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/introspect"))
@@ -510,7 +393,7 @@ impl AspectusMock {
             .await;
     }
 
-    /// Mock an internal server error from Aspectus (503 simulation).
+    /// Mock an internal server error from Aspectus.
     pub async fn mock_server_error(&self) {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/introspect"))
@@ -520,13 +403,28 @@ impl AspectusMock {
     }
 }
 
-#[cfg(feature = "aspectus-auth")]
-/// Build a test app with Aspectus auth enabled.
-/// Uses real AspectusClient pointed at a wiremock server.
+/// Build a test app with Aspectus auth enabled (internal driver).
 pub async fn build_test_app_with_aspectus(
     provider: Arc<dyn ai_provider::LlmProvider>,
-    aspectus_url: String,
-) -> axum::Router {
+    aspectus: &AspectusMock,
+) -> Router {
+    build_test_app_with_aspectus_impl(provider, None, aspectus).await
+}
+
+/// Build with a custom HTTP client.
+pub async fn build_test_app_with_aspectus_and_client(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    client: reqwest::Client,
+    aspectus: &AspectusMock,
+) -> Router {
+    build_test_app_with_aspectus_impl(provider, Some(client), aspectus).await
+}
+
+async fn build_test_app_with_aspectus_impl(
+    provider: Arc<dyn ai_provider::LlmProvider>,
+    http_client: Option<reqwest::Client>,
+    aspectus: &AspectusMock,
+) -> Router {
     let registry = Arc::new(tenant::TenantRegistry::new());
 
     let runtime_config = Arc::new(agent_core::HarnessConfig {
@@ -537,7 +435,7 @@ pub async fn build_test_app_with_aspectus(
         store: None,
         media_provider: None,
         media_registry: None,
-        http_client: reqwest::Client::new(),
+        http_client: http_client.unwrap_or_else(reqwest::Client::new),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
@@ -550,18 +448,13 @@ pub async fn build_test_app_with_aspectus(
 
     let config = api_gateway::ServerConfig::default();
     let aspectus_config = api_gateway::config::AspectusConfig {
-        base_url: aspectus_url,
+        base_url: aspectus.base_url(),
         service_token: "test-service-token".into(),
         timeout_ms: 2000,
     };
     let state = Arc::new(
-        api_gateway::AppState::with_aspectus(
-            manager,
-            config,
-            registry,
-            &aspectus_config,
-        )
-        .expect("build test app state"),
+        api_gateway::AppState::new(manager, config, registry, &aspectus_config)
+            .expect("build test app state"),
     );
 
     api_gateway::build_router(state)

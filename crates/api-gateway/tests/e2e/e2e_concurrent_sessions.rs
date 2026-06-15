@@ -12,8 +12,8 @@ async fn test_concurrent_sessions_isolation() {
 
     let body = common::openai_text_sse_body("concurrent ok");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create 3 sessions concurrently
     let mut handles = Vec::new();

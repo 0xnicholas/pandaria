@@ -9,13 +9,9 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::ServerConfig;
-#[cfg(feature = "aspectus-auth")]
 use crate::config::AspectusConfig;
-use crate::middleware::{auth, rate_limit};
+use crate::middleware::{auth, rate_limit, TenantCache};
 use crate::routes::{events, health, messages, metrics, sessions};
-
-#[cfg(feature = "aspectus-auth")]
-use crate::middleware::TenantCache;
 
 use crate::types::SessionInfo;
 
@@ -25,32 +21,13 @@ pub struct AppState {
     pub config: ServerConfig,
     pub rate_limiter: rate_limit::RateLimiter,
     pub registry: Arc<tenant::TenantRegistry>,
-
-    #[cfg(feature = "aspectus-auth")]
     pub aspectus: aspectus_client::AspectusClient,
-    #[cfg(feature = "aspectus-auth")]
     pub tenant_cache: TenantCache,
 }
 
 impl AppState {
-    /// Create AppState without Aspectus (legacy HMAC auth).
-    #[cfg(not(feature = "aspectus-auth"))]
-    pub fn new(
-        tenant_manager: Arc<dyn tenant::TenantManager>,
-        config: ServerConfig,
-        registry: Arc<tenant::TenantRegistry>,
-    ) -> Self {
-        Self {
-            tenant_manager,
-            config,
-            rate_limiter: rate_limit::RateLimiter::new(),
-            registry,
-        }
-    }
-
     /// Create AppState with Aspectus auth.
-    #[cfg(feature = "aspectus-auth")]
-    pub fn with_aspectus(
+    pub fn new(
         tenant_manager: Arc<dyn tenant::TenantManager>,
         config: ServerConfig,
         registry: Arc<tenant::TenantRegistry>,

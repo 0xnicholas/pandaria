@@ -62,60 +62,28 @@ impl ai_provider::media::MediaProvider for MockMediaProvider {
 
 use tokio_util::sync::CancellationToken;
 
-fn build_app_with_media(
+async fn build_app_with_media(
     provider: Arc<dyn ai_provider::LlmProvider>,
-    media_provider: Arc<dyn ai_provider::media::MediaProvider>,
+    media_provider: Option<Arc<dyn ai_provider::media::MediaProvider>>,
+    media_registry: Option<Arc<dyn ai_provider::media::MediaGenerationRegistry>>,
 ) -> axum::Router {
-    let registry = Arc::new(tenant::TenantRegistry::new());
-    let test_tenant = tenant::Tenant::new(
-        "test-tenant",
-        tenant::TenantQuota {
-            max_concurrent_sessions: 10,
-            max_tokens_per_day: 1_000_000,
-            max_tool_calls_per_minute: 60,
-            cpu_time_budget_ms_per_day: 3_600_000,
-        },
-    );
-    registry.register(test_tenant).unwrap();
-
-    let mut media_registry = ai_provider::media::MediaModelRegistry::new();
-    media_registry.insert(ai_provider::media::MediaModel {
-        id: "mock-img".into(),
-        name: "Mock Image".into(),
-        provider: "mock".into(),
-        base_url: "https://mock.example.com".into(),
-        supported_tasks: vec![ai_provider::media::MediaTaskType::ImageGeneration],
-        cost_per_call: Some(0.01),
-        headers: None,
-    });
-
-    let runtime_config = Arc::new(agent_core::HarnessConfig {
+    let harness_config = agent_core::HarnessConfig {
         provider: provider.clone(),
         default_model: "gpt-4".to_string(),
         default_system_prompt: "You are a helpful assistant.".to_string(),
         default_context_window: 128_000,
         store: None,
-        media_provider: Some(media_provider),
-        media_registry: Some(Arc::new(media_registry)),
+        media_provider,
+        media_registry,
         http_client: reqwest::Client::new(),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
-        agent_space: AgentSpace::from_env_or_default(),
-        hook_config: agent_core::HookConfig::default(),
+        agent_space: agent_core::AgentSpace::default(),
+        hook_config: agent_core::HarnessConfig::default().hook_config,
         memory_store: None,
-    });
-    let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry, runtime_config),
-    );
-
-    let config = api_gateway::ServerConfig {
-        auth_secret: secrecy::SecretString::from(common::TEST_SECRET),
-        ..Default::default()
     };
-    let state = Arc::new(api_gateway::AppState::new(manager, config));
-    api_gateway::build_router(state)
+    common::build_test_app_with_config(provider, harness_config).await
 }
-
 /// SSE body that emits a `generate_media` tool call.
 fn generate_media_sse_body(media_type: &str, prompt: &str) -> String {
     let args = serde_json::json!({"media_type": media_type, "prompt": prompt}).to_string();
@@ -178,8 +146,8 @@ async fn test_media_generation_returns_inline_image() {
     let (_server, provider) = common::start_wiremock_openai_dynamic(responder).await;
     let media_provider: Arc<dyn ai_provider::media::MediaProvider> =
         Arc::new(MockMediaProvider::new(media_response));
-    let app = build_app_with_media(provider, media_provider);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_media(provider, media_provider).await;
+    let token = "pk_live_test-tenant";
 
     let create = app
         .clone()
@@ -295,8 +263,8 @@ async fn test_media_generation_saves_large_image_to_workspace() {
     let (_server, provider) = common::start_wiremock_openai_dynamic(responder).await;
     let media_provider: Arc<dyn ai_provider::media::MediaProvider> =
         Arc::new(MockMediaProvider::new(media_response));
-    let app = build_app_with_media(provider, media_provider);
-    let token = common::make_token("test-tenant");
+    let app = build_app_with_media(provider, media_provider).await;
+    let token = "pk_live_test-tenant";
 
     let create = app
         .clone()

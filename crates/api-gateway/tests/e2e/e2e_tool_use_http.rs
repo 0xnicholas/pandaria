@@ -57,8 +57,8 @@ data: [DONE]
     };
 
     let (_server, provider) = common::start_wiremock_openai_dynamic(responder).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create session
     let create_response = app

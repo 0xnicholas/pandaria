@@ -49,8 +49,8 @@ async fn test_webhook_delivers_turn_end_event() {
     let test_resp = http_client.post(&webhook_url).body("test").send().await;
     println!("test_resp: {:?}", test_resp);
 
-    let app = common::build_test_app_with_client(provider, http_client);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app_with_client(provider, http_client).await;
+    let token = "pk_live_test-tenant";
     let create_body = serde_json::json!({
         "title": "webhook test",
         "webhook": {
@@ -176,8 +176,8 @@ async fn test_webhook_ssrf_blocked() {
 
     let body = common::openai_text_sse_body("webhook ssrf");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let create_body = serde_json::json!({
         "title": "webhook ssrf test",

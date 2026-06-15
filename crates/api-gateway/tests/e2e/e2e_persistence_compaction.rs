@@ -44,7 +44,7 @@ async fn test_compaction_persistence() {
         store.clone(),
         compaction_config,
     );
-    let token = common::make_token("test-tenant");
+    let token = "pk_live_test-tenant";
 
     // Create session
     let create = app

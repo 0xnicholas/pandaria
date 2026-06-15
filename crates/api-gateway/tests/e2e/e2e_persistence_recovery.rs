@@ -24,8 +24,8 @@ async fn test_session_persistence_recovery() {
     let store = Arc::new(common::create_test_pg_store().await);
     let session_id;
     {
-        let app = common::build_test_app_with_store(provider.clone(), store.clone());
-        let token = common::make_token("test-tenant");
+        let app = common::build_test_app_with_store(provider.clone(), store.clone()).await;
+        let token = "pk_live_test-tenant";
 
         // Create session
         let create_response = app

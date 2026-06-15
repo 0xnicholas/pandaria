@@ -59,8 +59,8 @@ async fn test_agent_loop_survives_persistence_failure() {
     let (_server, provider) = common::start_wiremock_openai(&body).await;
 
     let failing_store: Arc<dyn agent_core::SessionStore> = Arc::new(FailingStore);
-    let app = common::build_test_app_with_store(provider, failing_store);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app_with_store(provider, failing_store).await;
+    let token = "pk_live_test-tenant";
 
     // Create session
     let create_response = app

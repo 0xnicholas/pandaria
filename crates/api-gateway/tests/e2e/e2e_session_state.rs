@@ -14,8 +14,8 @@ async fn test_session_state_lifecycle() {
 
     let body = common::openai_text_sse_body("state test");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create session
     let create_response = app
@@ -131,8 +131,8 @@ async fn test_session_state_not_found() {
 
     let body = common::openai_text_sse_body("not found");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
-    let app = common::build_test_app(provider);
-    let token = common::make_token("test-tenant");
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     let state_response = app
         .oneshot(
