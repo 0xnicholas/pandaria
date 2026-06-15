@@ -10,6 +10,7 @@ pub mod middleware;
 pub mod routes;
 pub mod server;
 pub mod sse;
+pub mod tavern;
 pub mod types;
 
 pub use config::{RateLimitConfig, ServerConfig};

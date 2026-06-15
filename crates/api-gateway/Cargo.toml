@@ -25,11 +25,19 @@ dotenvy = "0.15"
 tenant = { path = "../tenant" }
 agent-core = { path = "../agent-core" }
 ai-provider = { path = "../ai-provider" }
+tavern-core = { path = "../tavern-core" }
+tavern-comp = { path = "../tavern-comp" }
 reqwest = { version = "0.12", features = ["json"] }
 
 [[bin]]
 name = "pandaria-server"
 path = "src/main.rs"
+
+[features]
+default = ["sqlite"]
+sqlite = ["tavern-comp/sqlite"]
+postgres = ["tavern-comp/postgres"]
+bundled-sqlite = ["tavern-comp/bundled-sqlite"]
 
 [dev-dependencies]
 tokio-test = "0.4"

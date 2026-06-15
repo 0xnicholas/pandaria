@@ -90,14 +90,25 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-pub async fn serve(state: Arc<AppState>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn serve(
+    state: Arc<AppState>,
+    tavern: Option<Arc<crate::tavern::TavernState>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // 安全启动检查：禁止以默认测试密钥运行
     if state.config.is_default_secret() {
         panic!("Default auth secret detected. Set PANDARIA_AUTH_SECRET environment variable.");
     }
 
     let listener = tokio::net::TcpListener::bind(&state.config.bind_addr).await?;
-    let router = build_router(state.clone());
+    let mut router = build_router(state.clone());
+
+    // Merge Tavern routes
+    if let Some(tavern_state) = tavern {
+        let tavern_router = axum::Router::new()
+            .route("/health", axum::routing::get(crate::tavern::tavern_health))
+            .with_state(tavern_state);
+        router = router.nest("/tavern", tavern_router);
+    }
 
     tracing::info!("api-gateway listening on {}", listener.local_addr()?);
 
