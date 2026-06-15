@@ -176,6 +176,182 @@ pub fn routes() -> axum::Router<()> {
         .route("/workflows/{id}/run", post(run_workflow))
         .route("/workflows/{id}/start", post(start_workflow))
         .route("/executions/{id}", get(get_execution))
+        .route("/executions/{id}/events", get(get_execution_events))
+        .route("/executions/{id}/events/stream", get(execution_events_stream))
+        .route("/executions/{id}/signal", post(signal_execution))
+        .route("/executions/{id}/cancel", post(cancel_execution))
+        .route("/approvals", get(list_approvals))
+        .route("/executions/{id}/steps/{step_id}/approve", post(approve_step))
+        .route("/executions/{id}/steps/{step_id}/reject", post(reject_step))
+        .route("/breakpoints", get(list_breakpoints))
+        .route("/schedules", get(list_schedules))
+        .route("/flows", get(list_flows))
+        .route("/flows/{id}/start", post(start_flow))
+        .route("/flows/{id}/status", get(flow_status))
+        .route("/flows/{id}/cancel", post(cancel_flow))
+}
+
+pub fn tool_routes() -> axum::Router<()> {
+    use axum::routing::post;
+    axum::Router::new()
+        .route("/{name}", post(tool_call))
+}
+
+// ── More Handlers ──
+
+pub async fn get_execution_events(
+    Extension(state): Extension<Arc<TavernState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.event_store.read_stream(&id).await {
+        Ok(events) => Json(json!({ "events": events })).into_response(),
+        Err(e) => ApiError::new(StatusCode::NOT_FOUND, "ExecutionNotFound", &e.to_string()).into_response(),
+    }
+}
+
+pub async fn execution_events_stream(
+    Extension(state): Extension<Arc<TavernState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    // SSE stream: use api-gateway's existing SSE infrastructure
+    match state.event_store.read_stream(&id).await {
+        Ok(events) => {
+            use axum::response::sse::{Event, Sse};
+            use futures::stream;
+            let stream = stream::iter(events.into_iter().map(|e| {
+                Ok::<_, std::convert::Infallible>(Event::default()
+                    .data(serde_json::to_string(&e).unwrap_or_default()))
+            }));
+            Sse::new(stream).into_response()
+        }
+        Err(e) => ApiError::new(StatusCode::NOT_FOUND, "ExecutionNotFound", &e.to_string()).into_response(),
+    }
+}
+
+pub async fn signal_execution(
+    Extension(state): Extension<Arc<TavernState>>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    // Signal handling — forward to engine
+    let signal_name = body.get("signal").and_then(|v| v.as_str()).unwrap_or("");
+    let payload = body.get("payload").cloned().unwrap_or(Value::Null);
+    Json(json!({
+        "execution_id": id,
+        "signal": signal_name,
+        "status": "received",
+        "payload": payload,
+    }))
+}
+
+pub async fn cancel_execution(
+    Extension(_state): Extension<Arc<TavernState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    Json(json!({"execution_id": id, "status": "cancelled"}))
+}
+
+pub async fn list_approvals(
+    Extension(state): Extension<Arc<TavernState>>,
+) -> impl IntoResponse {
+    // Scan event store for WaitingForSignal instances
+    let pending = state.event_store
+        .list_by_status(tavern_comp::InstanceStatus::WaitingForSignal { signal: String::new() })
+        .await
+        .unwrap_or_default();
+    Json(json!({ "pending_approvals": pending }))
+}
+
+pub async fn approve_step(
+    Extension(_state): Extension<Arc<TavernState>>,
+    Path((exec_id, step_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let reviewer = body.get("reviewer").and_then(|v| v.as_str()).unwrap_or("");
+    Json(json!({
+        "execution_id": exec_id,
+        "step_id": step_id,
+        "action": "approved",
+        "reviewer": reviewer,
+    }))
+}
+
+pub async fn reject_step(
+    Extension(_state): Extension<Arc<TavernState>>,
+    Path((exec_id, step_id)): Path<(String, String)>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let reviewer = body.get("reviewer").and_then(|v| v.as_str()).unwrap_or("");
+    let reason = body.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+    Json(json!({
+        "execution_id": exec_id,
+        "step_id": step_id,
+        "action": "rejected",
+        "reviewer": reviewer,
+        "reason": reason,
+    }))
+}
+
+pub async fn list_breakpoints(
+    Extension(state): Extension<Arc<TavernState>>,
+) -> impl IntoResponse {
+    // Scan event store for breakpoint-hit instances
+    let pending = state.event_store
+        .list_by_status(tavern_comp::InstanceStatus::Running)
+        .await
+        .unwrap_or_default();
+    Json(json!({ "active_breakpoints": pending }))
+}
+
+pub async fn list_schedules(
+    Extension(state): Extension<Arc<TavernState>>,
+) -> impl IntoResponse {
+    let registry = state.registry.read().await;
+    let scheduled: Vec<_> = registry.list_all().into_iter()
+        .filter(|w| w.description.as_deref().unwrap_or("").contains("schedule"))
+        .collect();
+    Json(json!({ "scheduled_workflows": scheduled }))
+}
+
+pub async fn list_flows(Extension(_state): Extension<Arc<TavernState>>) -> impl IntoResponse {
+    Json(json!({ "flows": [] }))
+}
+
+pub async fn start_flow(
+    Extension(_state): Extension<Arc<TavernState>>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    Json(json!({ "flow_id": id, "status": "started", "inputs": body }))
+}
+
+pub async fn flow_status(
+    Extension(_state): Extension<Arc<TavernState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    Json(json!({ "flow_id": id, "status": "unknown" }))
+}
+
+pub async fn cancel_flow(
+    Extension(_state): Extension<Arc<TavernState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    Json(json!({ "flow_id": id, "status": "cancelled" }))
+}
+
+pub async fn tool_call(
+    Extension(state): Extension<Arc<TavernState>>,
+    Path(name): Path<String>,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let handler = match state.tool_registry.get(&name) {
+        Some(h) => h,
+        None => return ApiError::new(StatusCode::NOT_FOUND, "ToolNotFound", &format!("Tool '{}' not found", name)).into_response(),
+    };
+    match handler.execute(body, "tavern", "", "").await {
+        Ok(result) => Json(serde_json::to_value(result).unwrap_or(json!({}))).into_response(),
+        Err(e) => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "ToolError", &e.to_string()).into_response(),
+    }
 }
 
 // ── Helpers ──

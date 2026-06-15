@@ -155,11 +155,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let workflow_registry = Arc::new(tokio::sync::RwLock::new(workflow_registry));
     let event_store: Arc<dyn tavern_comp::EventStore> = Arc::new(tavern_comp::MemoryEventStore::new());
+    let mut tool_registry = tavern_core::ToolRegistry::new();
+    tool_registry.register(
+        "web_search".into(),
+        std::sync::Arc::new(api_gateway::tavern_tools::web_search::WebSearchHandler::new()),
+    );
+    let tool_registry = Arc::new(tool_registry);
     let tavern_state = Arc::new(api_gateway::tavern::TavernState {
         hero: hero.clone(),
         registry: workflow_registry.clone(),
         event_store,
-        tool_registry: Arc::new(tavern_core::ToolRegistry::new()),
+        tool_registry,
     });
 
     // --- 7. Print startup info ---

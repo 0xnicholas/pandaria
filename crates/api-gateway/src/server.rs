@@ -105,7 +105,10 @@ pub async fn serve(
     // Merge Tavern routes (use Extension to avoid state type conflict)
     if let Some(tavern_state) = tavern {
         let ext: axum::Extension<Arc<crate::tavern::TavernState>> = axum::Extension(tavern_state);
-        router = router.nest("/tavern", crate::tavern::routes().layer(ext));
+        router = router
+            .nest("/tavern", crate::tavern::routes().layer(ext.clone()))
+            .nest("/api/tools", crate::tavern::tool_routes().layer(ext.clone()))
+            .route("/executions/{id}/events/stream", axum::routing::get(crate::tavern::execution_events_stream).layer(ext));
     }
 
     tracing::info!("api-gateway listening on {}", listener.local_addr()?);

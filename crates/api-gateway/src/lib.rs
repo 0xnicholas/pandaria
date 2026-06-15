@@ -11,6 +11,7 @@ pub mod routes;
 pub mod server;
 pub mod sse;
 pub mod tavern;
+pub mod tavern_tools;
 pub mod types;
 
 pub use config::{RateLimitConfig, ServerConfig};
