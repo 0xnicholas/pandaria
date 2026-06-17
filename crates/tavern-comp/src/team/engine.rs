@@ -105,7 +105,7 @@ impl SquadEngine {
         // return the paused status so the caller can resume later.
         if matches!(
             squad.status,
-            SquadStatus::WaitingForSignal { .. } | SquadStatus::Sleeping { .. }
+            SquadStatus::WaitingForSignal { .. } | SquadStatus::Sleeping { .. } | SquadStatus::Breakpoint { .. }
         ) {
             let paused_result = SquadResult {
                 squad_id: squad.id.clone(),
@@ -221,7 +221,8 @@ impl SquadEngine {
         squad: &mut Squad,
     ) -> Result<SquadResult, CompError> {
         let scheduler = MissionScheduler::new(team);
-        let mut completed: HashSet<String> = HashSet::new();
+        // Seed from persisted completed set, work locally, sync back on return
+        let mut completed: HashSet<String> = squad.completed_missions.clone();
         let mut running: HashSet<String> = HashSet::new();
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.max_concurrency));
 
@@ -273,19 +274,34 @@ impl SquadEngine {
                     Ok(()) => {
                         // Merge outputs: shared context and thread from the completed branch.
                         merge_context(&mut squad.context, &updated_squad.context);
-                        // Check if squad paused (signal wait or retry sleep)
-                        if matches!(
-                            updated_squad.status,
-                            SquadStatus::WaitingForSignal { .. } | SquadStatus::Sleeping { .. }
-                        ) {
-                            squad.status = updated_squad.status.clone();
-                            return Ok(SquadResult {
-                                squad_id: squad.id.clone(),
-                                team_id: squad.team_id.clone(),
-                                status: squad.status.clone(),
-                                context: squad.context.clone(),
-                                outputs: squad.context.shared.clone(),
-                            });
+                        // Check if squad paused (signal wait, retry sleep, or breakpoint)
+                        match &updated_squad.status {
+                            s @ SquadStatus::WaitingForSignal { .. }
+                            | s @ SquadStatus::Sleeping { .. } => {
+                                squad.completed_missions = completed;
+                                squad.status = s.clone();
+                                return Ok(SquadResult {
+                                    squad_id: squad.id.clone(),
+                                    team_id: squad.team_id.clone(),
+                                    status: squad.status.clone(),
+                                    context: squad.context.clone(),
+                                    outputs: squad.context.shared.clone(),
+                                });
+                            }
+                            SquadStatus::Breakpoint { .. } => {
+                                // Mission completed successfully; mark as done THEN pause
+                                completed.insert(mission_id);
+                                squad.completed_missions = completed.clone();
+                                squad.status = updated_squad.status.clone();
+                                return Ok(SquadResult {
+                                    squad_id: squad.id.clone(),
+                                    team_id: squad.team_id.clone(),
+                                    status: squad.status.clone(),
+                                    context: squad.context.clone(),
+                                    outputs: squad.context.shared.clone(),
+                                });
+                            }
+                            _ => {}
                         }
                         completed.insert(mission_id);
                     }
@@ -306,6 +322,9 @@ impl SquadEngine {
                 }
             }
         }
+
+        // sync persisted completed state
+        squad.completed_missions = completed;
 
         squad.status = SquadStatus::Completed;
         let result = SquadResult {
@@ -340,7 +359,7 @@ impl SquadEngine {
         manager_cfg: &tavern_core::ManagerConfig,
     ) -> Result<SquadResult, CompError> {
         let scheduler = MissionScheduler::new(team);
-        let mut completed: HashSet<String> = HashSet::new();
+        let mut completed: HashSet<String> = squad.completed_missions.clone();
         let mut manager_loops: usize = 0;
 
         loop {
@@ -439,19 +458,34 @@ impl SquadEngine {
             match self.execute_mission(&mut branch_squad, &next_mission).await {
                 Ok(()) => {
                     merge_context(&mut squad.context, &branch_squad.context);
-                    // Check if squad paused (signal wait or retry sleep)
-                    if matches!(
-                        branch_squad.status,
-                        SquadStatus::WaitingForSignal { .. } | SquadStatus::Sleeping { .. }
-                    ) {
-                        squad.status = branch_squad.status.clone();
-                        return Ok(SquadResult {
-                            squad_id: squad.id.clone(),
-                            team_id: squad.team_id.clone(),
-                            status: squad.status.clone(),
-                            context: squad.context.clone(),
-                            outputs: squad.context.shared.clone(),
-                        });
+                    // Check if squad paused (signal wait, retry sleep, or breakpoint)
+                    match &branch_squad.status {
+                        s @ SquadStatus::WaitingForSignal { .. }
+                        | s @ SquadStatus::Sleeping { .. } => {
+                            squad.completed_missions = completed.clone();
+                            squad.status = s.clone();
+                            return Ok(SquadResult {
+                                squad_id: squad.id.clone(),
+                                team_id: squad.team_id.clone(),
+                                status: squad.status.clone(),
+                                context: squad.context.clone(),
+                                outputs: squad.context.shared.clone(),
+                            });
+                        }
+                        SquadStatus::Breakpoint { .. } => {
+                            // Mission completed; mark as done THEN pause
+                            completed.insert(next_mission.id.clone());
+                            squad.completed_missions = completed.clone();
+                            squad.status = branch_squad.status.clone();
+                            return Ok(SquadResult {
+                                squad_id: squad.id.clone(),
+                                team_id: squad.team_id.clone(),
+                                status: squad.status.clone(),
+                                context: squad.context.clone(),
+                                outputs: squad.context.shared.clone(),
+                            });
+                        }
+                        _ => {}
                     }
                     completed.insert(next_mission.id.clone());
                 }
@@ -472,6 +506,7 @@ impl SquadEngine {
             }
         }
 
+        squad.completed_missions = completed;
         squad.status = SquadStatus::Completed;
         let result = SquadResult {
             squad_id: squad.id.clone(),
@@ -683,6 +718,17 @@ impl SquadEngine {
                             .into(),
                         )
                         .await?;
+
+                    // Check breakpoint: pause after completion for manual review
+                    if mission.breakpoint {
+                        squad.status = SquadStatus::Breakpoint {
+                            mission_id: mission.id.clone(),
+                        };
+                        tracing::info!(
+                            mission_id = %mission.id,
+                            "squad paused at breakpoint"
+                        );
+                    }
 
                     return Ok(());
                 }
@@ -1260,5 +1306,57 @@ mod tests {
         let result = engine.run(&team, &mut squad).await.unwrap();
         assert_eq!(result.status, SquadStatus::Completed);
         assert_eq!(result.outputs.get("out1").unwrap(), "success");
+    }
+
+    #[tokio::test]
+    async fn breakpoint_pauses_after_mission() {
+        let missions = vec![
+            Mission {
+                id: "step1".into(),
+                role: "researcher".into(),
+                task: "do step 1".into(),
+                breakpoint: true,
+                output_key: Some("out1".into()),
+                handoff_mode: HandoffMode::Inherit,
+                ..Default::default()
+            },
+            Mission {
+                id: "step2".into(),
+                role: "researcher".into(),
+                task: "do step 2".into(),
+                depends_on: vec!["step1".into()],
+                output_key: Some("out2".into()),
+                handoff_mode: HandoffMode::Inherit,
+                ..Default::default()
+            },
+        ];
+        let team = make_team(missions, None);
+
+        let mut responses = HashMap::new();
+        responses.insert("researcher".into(), serde_json::json!("step1 done"));
+
+        let executor = Arc::new(MockAgentExecutor::new(team.roles.clone(), responses));
+        let engine = SquadEngine::new();
+        let mut squad = engine
+            .deploy(&team, executor, serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // First run: step1 completes, pauses at breakpoint
+        let result = engine.run(&team, &mut squad).await.unwrap();
+        assert_eq!(
+            result.status,
+            SquadStatus::Breakpoint {
+                mission_id: "step1".into()
+            }
+        );
+        assert_eq!(result.outputs.get("out1").unwrap(), "step1 done");
+        assert!(result.outputs.get("out2").is_none());
+
+        // Resume: step2 should run
+        squad.status = SquadStatus::Running;
+        let result = engine.run(&team, &mut squad).await.unwrap();
+        assert_eq!(result.status, SquadStatus::Completed);
+        assert_eq!(result.outputs.get("out2").unwrap(), "step1 done");
     }
 }

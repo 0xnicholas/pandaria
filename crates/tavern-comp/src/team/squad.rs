@@ -12,6 +12,9 @@ pub enum SquadStatus {
     Running,
     WaitingForSignal { signal: String },
     Sleeping { wake_at: DateTime<Utc> },
+    /// Paused at a breakpoint after completing a mission, awaiting manual
+    /// confirmation before continuing to the next mission.
+    Breakpoint { mission_id: String },
     Completed,
     Failed,
 }
@@ -42,6 +45,8 @@ pub struct Squad {
     pub executor: Arc<dyn AgentExecutor>,
     /// Signals received while the squad was waiting.
     pub received_signals: std::collections::HashSet<String>,
+    /// Mission IDs that have been completed (persisted across pause/resume).
+    pub completed_missions: std::collections::HashSet<String>,
 }
 
 impl Squad {
@@ -57,6 +62,7 @@ impl Squad {
             context: TeamContext::default(),
             executor,
             received_signals: std::collections::HashSet::new(),
+            completed_missions: std::collections::HashSet::new(),
         }
     }
 
