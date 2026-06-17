@@ -71,7 +71,7 @@ TenantSupervisor
 
 ### ADR-005：多租户三个基础能力不可裁剪
 
-1. **资源配额**：每租户 CPU time budget、并发 session 数上限、token 消耗计量。
+1. **资源配额**：每租户并发 session 数上限、token 消耗计量。（CPU time budget 在独立 tenant 项目中实现）
 2. **Session 持久化**：消息历史和 compaction 结果持久化到外部存储（Redis / PostgreSQL），服务重启后 session 可恢复，支持跨节点迁移。
 3. **可观测性**：基于 `tokio-tracing`，所有 span 携带 `tenant_id` 和 `session_id`，支持 per-tenant tool call 耗时、token 消耗、错误率统计。
 
@@ -240,7 +240,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | Session 持久化 schema | ✅ 已实现（PostgreSQL adapter + Redis adapter，支持 auto-restore + 增量保存 `append_entries`） |
 | LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral/DeepSeek + Bedrock feature-gated） |
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST） |
-| tenant crate | 🟡 核心功能已实现（并发配额、token/tool call 计量、session 生命周期），CPU time 预算待实现 |
+| tenant crate | 🟡 核心功能已实现（并发配额、token/tool call 计量、session 生命周期） |
 | Memory 系统 | ✅ MemoryStore trait + MemoryHookDispatcher + Conversation Formatter + `EmeraldMemoryStore` HTTP adapter（`agent-core/src/memory/emerald.rs`，7 单元测试通过） |
 | observability crate | ❌ 已删除（v0.1.3）。sanitize 移至 agent-core，metrics/tracing 暂无需求 |
 | api-gateway | ✅ 核心功能已实现（REST API + SSE + HMAC 认证 + 限流 + persist store 接入）。E2E 测试矩阵 9 个 suite 全部通过 |

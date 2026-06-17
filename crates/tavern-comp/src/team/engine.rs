@@ -16,6 +16,9 @@ use crate::team::scheduler::MissionScheduler;
 use crate::team::squad::{Squad, SquadResult, SquadStatus};
 use crate::workflow::Process;
 
+/// Timeout for the planning agent (seconds).
+const PLANNING_TIMEOUT_SECS: u64 = 120;
+
 #[derive(Clone)]
 pub struct SquadEngine {
     store: Arc<dyn EventStore>,
@@ -83,9 +86,19 @@ impl SquadEngine {
             .append(&squad.id, SquadEvent::SquadStarted.into())
             .await?;
 
-        let result = match &team.default_process {
-            Process::Sequential => self.run_dag(team, squad).await,
-            Process::Hierarchical(cfg) => self.run_hierarchical(team, squad, cfg).await,
+        // Planning phase: if enabled, call planner agent to analyze missions
+        // and inject plan context before execution.
+        let effective_team = if let Some(ref planning) = team.planning
+            && planning.enabled
+        {
+            self.run_planning_phase(team, squad).await?
+        } else {
+            team.clone()
+        };
+
+        let result = match &effective_team.default_process {
+            Process::Sequential => self.run_dag(&effective_team, squad).await,
+            Process::Hierarchical(cfg) => self.run_hierarchical(&effective_team, squad, cfg).await,
         };
 
         // Flush executor state regardless of outcome (best-effort, log on error)
@@ -98,6 +111,87 @@ impl SquadEngine {
         }
 
         result
+    }
+
+    /// Planning phase: invoke the planner agent to analyze missions and produce
+    /// a structured plan. The plan's strategy and per-mission reasoning are
+    /// injected into mission tasks as context. In Sequential mode, the planner
+    /// may override `depends_on` to establish execution order.
+    async fn run_planning_phase(
+        &self,
+        team: &Team,
+        squad: &Squad,
+    ) -> Result<Team, CompError> {
+        let planning = team.planning.as_ref().unwrap();
+        let planner_role_id = planning
+            .planning_agent
+            .as_deref()
+            .unwrap_or(&team.roles[0].id);
+
+        let planner_prompt = build_planner_prompt(team, &squad.context.shared);
+
+        let input = AgentInput {
+            task: planner_prompt,
+            context: squad.context.clone(),
+            model_override: None,
+            timeout: Some(std::time::Duration::from_secs(PLANNING_TIMEOUT_SECS)),
+            squad_id: Some(squad.id.clone()),
+            mission_id: None,
+        };
+
+        let output = squad
+            .executor
+            .execute(planner_role_id, input)
+            .await
+            .map_err(|e| CompError::PlanningError {
+                reason: format!("planner agent execution failed: {}", e),
+            })?;
+
+        // Extract text from output (handles both String and Object values)
+        let response_str = match &output.content {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+
+        let plan: tavern_core::Plan =
+            parse_json_with_retry(&response_str).map_err(|e| CompError::PlanningError {
+                reason: format!("failed to parse plan JSON: {}", e),
+            })?;
+
+        // Validate plan references
+        let mission_ids: std::collections::HashSet<&str> =
+            team.missions.iter().map(|m| m.id.as_str()).collect();
+        for ps in &plan.steps {
+            if !mission_ids.contains(ps.task_id.as_str()) {
+                return Err(CompError::PlanningError {
+                    reason: format!("plan references unknown mission_id: {}", ps.task_id),
+                });
+            }
+        }
+
+        // Inject plan context into missions
+        let mut planned_team = team.clone();
+        for mission in &mut planned_team.missions {
+            if let Some(plan_step) = plan.steps.iter().find(|ps| ps.task_id == mission.id) {
+                let plan_context = format!(
+                    "\n\n[Plan Context]\nOverall Strategy: {}\nYour role in this plan: {}\nExpected output: {}",
+                    plan.overall_strategy, plan_step.reasoning, plan_step.expected_output
+                );
+                mission.task = format!("{}{}", mission.task, plan_context);
+
+                // In Sequential mode, override depends_on with planner's suggested deps
+                if matches!(team.default_process, Process::Sequential)
+                    && !plan_step.dependencies.is_empty()
+                {
+                    mission.depends_on = plan_step.dependencies.clone();
+                }
+            }
+        }
+
+        // Re-validate DAG after planner modified dependencies
+        planned_team.validate()?;
+
+        Ok(planned_team)
     }
 
     /// P2: DAG-compatible sequential execution with parallel branches.
@@ -537,6 +631,87 @@ impl SquadEngine {
             timestamp: Utc::now(),
         });
     }
+}
+
+// ── Planning helpers ───────────────────────────────────────────────────────
+
+/// Build the prompt for the planning agent.
+fn build_planner_prompt(team: &Team, shared: &Value) -> String {
+    let mut missions_desc = String::new();
+    for mission in &team.missions {
+        missions_desc.push_str(&format!(
+            "- id: {}\n  role: {}\n  task: {}\n",
+            mission.id, mission.role, mission.task
+        ));
+        if !mission.depends_on.is_empty() {
+            missions_desc.push_str(&format!("  depends_on: {:?}\n", mission.depends_on));
+        }
+        if let Some(ref key) = mission.output_key {
+            missions_desc.push_str(&format!("  output_key: {}\n", key));
+        }
+    }
+
+    let roles_desc: String = team
+        .roles
+        .iter()
+        .map(|r| {
+            format!(
+                "- {} (agent: {}): {}",
+                r.id,
+                r.agent_id,
+                r.description.as_deref().unwrap_or("no description")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "You are a planning agent for team: {}\n\n\
+         Available Roles:\n{}\n\n\
+         Missions to plan:\n{}\n\n\
+         Shared Context:\n{}\n\n\
+         Output a JSON plan with:\n\
+         - overall_strategy: string\n\
+         - steps: [\n\
+             {{\"task_id\": \"...\", \"agent_id\": \"...\", \"reasoning\": \"...\", \n\
+               \"expected_output\": \"...\", \"dependencies\": [\"...\"]}}\n\
+           ]",
+        team.description.as_deref().unwrap_or(&team.name),
+        roles_desc,
+        missions_desc,
+        shared,
+    )
+}
+
+/// Extract JSON from LLM output that may contain markdown fences or extra text.
+fn extract_json(raw: &str) -> String {
+    if serde_json::from_str::<Value>(raw).is_ok() {
+        return raw.to_string();
+    }
+    if let Some(start) = raw.find("```json") {
+        let after = &raw[start + 7..];
+        if let Some(end) = after.find("```") {
+            return after[..end].trim().to_string();
+        }
+    }
+    if let Some(start) = raw.find("```") {
+        let after = &raw[start + 3..];
+        if let Some(end) = after.find("```") {
+            return after[..end].trim().to_string();
+        }
+    }
+    if let Some(start) = raw.find('{')
+        && let Some(end) = raw.rfind('}')
+    {
+        return raw[start..=end].to_string();
+    }
+    raw.to_string()
+}
+
+/// Parse JSON with one retry attempt (used for planning output).
+fn parse_json_with_retry<T: serde::de::DeserializeOwned>(raw: &str) -> Result<T, String> {
+    let json_str = extract_json(raw);
+    serde_json::from_str(&json_str).map_err(|e| format!("invalid JSON: {}", e))
 }
 
 /// Merge outputs from a parallel branch back into the main squad context.

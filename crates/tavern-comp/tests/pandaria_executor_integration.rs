@@ -10,7 +10,7 @@ use tavern_comp::{
     AgentResolver, HandoffMode, Mission, PandariaAgentExecutor, Role,
     SquadEngine, Team, Visibility,
 };
-use tavern_core::{AgentConfig, ModelConfig, Process};
+use tavern_core::{AgentConfig, ModelConfig, PlanningConfig, Process};
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -613,6 +613,124 @@ async fn hierarchical_manager_delegates() {
             instructions: None,
         }),
         planning: None,
+        webhook: None,
+    };
+
+    let engine = SquadEngine::new();
+    let mut squad = engine
+        .deploy(&team, executor, serde_json::json!({ "topic": "AI" }))
+        .await
+        .expect("deploy squad");
+
+    let result = engine
+        .run(&team, &mut squad)
+        .await
+        .expect("run squad");
+
+    assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
+    assert_eq!(result.outputs.get("notes").unwrap(), "research notes about AI");
+    assert_eq!(result.outputs.get("article").unwrap(), "final article text");
+}
+
+/// Planning phase: planner agent analyzes missions and injects plan context.
+#[tokio::test]
+async fn planning_phase_injects_context() {
+    // Sequence: planner (returns plan JSON) → researcher → writer
+    let provider = Arc::new(MockProvider::sequence(vec![
+        // Planner call: returns a plan with overall strategy and per-mission reasoning
+        ai_provider::test_utils::MockResponse::Text(
+            serde_json::json!({
+                "overall_strategy": "Research the topic first, then write the article based on findings.",
+                "steps": [
+                    {
+                        "task_id": "research",
+                        "agent_id": "researcher",
+                        "reasoning": "Need to gather facts before writing.",
+                        "expected_output": "A summary of key findings about AI",
+                        "dependencies": []
+                    },
+                    {
+                        "task_id": "write",
+                        "agent_id": "writer",
+                        "reasoning": "Use research findings to produce the article.",
+                        "expected_output": "A well-written article on AI",
+                        "dependencies": []
+                    }
+                ]
+            }).to_string().into(),
+        ),
+        // Researcher call
+        ai_provider::test_utils::MockResponse::Text("research notes about AI".into()),
+        // Writer call
+        ai_provider::test_utils::MockResponse::Text("final article text".into()),
+    ]));
+
+    let agents = vec![
+        make_agent("planner", "You are a planning agent."),
+        make_agent("researcher", "You are a researcher."),
+        make_agent("writer", "You are a writer."),
+    ];
+    let resolver = Arc::new(HashMapAgentResolver::new(agents));
+
+    let harness_config = make_harness_config(provider);
+    let executor = Arc::new(PandariaAgentExecutor::new(
+        "test-tenant",
+        "test-team",
+        harness_config,
+        resolver,
+    ));
+
+    let team = Team {
+        id: "planning_team".into(),
+        name: "Planning Team".into(),
+        description: None,
+        roles: vec![
+            Role {
+                id: "planner".into(),
+                name: "Planner".into(),
+                agent_id: "planner".into(),
+                visibility: Visibility::default(),
+                ..Default::default()
+            },
+            Role {
+                id: "researcher".into(),
+                name: "Researcher".into(),
+                agent_id: "researcher".into(),
+                visibility: Visibility::default(),
+                ..Default::default()
+            },
+            Role {
+                id: "writer".into(),
+                name: "Writer".into(),
+                agent_id: "writer".into(),
+                visibility: Visibility::default(),
+                ..Default::default()
+            },
+        ],
+        missions: vec![
+            Mission {
+                id: "research".into(),
+                role: "researcher".into(),
+                task: "research {{topic}}".into(),
+                output_key: Some("notes".into()),
+                handoff_mode: HandoffMode::Inherit,
+                ..Default::default()
+            },
+            Mission {
+                id: "write".into(),
+                role: "writer".into(),
+                task: "write from {{notes}}".into(),
+                depends_on: vec!["research".into()],
+                output_key: Some("article".into()),
+                handoff_mode: HandoffMode::Inherit,
+                ..Default::default()
+            },
+        ],
+        default_process: Process::Sequential,
+        planning: Some(PlanningConfig {
+            enabled: true,
+            planning_agent: Some("planner".into()),
+        }),
         webhook: None,
     };
 
