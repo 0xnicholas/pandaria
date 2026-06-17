@@ -73,6 +73,8 @@ impl SquadEngine {
             )
             .await?;
 
+        self.notify_webhook(team, &squad, "created", None).await;
+
         Ok(squad)
     }
 
@@ -85,6 +87,7 @@ impl SquadEngine {
         self.store
             .append(&squad.id, SquadEvent::SquadStarted.into())
             .await?;
+        self.notify_webhook(team, squad, "started", None).await;
 
         // Planning phase: if enabled, call planner agent to analyze missions
         // and inject plan context before execution.
@@ -118,6 +121,7 @@ impl SquadEngine {
             if let Err(e) = squad.executor.flush().await {
                 tracing::warn!(squad_id = %squad.id, error = %e, "squad executor flush failed before pause");
             }
+            self.notify_webhook(team, squad, "paused", None).await;
             return Ok(paused_result);
         }
 
@@ -128,6 +132,20 @@ impl SquadEngine {
                 error = %e,
                 "squad executor flush failed"
             );
+        }
+
+        // Notify webhook on terminal states
+        match &result {
+            Ok(r) if r.status == SquadStatus::Completed => {
+                self.notify_webhook(team, squad, "completed", None).await;
+            }
+            Ok(r) if r.status == SquadStatus::Failed => {
+                self.notify_webhook(team, squad, "failed", None).await;
+            }
+            Err(e) => {
+                self.notify_webhook(team, squad, "failed", Some(&e.to_string())).await;
+            }
+            _ => {}
         }
 
         result
@@ -786,6 +804,43 @@ impl SquadEngine {
             content: serde_json::to_value(handoff).unwrap_or_default(),
             timestamp: Utc::now(),
         });
+    }
+
+    /// Send a webhook notification for a squad state transition.
+    /// Fire-and-forget: spawns a background task so squad execution is not blocked.
+    fn notify_webhook(
+        &self,
+        team: &Team,
+        squad: &Squad,
+        event: &str,
+        error: Option<&str>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        let webhook = match &team.webhook {
+            Some(w) if !w.url.is_empty() => w.clone(),
+            _ => return Box::pin(std::future::ready(())),
+        };
+
+        let url = webhook.url.clone();
+        let secret = webhook.secret.clone();
+        let timeout_secs = webhook.timeout_secs.unwrap_or(30);
+        let retries = webhook.retries.unwrap_or(0).min(10);
+        let retry_delay = webhook.retry_delay.unwrap_or(5);
+
+        let payload = serde_json::json!({
+            "event": format!("squad.{}", event),
+            "squad_id": squad.id,
+            "team_id": team.id,
+            "team_name": team.name,
+            "status": squad.status,
+            "context": squad.context.shared,
+            "outputs": squad.context.shared,
+            "error": error,
+            "timestamp": Utc::now().to_rfc3339(),
+        });
+
+        Box::pin(async move {
+            crate::engine::send_webhook(&url, &payload, secret.as_deref(), timeout_secs, retries, retry_delay).await;
+        })
     }
 }
 
