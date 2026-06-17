@@ -84,6 +84,8 @@ pub struct SessionActor {
     error_reason: Mutex<Option<String>>,
     /// Execution strategy for this session.
     strategy: SessionStrategy,
+    /// Token usage from the most recent agent loop turn.
+    last_usage: Option<ai_provider::Usage>,
     /// Saved base persona for context-clear rebuilds.
     base_persona: String,
 }
@@ -213,6 +215,7 @@ impl SessionActor {
             state: AtomicU8::new(0),
             error_reason: Mutex::new(None),
             strategy: SessionStrategy::default(),
+            last_usage: None,
             base_persona,
         };
         let event_tx = actor.spawn_event_processor();
@@ -424,6 +427,130 @@ impl SessionActor {
         Ok(text_content.join("\n"))
     }
 
+    /// Like [`complete`](Self::complete) but also captures per-chunk text deltas
+    /// from the LLM streaming response.
+    ///
+    /// Returns both the accumulated full text and a vector of intermediate
+    /// text deltas received during streaming. The deltas represent incremental
+    /// LLM output chunks (e.g. one per token or word).
+    pub async fn complete_with_deltas(
+        &mut self,
+        text: String,
+    ) -> Result<(String, Vec<String>), AgentError> {
+        use std::sync::Mutex as StdMutex;
+
+        // Add user message (same as prompt)
+        let user_msg = AgentMessage::User(ai_provider::UserMessage {
+            content: vec![ai_provider::Content::Text {
+                text: text.clone(),
+                text_signature: None,
+            }],
+            timestamp: std::time::SystemTime::now(),
+        });
+        self.push_message(user_msg);
+
+        let deltas: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
+        let deltas_capture = deltas.clone();
+
+        // Run with a text_stream_tx that captures deltas
+        let messages = {
+            self.state.store(1, Ordering::SeqCst);
+            self.persist_status("active");
+            self.emit_event(AgentEvent::StateChanged {
+                state: SessionState::Running,
+            });
+            self.abort_token = CancellationToken::new();
+
+            let ctx = SessionContextBuilder::build_context(&self.entries);
+            let event_tx = self.event_tx.clone();
+            let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static> =
+                Arc::new(move |event| {
+                    if let Some(tx) = &event_tx
+                        && tx.try_send(QueuedEvent { event }).is_err()
+                    {
+                        tracing::warn!("event queue full, dropping event");
+                    }
+                });
+
+            let (text_tx, mut text_rx) = tokio::sync::mpsc::unbounded_channel();
+
+            // Spawn a task to collect deltas from the channel
+            let deltas_for_task = deltas.clone();
+            tokio::spawn(async move {
+                while let Some(delta) = text_rx.recv().await {
+                    deltas_for_task.lock().unwrap().push(delta);
+                }
+            });
+
+            let config = AgentLoopConfig {
+                tenant_id: self.tenant_id.clone(),
+                session_id: self.session_id.clone(),
+                model: self.model.clone(),
+                provider: self.provider.clone(),
+                hook_dispatcher: self.hook_dispatcher.clone(),
+                tools: self.tools.clone(),
+                prompt_builder: self.prompt_builder.clone(),
+                stream_options: self.stream_options.clone(),
+                event_sink,
+                steer_queue: self.steer_queue.clone(),
+                follow_up_queue: self.follow_up_queue.clone(),
+                circuit_breaker: None,
+                skills: self.skills.clone(),
+                text_stream_tx: Some(text_tx),
+            };
+
+            let result = AgentLoop::new(config)
+                .run(ctx, self.abort_token.child_token())
+                .await;
+
+            // Drop the sender to close the channel and let the collector task finish
+            // (text_tx is already consumed by AgentLoop, the Drop happens when AgentLoop is done)
+
+            match result {
+                Ok(msgs) => {
+                    self.state.store(0, Ordering::SeqCst);
+                    // Capture last turn's usage
+                    if let Some(AgentMessage::Assistant(a)) = msgs.last() {
+                        self.last_usage = Some(a.usage.clone());
+                    }
+                    for msg in &msgs {
+                        self.push_message(msg.clone());
+                    }
+                    msgs
+                }
+                Err(e) => {
+                    self.state.store(0, Ordering::SeqCst);
+                    return Err(e);
+                }
+            }
+        };
+
+        // Collect text content
+        let text_content: Vec<String> = messages
+            .iter()
+            .filter_map(|m| {
+                if let AgentMessage::Assistant(a) = m {
+                    Some(
+                        a.content
+                            .iter()
+                            .filter_map(|c| match c {
+                                ai_provider::Content::Text { text, .. } => Some(text.clone()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let deltas = deltas.lock().unwrap().clone();
+
+        Ok((text_content.join("\n"), deltas))
+    }
+
     pub async fn continue_(&mut self) -> Result<Vec<AgentMessage>, AgentError> {
         if self.state.load(Ordering::SeqCst) == 2 {
             let reason = self
@@ -557,6 +684,7 @@ impl SessionActor {
                 follow_up_queue: self.follow_up_queue.clone(),
                 circuit_breaker: None,
                 skills: self.skills.clone(),
+                text_stream_tx: None,
             };
 
             match AgentLoop::new(config)
@@ -565,6 +693,10 @@ impl SessionActor {
             {
                 Ok(msgs) => {
                     self.state.store(0, Ordering::SeqCst);
+                    // Capture last turn's usage for external consumers
+                    if let Some(AgentMessage::Assistant(a)) = msgs.last() {
+                        self.last_usage = Some(a.usage.clone());
+                    }
                     if let Some(AgentMessage::Assistant(assistant)) = msgs.iter().rfind(|m| matches!(m, AgentMessage::Assistant(a) if a.stop_reason != StopReason::ToolUse)) {
                         let action = self.recovery.evaluate(assistant);
                         match action {
@@ -1258,6 +1390,7 @@ impl SessionActor {
             event_sink: Arc::new(|_| {}),
             circuit_breaker: None,
             skills: skills.to_vec(),
+            text_stream_tx: None,
         };
 
         AgentLoop::new(config)
@@ -1392,6 +1525,11 @@ impl SessionActor {
     /// Get the session ID
     pub fn session_id(&self) -> &str {
         &self.session_id
+    }
+
+    /// Returns the token usage from the most recent agent loop turn, if any.
+    pub fn last_usage(&self) -> Option<&ai_provider::Usage> {
+        self.last_usage.as_ref()
     }
 
     /// Return the tools registered for this session.

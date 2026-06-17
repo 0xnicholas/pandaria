@@ -101,9 +101,9 @@ crates/
   pawbun-toolkit/     # Agent 工具抽象层（Tool trait、ToolKit registry、MCP client adapter）
   pawbun-toolkit-macros/ # pawbun-toolkit 过程宏
   pawbun-mcp-server/  # MCP Server（暴露 Pawbun 工具为 MCP 协议，支持 stdio/SSE transport）
-  tavern-core/        # 工作流/Agent 组合核心类型（AgentConfig、Plan、ToolRegistry）
-  tavern-comp/        # 工作流引擎（WorkflowEngine、StepExecutor、EventStore、replay、DAG 校验）
-  tavern-flow-macros/ # 工作流 DSL 过程宏
+  tavern-core/        # Agent Team 核心类型（AgentConfig、Role、Team、ToolRegistry）
+  tavern-comp/        # Agent Team 编排层（TeamContext、Handoff、AgentExecutor、SquadEngine、EventStore、replay）
+  tavern-flow-macros/ # Agent Team DSL 过程宏
   api-gateway/       # REST + SSE 接入、认证、限流
   tui/               # 终端客户端（ratatui + REST client + SSE 订阅）
 ```
@@ -129,7 +129,7 @@ api-gateway → tavern-comp → agent-core → pawbun-toolkit → pawbun-files
 pawbun-mcp-server → pawbun-toolkit, pawbun-files
 ```
 
-> **注意**：`tavern-comp` 是 agent-core 之上的工作流编排层，通过 `api-gateway` 暴露。`pawbun-*` 是工具生态（文件处理、工具抽象、MCP 协议适配），`agent-core` 通过 `pawbun-toolkit` 接入。
+> **注意**：`tavern-comp` 是 agent-core 之上的 **Agent Team 编排层**，通过 `api-gateway` 暴露。它聚焦多 agent 协作协议（角色、上下文隔离、显式交接），不是通用工作流引擎。`pawbun-*` 是工具生态（文件处理、工具抽象、MCP 协议适配），`agent-core` 通过 `pawbun-toolkit` 接入。
 
 ---
 
@@ -254,7 +254,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | pawbun-toolkit（Agent 工具抽象） | ✅ 已实现（Tool trait、ToolKit registry、MCP client adapter、async tool 支持） |
 | pawbun-files（多模态文件处理） | ✅ 已实现（text/image/PDF/audio/video、Local/URL/Bytes source、OpenAI/Anthropic/Gemini/Azure format） |
 | pawbun-mcp-server（MCP 协议适配） | ✅ 已实现（stdio + SSE transport、toolkit 桥接、file loader 集成） |
-| tavern（工作流引擎） | 🟡 核心已实现（WorkflowEngine、StepExecutor、EventStore + PG/SQLite/Memory backend、replay、DAG 校验、Webhook、Timer），持续迭代中 |
+| tavern（Agent Team 编排层） | 🟡 核心组件已实现（WorkflowEngine/SquadEngine、StepExecutor、EventStore + PG/SQLite/Memory backend、replay、DAG 校验、Webhook、Timer、Agent Team 类型系统（Team/Squad/Role/Mission/Handoff/TeamContext）、SquadEngine（DAG + Hierarchical）、PandariaAgentExecutor（agent-core 桥接：usage 计量、execute_stream、全 skill 类型工具化））。下一阶段：真流式输出、session cache 淘汰策略 |
 | Circuit Breaker（LLM 调用熔断） | ✅ 已实现（agent-core/src/circuit_breaker.rs，Closed→Open→HalfOpen 状态机） |
 | CombinedDispatcher（Hook 组合） | ✅ 已实现（agent-core/src/hook/combined.rs，多 HookDispatcher 链式组合） |
 | Hook 超时保护 | ✅ 已实现（agent-core/src/hook/timeout.rs，panic 捕获 + 超时兜底） |

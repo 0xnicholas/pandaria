@@ -1,7 +1,49 @@
 use crate::hero::TavernError;
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum AgentExecutorError {
+    #[error("role not found: {id}")]
+    RoleNotFound { id: String },
+
+    #[error("execution failed: {0}")]
+    ExecutionFailed(String),
+
+    #[error("timeout")]
+    Timeout,
+
+    #[error("session build failed: {reason}")]
+    SessionBuildFailed { reason: String },
+
+    #[error("provider error: {0}")]
+    ProviderError(String),
+
+    #[error("tool denied: {tool} — {reason}")]
+    ToolDenied { tool: String, reason: String },
+
+    #[error("context overflow: {0}")]
+    ContextOverflow(String),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CompError {
+    #[error("team '{id}' not found")]
+    TeamNotFound { id: String },
+
+    #[error("role '{id}' not found in team")]
+    RoleNotFound { id: String },
+
+    #[error("mission '{id}' not found in squad")]
+    MissionNotFound { id: String },
+
+    #[error("squad '{id}' not found")]
+    SquadNotFound { id: String },
+
+    #[error("squad '{id}' is already closed")]
+    SquadClosed { id: String },
+
+    #[error("team '{id}' already registered")]
+    DuplicateTeam { id: String },
+
     // -- V1 变体 --
     #[error("workflow '{id}' not found")]
     WorkflowNotFound { id: String },
@@ -86,6 +128,12 @@ pub enum CompError {
 impl Clone for CompError {
     fn clone(&self) -> Self {
         match self {
+            CompError::TeamNotFound { id } => CompError::TeamNotFound { id: id.clone() },
+            CompError::RoleNotFound { id } => CompError::RoleNotFound { id: id.clone() },
+            CompError::MissionNotFound { id } => CompError::MissionNotFound { id: id.clone() },
+            CompError::SquadNotFound { id } => CompError::SquadNotFound { id: id.clone() },
+            CompError::SquadClosed { id } => CompError::SquadClosed { id: id.clone() },
+            CompError::DuplicateTeam { id } => CompError::DuplicateTeam { id: id.clone() },
             CompError::WorkflowNotFound { id } => CompError::WorkflowNotFound { id: id.clone() },
             CompError::DuplicateWorkflow { id } => CompError::DuplicateWorkflow { id: id.clone() },
             CompError::StepNotFound { id } => CompError::StepNotFound { id: id.clone() },

@@ -47,6 +47,10 @@ pub struct AgentLoopConfig {
     /// Skills available for this session. Used to re-inject the
     /// `<available_skills>` fragment after legacy prompt replacements.
     pub skills: Vec<crate::skills::Skill>,
+    /// Optional channel for streaming text deltas to external consumers.
+    /// When set, each `TextDelta` is forwarded before accumulation.
+    #[doc(hidden)]
+    pub text_stream_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
 
 impl AgentLoopConfig {
@@ -73,6 +77,7 @@ impl AgentLoopConfig {
             event_sink: Arc::new(|_| {}),
             circuit_breaker: None,
             skills: Vec::new(),
+            text_stream_tx: None,
         }
     }
 }
@@ -690,8 +695,12 @@ impl AgentLoop {
                             .push_str(&delta);
                         (self.config.event_sink)(AgentEvent::MessageUpdate {
                             message_index,
-                            content_delta: delta,
+                            content_delta: delta.clone(),
                         });
+                        // Forward to streaming consumer if configured
+                        if let Some(ref tx) = self.config.text_stream_tx {
+                            let _ = tx.send(delta);
+                        }
                     }
                     ai_provider::AssistantMessageEvent::TextEnd {
                         content_index,

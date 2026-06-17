@@ -1,0 +1,22 @@
+pub mod context;
+pub mod definition;
+pub mod engine;
+pub mod executor;
+pub mod handoff;
+pub mod mission;
+pub mod pandaria_executor;
+pub mod registry;
+pub mod role;
+pub mod scheduler;
+pub mod squad;
+
+pub use context::{Message, MessageKind, TeamContext, VisibilityRules};
+pub use definition::Team;
+pub use engine::SquadEngine;
+pub use executor::{AgentExecutor, AgentExecutorError, AgentInput, AgentOutput, AgentOutputChunk, AgentResolver};
+pub use handoff::{AttachmentRef, AttachmentScope, Handoff, HandoffMode};
+pub use mission::Mission;
+pub use pandaria_executor::PandariaAgentExecutor;
+pub use registry::TeamRegistry;
+pub use role::{Role, SkillRef, Visibility};
+pub use squad::{Squad, SquadResult, SquadStatus};

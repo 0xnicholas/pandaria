@@ -1,8 +1,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use serde_json::Value;
 use crate::agent::AgentRuntime;
+use crate::team::executor::AgentResolver;
 use tavern_core::{AgentConfig, AgentSummary};
 use tokio::sync::RwLock;
 use tracing::{info, instrument};
@@ -227,6 +229,13 @@ fn describe_skill_config(skill_id: &str, config: &serde_json::Value) -> Option<S
             }
             None
         }
+    }
+}
+
+#[async_trait]
+impl AgentResolver for TavernHero {
+    async fn resolve(&self, agent_id: &str) -> Option<AgentConfig> {
+        self.get_agent(agent_id).await
     }
 }
 
