@@ -264,7 +264,8 @@ impl InstanceState {
             | WorkflowEvent::ToolCallStarted { .. }
             | WorkflowEvent::ToolCallCompleted { .. }
             | WorkflowEvent::ToolCallFailed { .. }
-            | WorkflowEvent::External { .. } => {
+            | WorkflowEvent::External { .. }
+            | WorkflowEvent::SquadEventOccurred { .. } => {
                 // Audit-only events: stored for observability but don't affect workflow state
             }
         }

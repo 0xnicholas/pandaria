@@ -1,10 +1,11 @@
 # tavern-core
 
-Tavern 工作流引擎的核心类型定义。提供 Agent 配置、工作计划、工具注册等共享类型的抽象边界。
+Tavern 的 Agent Team 核心类型定义。提供 Role、Agent、Team 配置等共享类型的抽象边界。
 
 ## 职责
 
 - 定义 `AgentConfig` — Agent 的完整 YAML 配置模型（model、instructions、skills、constraints、memory）
+- 定义 `Role` / `Team` / `Squad` 等 Agent Team 编排所需的共享类型
 - 定义 `Plan` / `PlanStep` — 工作计划与步骤结构
 - 定义 `ToolRegistry` / `ToolHandler` trait — 工具注册与调用的抽象边界
 - 提供配置序列化/反序列化（YAML）
@@ -66,5 +67,5 @@ memory:
 ## 边界
 
 - **不实现**具体的工具执行逻辑 — 由 `pawbun-toolkit` 或调用方提供
-- **不实现**工作流引擎 — 由 `tavern-comp` 实现
+- **不实现**Agent Team 编排引擎 — 由 `tavern-comp` 实现
 - **纯类型层** — 无 IO、无持久化、无运行时

@@ -2,6 +2,54 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Agent Team 执行事件。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SquadEvent {
+    SquadCreated {
+        squad_id: String,
+        team_id: String,
+        inputs: Value,
+    },
+    SquadStarted,
+    MissionScheduled {
+        mission_id: String,
+        attempt: u64,
+    },
+    MissionStarted {
+        mission_id: String,
+        started_at: DateTime<Utc>,
+    },
+    MissionCompleted {
+        mission_id: String,
+        output: Value,
+        output_key: Option<String>,
+        completed_at: DateTime<Utc>,
+    },
+    MissionFailed {
+        mission_id: String,
+        error: String,
+        attempt: u64,
+        will_retry: bool,
+    },
+    SquadCompleted {
+        outputs: Value,
+        completed_at: DateTime<Utc>,
+    },
+    SquadFailed {
+        reason: String,
+        failed_at: DateTime<Utc>,
+    },
+}
+
+impl From<SquadEvent> for WorkflowEvent {
+    fn from(event: SquadEvent) -> Self {
+        WorkflowEvent::SquadEventOccurred {
+            event,
+            occurred_at: Utc::now(),
+        }
+    }
+}
+
 /// V0.3.2: 审批动作类型，用于 SignalReceived 事件。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,5 +182,11 @@ pub enum WorkflowEvent {
     External {
         event_type: String,
         payload: Value,
+    },
+
+    /// Agent Team 事件包装。
+    SquadEventOccurred {
+        event: SquadEvent,
+        occurred_at: DateTime<Utc>,
     },
 }

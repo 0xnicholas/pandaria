@@ -91,6 +91,7 @@ impl DetailLevel {
                     | WorkflowEvent::StepFailed { .. }
                     | WorkflowEvent::WorkflowCompleted { .. }
                     | WorkflowEvent::WorkflowFailed { .. }
+                    | WorkflowEvent::SquadEventOccurred { .. }
             ),
             DetailLevel::Medium => matches!(
                 event,
@@ -106,6 +107,7 @@ impl DetailLevel {
                     | WorkflowEvent::StepRetryScheduled { .. }
                     | WorkflowEvent::WorkflowCompleted { .. }
                     | WorkflowEvent::WorkflowFailed { .. }
+                    | WorkflowEvent::SquadEventOccurred { .. }
             ),
             DetailLevel::High => true,
         }
@@ -164,6 +166,7 @@ pub fn event_timestamp(event: &WorkflowEvent) -> DateTime<Utc> {
         WorkflowEvent::WorkflowCompleted { completed_at, .. } => *completed_at,
         WorkflowEvent::WorkflowFailed { failed_at, .. } => *failed_at,
         WorkflowEvent::External { .. } => Utc::now(),
+        WorkflowEvent::SquadEventOccurred { occurred_at, .. } => *occurred_at,
     }
 }
 
@@ -318,6 +321,18 @@ impl ExecutionReplayer {
                 WorkflowEvent::WorkflowFailed { failed_at: ft, .. } => {
                     completed_at = Some(*ft);
                 }
+                WorkflowEvent::SquadEventOccurred {
+                    event: crate::event::SquadEvent::SquadCompleted { completed_at: ct, .. },
+                    ..
+                } => {
+                    completed_at = Some(*ct);
+                }
+                WorkflowEvent::SquadEventOccurred {
+                    event: crate::event::SquadEvent::SquadFailed { failed_at: ft, .. },
+                    ..
+                } => {
+                    completed_at = Some(*ft);
+                }
                 _ => {}
             }
 
@@ -367,6 +382,7 @@ fn event_type_name(event: &WorkflowEvent) -> String {
         WorkflowEvent::WorkflowCompleted { .. } => "WorkflowCompleted",
         WorkflowEvent::WorkflowFailed { .. } => "WorkflowFailed",
         WorkflowEvent::External { .. } => "External",
+        WorkflowEvent::SquadEventOccurred { .. } => "SquadEventOccurred",
     }
     .to_string()
 }

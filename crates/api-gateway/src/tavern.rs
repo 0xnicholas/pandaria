@@ -1,7 +1,11 @@
-//! Tavern workflow orchestration integration.
+//! Tavern Agent Team orchestration integration.
 //!
-//! State, routes, and handlers for agent/workflow/execution APIs.
+//! State, routes, and handlers for agent/team/squad APIs.
 //! Merged into the main api-gateway router at startup.
+//!
+//! Tavern is Pandaria's Agent Team layer: multiple specialized agents collaborate
+//! via shared/private context and explicit handoffs. It is not a general-purpose
+//! workflow engine.
 
 use std::sync::Arc;
 use axum::{
