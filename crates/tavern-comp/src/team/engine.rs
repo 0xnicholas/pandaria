@@ -101,6 +101,26 @@ impl SquadEngine {
             Process::Hierarchical(cfg) => self.run_hierarchical(&effective_team, squad, cfg).await,
         };
 
+        // If execution paused (waiting for signal or sleeping for retry),
+        // return the paused status so the caller can resume later.
+        if matches!(
+            squad.status,
+            SquadStatus::WaitingForSignal { .. } | SquadStatus::Sleeping { .. }
+        ) {
+            let paused_result = SquadResult {
+                squad_id: squad.id.clone(),
+                team_id: squad.team_id.clone(),
+                status: squad.status.clone(),
+                context: squad.context.clone(),
+                outputs: squad.context.shared.clone(),
+            };
+            // Flush before pausing so signal/retry state is persisted
+            if let Err(e) = squad.executor.flush().await {
+                tracing::warn!(squad_id = %squad.id, error = %e, "squad executor flush failed before pause");
+            }
+            return Ok(paused_result);
+        }
+
         // Flush executor state regardless of outcome (best-effort, log on error)
         if let Err(e) = squad.executor.flush().await {
             tracing::warn!(
@@ -252,8 +272,21 @@ impl SquadEngine {
                 match result {
                     Ok(()) => {
                         // Merge outputs: shared context and thread from the completed branch.
-                        // P2 constraint: parallel missions should write to disjoint output keys.
                         merge_context(&mut squad.context, &updated_squad.context);
+                        // Check if squad paused (signal wait or retry sleep)
+                        if matches!(
+                            updated_squad.status,
+                            SquadStatus::WaitingForSignal { .. } | SquadStatus::Sleeping { .. }
+                        ) {
+                            squad.status = updated_squad.status.clone();
+                            return Ok(SquadResult {
+                                squad_id: squad.id.clone(),
+                                team_id: squad.team_id.clone(),
+                                status: squad.status.clone(),
+                                context: squad.context.clone(),
+                                outputs: squad.context.shared.clone(),
+                            });
+                        }
                         completed.insert(mission_id);
                     }
                     Err(e) => {
@@ -406,6 +439,20 @@ impl SquadEngine {
             match self.execute_mission(&mut branch_squad, &next_mission).await {
                 Ok(()) => {
                     merge_context(&mut squad.context, &branch_squad.context);
+                    // Check if squad paused (signal wait or retry sleep)
+                    if matches!(
+                        branch_squad.status,
+                        SquadStatus::WaitingForSignal { .. } | SquadStatus::Sleeping { .. }
+                    ) {
+                        squad.status = branch_squad.status.clone();
+                        return Ok(SquadResult {
+                            squad_id: squad.id.clone(),
+                            team_id: squad.team_id.clone(),
+                            status: squad.status.clone(),
+                            context: squad.context.clone(),
+                            outputs: squad.context.shared.clone(),
+                        });
+                    }
                     completed.insert(next_mission.id.clone());
                 }
                 Err(e) => {
@@ -513,107 +560,170 @@ impl SquadEngine {
         squad: &mut Squad,
         mission: &Mission,
     ) -> Result<(), CompError> {
-        self.store
-            .append(
-                &squad.id,
-                SquadEvent::MissionScheduled {
-                    mission_id: mission.id.clone(),
-                    attempt: 1,
+        let max_attempts = mission.retries.unwrap_or(0) + 1; // 1 initial + N retries
+        let retry_delay = std::time::Duration::from_secs(mission.retry_delay.unwrap_or(0));
+
+        for attempt in 1..=max_attempts {
+            // ── Signal wait check ──
+            if let Some(ref signal_name) = mission.wait_for_signal {
+                if !squad.take_signal(signal_name) {
+                    // Signal not yet received — pause squad
+                    squad.status = SquadStatus::WaitingForSignal {
+                        signal: signal_name.clone(),
+                    };
+                    self.store
+                        .append(
+                            &squad.id,
+                            SquadEvent::MissionWaitingForSignal {
+                                mission_id: mission.id.clone(),
+                                signal_name: signal_name.clone(),
+                                attempt,
+                            }
+                            .into(),
+                        )
+                        .await?;
+                    return Ok(()); // Caller should re-invoke run() after signal
                 }
-                .into(),
-            )
-            .await?;
+            }
 
-        let role = squad
-            .executor
-            .resolve_role(&mission.role)
-            .await
-            .map_err(|e| CompError::RoleNotFound {
-                id: format!("{}: {}", mission.role, e),
-            })?;
+            self.store
+                .append(
+                    &squad.id,
+                    SquadEvent::MissionScheduled {
+                        mission_id: mission.id.clone(),
+                        attempt,
+                    }
+                    .into(),
+                )
+                .await?;
 
-        let task = crate::context::render_template(&mission.task, &squad.context.shared)
-            .map_err(|e| CompError::TemplateParse { reason: e.to_string() })?;
+            let role = squad
+                .executor
+                .resolve_role(&mission.role)
+                .await
+                .map_err(|e| CompError::RoleNotFound {
+                    id: format!("{}: {}", mission.role, e),
+                })?;
 
-        let started_at = Utc::now();
-        self.store
-            .append(
-                &squad.id,
-                SquadEvent::MissionStarted {
-                    mission_id: mission.id.clone(),
-                    started_at,
+            let task = crate::context::render_template(&mission.task, &squad.context.shared)
+                .map_err(|e| CompError::TemplateParse { reason: e.to_string() })?;
+
+            let started_at = Utc::now();
+            self.store
+                .append(
+                    &squad.id,
+                    SquadEvent::MissionStarted {
+                        mission_id: mission.id.clone(),
+                        started_at,
+                    }
+                    .into(),
+                )
+                .await?;
+
+            let input = AgentInput {
+                task,
+                context: squad.context.clone(),
+                model_override: role.model_override.clone(),
+                timeout: mission.timeout.map(std::time::Duration::from_secs),
+                squad_id: Some(squad.id.clone()),
+                mission_id: Some(mission.id.clone()),
+            };
+
+            let output = squad
+                .executor
+                .execute(&mission.role, input)
+                .await;
+
+            match output {
+                Ok(output) => {
+                    let value = match mission.handoff_mode {
+                        HandoffMode::Required => {
+                            let handoff: Handoff = serde_json::from_value(output.content.clone())
+                                .map_err(|e| CompError::StepFailed {
+                                    step_id: mission.id.clone(),
+                                    reason: format!("required handoff invalid: {}", e),
+                                })?;
+                            self.record_handoff(&mut squad.context, &handoff, mission);
+                            handoff.payload
+                        }
+                        HandoffMode::Inherit | HandoffMode::Auto => {
+                            if let Some(Ok(handoff)) = Handoff::detect(&output.content) {
+                                self.record_handoff(&mut squad.context, &handoff, mission);
+                                handoff.payload
+                            } else {
+                                output.content
+                            }
+                        }
+                    };
+
+                    if let Some(ref key) = mission.output_key
+                        && let Some(obj) = squad.context.shared.as_object_mut()
+                    {
+                        obj.insert(key.clone(), value.clone());
+                    }
+
+                    squad.context.thread.push(Message {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        role: mission.role.clone(),
+                        turn: 1,
+                        kind: MessageKind::Output,
+                        content: value.clone(),
+                        timestamp: Utc::now(),
+                    });
+
+                    self.store
+                        .append(
+                            &squad.id,
+                            SquadEvent::MissionCompleted {
+                                mission_id: mission.id.clone(),
+                                output: value.clone(),
+                                output_key: mission.output_key.clone(),
+                                completed_at: Utc::now(),
+                            }
+                            .into(),
+                        )
+                        .await?;
+
+                    return Ok(());
                 }
-                .into(),
-            )
-            .await?;
+                Err(e) => {
+                    let remaining = max_attempts - attempt;
+                    if remaining > 0 {
+                        // Schedule retry after delay
+                        let wake_at = Utc::now() + chrono::Duration::seconds(retry_delay.as_secs() as i64);
+                        tracing::warn!(
+                            mission_id = %mission.id,
+                            attempt = attempt,
+                            remaining_retries = remaining,
+                            error = %e,
+                            wake_at = %wake_at,
+                            "mission failed, scheduling retry"
+                        );
+                        self.store
+                            .append(
+                                &squad.id,
+                                SquadEvent::MissionRetryScheduled {
+                                    mission_id: mission.id.clone(),
+                                    attempt: attempt + 1,
+                                    reason: e.to_string(),
+                                    scheduled_at: wake_at,
+                                }
+                                .into(),
+                            )
+                            .await?;
 
-        let input = AgentInput {
-            task,
-            context: squad.context.clone(),
-            model_override: role.model_override.clone(),
-            timeout: mission.timeout.map(std::time::Duration::from_secs),
-            squad_id: Some(squad.id.clone()),
-            mission_id: Some(mission.id.clone()),
-        };
-
-        let output = squad
-            .executor
-            .execute(&mission.role, input)
-            .await
-            .map_err(|e| CompError::StepFailed {
-                step_id: mission.id.clone(),
-                reason: e.to_string(),
-            })?;
-
-        let value = match mission.handoff_mode {
-            HandoffMode::Required => {
-                let handoff: Handoff = serde_json::from_value(output.content.clone())
-                    .map_err(|e| CompError::StepFailed {
+                        squad.status = SquadStatus::Sleeping { wake_at };
+                        return Ok(()); // Caller should re-invoke run() after sleep
+                    }
+                    return Err(CompError::StepFailed {
                         step_id: mission.id.clone(),
-                        reason: format!("required handoff invalid: {}", e),
-                    })?;
-                self.record_handoff(&mut squad.context, &handoff, mission);
-                handoff.payload
-            }
-            HandoffMode::Inherit | HandoffMode::Auto => {
-                if let Some(Ok(handoff)) = Handoff::detect(&output.content) {
-                    self.record_handoff(&mut squad.context, &handoff, mission);
-                    handoff.payload
-                } else {
-                    output.content
+                        reason: e.to_string(),
+                    });
                 }
             }
-        };
-
-        if let Some(ref key) = mission.output_key
-            && let Some(obj) = squad.context.shared.as_object_mut()
-        {
-            obj.insert(key.clone(), value.clone());
         }
 
-        squad.context.thread.push(Message {
-            id: uuid::Uuid::new_v4().to_string(),
-            role: mission.role.clone(),
-            turn: 1,
-            kind: MessageKind::Output,
-            content: value.clone(),
-            timestamp: Utc::now(),
-        });
-
-        self.store
-            .append(
-                &squad.id,
-                SquadEvent::MissionCompleted {
-                    mission_id: mission.id.clone(),
-                    output: value.clone(),
-                    output_key: mission.output_key.clone(),
-                    completed_at: Utc::now(),
-                }
-                .into(),
-            )
-            .await?;
-
-        Ok(())
+        unreachable!("retry loop should have returned")
     }
 
     fn record_handoff(
@@ -1025,5 +1135,130 @@ mod tests {
 
         let result = engine.run(&team, &mut squad).await.unwrap();
         assert_eq!(result.outputs.get("article").unwrap(), "final article");
+    }
+
+    #[tokio::test]
+    async fn signal_wait_pauses_squad() {
+        let missions = vec![Mission {
+            id: "task1".into(),
+            role: "researcher".into(),
+            task: "do research".into(),
+            wait_for_signal: Some("approve_research".into()),
+            output_key: Some("out1".into()),
+            handoff_mode: HandoffMode::Inherit,
+            ..Default::default()
+        }];
+        let team = make_team(missions, None);
+
+        let mut responses = HashMap::new();
+        responses.insert("researcher".into(), serde_json::json!("done"));
+
+        let executor = Arc::new(MockAgentExecutor::new(team.roles.clone(), responses));
+        let engine = SquadEngine::new();
+        let mut squad = engine
+            .deploy(&team, executor, serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // First run: should pause waiting for signal
+        let result = engine.run(&team, &mut squad).await.unwrap();
+        assert_eq!(
+            result.status,
+            SquadStatus::WaitingForSignal {
+                signal: "approve_research".into()
+            }
+        );
+        assert!(result.outputs.get("out1").is_none());
+
+        // Send signal and resume
+        squad.send_signal("approve_research");
+        squad.status = SquadStatus::Running; // reset for re-run
+        let result = engine.run(&team, &mut squad).await.unwrap();
+        assert_eq!(result.status, SquadStatus::Completed);
+        assert_eq!(result.outputs.get("out1").unwrap(), "done");
+    }
+
+    #[tokio::test]
+    async fn retry_on_failure() {
+        use crate::team::executor::{AgentExecutor as AgentExecutorTrait, AgentExecutorError, AgentInput, AgentOutput, AgentOutputChunk};
+        use async_trait::async_trait;
+        use futures_util::stream::BoxStream;
+
+        /// Mock that fails on first N calls then succeeds.
+        struct RetryMockExecutor {
+            role: Role,
+            attempts: std::sync::Mutex<u64>,
+            fail_count: u64,
+            success_response: Value,
+        }
+
+        #[async_trait]
+        impl AgentExecutorTrait for RetryMockExecutor {
+            async fn resolve_role(&self, _role_id: &str) -> Result<Role, AgentExecutorError> {
+                Ok(self.role.clone())
+            }
+            async fn execute(
+                &self,
+                _role_id: &str,
+                _input: AgentInput,
+            ) -> Result<AgentOutput, AgentExecutorError> {
+                let mut attempts = self.attempts.lock().unwrap();
+                *attempts += 1;
+                if *attempts <= self.fail_count {
+                    Err(AgentExecutorError::ExecutionFailed(
+                        format!("attempt {}", *attempts),
+                    ))
+                } else {
+                    Ok(AgentOutput {
+                        content: self.success_response.clone(),
+                        usage: None,
+                        latency: std::time::Duration::from_millis(10),
+                        metadata: std::collections::HashMap::new(),
+                    })
+                }
+            }
+            async fn execute_stream(
+                &self,
+                _role_id: &str,
+                _input: AgentInput,
+            ) -> Result<BoxStream<'static, AgentOutputChunk>, AgentExecutorError> {
+                Ok(Box::pin(futures_util::stream::empty()))
+            }
+        }
+
+        let missions = vec![Mission {
+            id: "flaky".into(),
+            role: "researcher".into(),
+            task: "do work".into(),
+            retries: Some(2),
+            retry_delay: Some(0),
+            output_key: Some("out1".into()),
+            handoff_mode: HandoffMode::Inherit,
+            ..Default::default()
+        }];
+        let team = make_team(missions, None);
+
+        let executor = Arc::new(RetryMockExecutor {
+            role: team.roles[0].clone(),
+            attempts: std::sync::Mutex::new(0),
+            fail_count: 1, // fail once, succeed on retry
+            success_response: serde_json::json!("success"),
+        });
+
+        let engine = SquadEngine::new();
+        let mut squad = engine
+            .deploy(&team, executor, serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // First run: fails, schedules retry, pauses with Sleeping
+        let result = engine.run(&team, &mut squad).await.unwrap();
+        assert!(matches!(result.status, SquadStatus::Sleeping { .. }));
+
+        // Resume (status reset to Running for re-invocation)
+        squad.status = SquadStatus::Running;
+        let result = engine.run(&team, &mut squad).await.unwrap();
+        assert_eq!(result.status, SquadStatus::Completed);
+        assert_eq!(result.outputs.get("out1").unwrap(), "success");
     }
 }

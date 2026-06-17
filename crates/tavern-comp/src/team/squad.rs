@@ -40,6 +40,8 @@ pub struct Squad {
     pub status: SquadStatus,
     pub context: TeamContext,
     pub executor: Arc<dyn AgentExecutor>,
+    /// Signals received while the squad was waiting.
+    pub received_signals: std::collections::HashSet<String>,
 }
 
 impl Squad {
@@ -54,6 +56,17 @@ impl Squad {
             status: SquadStatus::Pending,
             context: TeamContext::default(),
             executor,
+            received_signals: std::collections::HashSet::new(),
         }
+    }
+
+    /// Record that a signal has been received, waking any mission waiting for it.
+    pub fn send_signal(&mut self, signal: &str) {
+        self.received_signals.insert(signal.to_string());
+    }
+
+    /// Check if a signal has been received and consume it.
+    pub fn take_signal(&mut self, signal: &str) -> bool {
+        self.received_signals.remove(signal)
     }
 }

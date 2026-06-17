@@ -31,6 +31,17 @@ pub enum SquadEvent {
         attempt: u64,
         will_retry: bool,
     },
+    MissionWaitingForSignal {
+        mission_id: String,
+        signal_name: String,
+        attempt: u64,
+    },
+    MissionRetryScheduled {
+        mission_id: String,
+        attempt: u64,
+        reason: String,
+        scheduled_at: DateTime<Utc>,
+    },
     SquadCompleted {
         outputs: Value,
         completed_at: DateTime<Utc>,
