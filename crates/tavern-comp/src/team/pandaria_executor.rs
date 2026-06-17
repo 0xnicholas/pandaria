@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
@@ -18,6 +19,13 @@ use super::executor::{
 };
 use super::role::Role;
 
+/// Wraps a cached `SessionActor` with metadata for eviction policies.
+#[derive(Clone)]
+struct CachedSession {
+    actor: Arc<Mutex<SessionActor>>,
+    last_used: Instant,
+}
+
 /// Production implementation of `AgentExecutor` backed by `agent-core::SessionActor`.
 ///
 /// - Caches sessions by `role_id:model` key, reusing `SessionActor` across
@@ -33,8 +41,11 @@ pub struct PandariaAgentExecutor {
     team_id: String,
     harness_config: HarnessConfig,
     agent_resolver: Arc<dyn AgentResolver>,
-    sessions: Arc<std::sync::Mutex<HashMap<String, Arc<Mutex<SessionActor>>>>>,
+    sessions: Arc<std::sync::Mutex<HashMap<String, CachedSession>>>,
     session_semaphore: Arc<Semaphore>,
+    /// Idle timeout for cached sessions. Sessions unused for longer than
+    /// this duration are evicted on next access. Default: 5 minutes.
+    session_idle_timeout: std::time::Duration,
     /// Optional base URL for the Tavern tool server (e.g. `http://localhost:8080`).
     /// When set, Rust and Subprocess skills are also converted to HTTP proxy tools
     /// pointing at `{tool_server_base_url}/api/tools/{skill_id}`.
@@ -56,6 +67,7 @@ impl PandariaAgentExecutor {
             agent_resolver,
             sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
             session_semaphore: Arc::new(Semaphore::new(8)),
+            session_idle_timeout: std::time::Duration::from_secs(300), // 5 min
             tool_server_base_url: None,
         }
     }
@@ -73,6 +85,13 @@ impl PandariaAgentExecutor {
     /// `{base_url}/api/tools/{skill_id}`.
     pub fn with_tool_server(mut self, base_url: impl Into<String>) -> Self {
         self.tool_server_base_url = Some(base_url.into().trim_end_matches('/').to_string());
+        self
+    }
+
+    /// Set the idle timeout for cached sessions (default: 5 minutes).
+    /// Sessions unused for longer than this duration are evicted on next access.
+    pub fn with_session_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.session_idle_timeout = timeout;
         self
     }
 
@@ -240,8 +259,8 @@ impl AgentExecutor for PandariaAgentExecutor {
                 .expect("pandaria executor session map poisoned")
                 .clone()
         };
-        for (cache_key, actor_arc) in map {
-            let mut actor = actor_arc.lock().await;
+        for (cache_key, cached) in map {
+            let mut actor = cached.actor.lock().await;
             actor.flush().await.map_err(|e| {
                 AgentExecutorError::ExecutionFailed(format!(
                     "flush session {} failed: {}",
@@ -260,7 +279,8 @@ impl PandariaAgentExecutor {
     ///
     /// Uses a semaphore to bound the total number of concurrent sessions.
     /// Double-checks the cache after acquiring the semaphore to avoid duplicate
-    /// session creation.
+    /// session creation. Evicts sessions that have been idle longer than
+    /// `session_idle_timeout`.
     async fn acquire_session(
         &self,
         role_id: &str,
@@ -268,15 +288,22 @@ impl PandariaAgentExecutor {
         agent: &AgentConfig,
     ) -> Result<Arc<Mutex<SessionActor>>, AgentExecutorError> {
         let cache_key = format!("{}:{}", role_id, model);
+        let timeout = self.session_idle_timeout;
 
         // Fast path: check cache without acquiring semaphore
         {
-            let map = self
+            let mut map = self
                 .sessions
                 .lock()
                 .expect("pandaria executor session map poisoned");
-            if let Some(actor_arc) = map.get(&cache_key) {
-                return Ok(actor_arc.clone());
+            if let Some(cached) = map.get(&cache_key) {
+                if cached.last_used.elapsed() < timeout {
+                    let actor = cached.actor.clone();
+                    // Update last_used timestamp
+                    map.get_mut(&cache_key).unwrap().last_used = Instant::now();
+                    return Ok(actor);
+                }
+                // Expired — remove and flush below
             }
         }
 
@@ -287,14 +314,29 @@ impl PandariaAgentExecutor {
             .await
             .expect("session semaphore should not be closed");
 
-        // Double-check after acquiring semaphore
-        {
-            let map = self
+        // Double-check after acquiring semaphore, with eviction
+        let expired_actor: Option<Arc<Mutex<SessionActor>>> = {
+            let mut map = self
                 .sessions
                 .lock()
                 .expect("pandaria executor session map poisoned");
-            if let Some(actor_arc) = map.get(&cache_key) {
-                return Ok(actor_arc.clone());
+            if let Some(cached) = map.get(&cache_key) {
+                if cached.last_used.elapsed() < timeout {
+                    let actor = cached.actor.clone();
+                    map.get_mut(&cache_key).unwrap().last_used = Instant::now();
+                    return Ok(actor);
+                }
+                // Remove expired entry, return actor for async flush
+                map.remove(&cache_key).map(|c| c.actor)
+            } else {
+                None
+            }
+        }; // map lock released here
+
+        // Flush expired session outside the lock
+        if let Some(actor_arc) = expired_actor {
+            if let Ok(mut actor) = actor_arc.try_lock() {
+                let _ = actor.flush().await;
             }
         }
 
@@ -321,7 +363,10 @@ impl PandariaAgentExecutor {
                 .sessions
                 .lock()
                 .expect("pandaria executor session map poisoned");
-            map.entry(cache_key).or_insert(actor_arc.clone());
+            map.entry(cache_key).or_insert(CachedSession {
+                actor: actor_arc.clone(),
+                last_used: Instant::now(),
+            });
         }
 
         Ok(actor_arc)
