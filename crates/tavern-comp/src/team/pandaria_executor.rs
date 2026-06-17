@@ -175,7 +175,9 @@ impl AgentExecutor for PandariaAgentExecutor {
         let usage = actor.last_usage().cloned();
         drop(actor);
 
-        // 6. Build output with usage if available
+        // 6. Build output. If the text parses as JSON, return it as a Value
+        //    object so Handoff detection works in hierarchical mode.
+        let content = try_parse_json(&text);
         let usage_value = usage.map(|u| {
             serde_json::json!({
                 "input_tokens": u.input_tokens,
@@ -185,7 +187,7 @@ impl AgentExecutor for PandariaAgentExecutor {
         });
 
         Ok(AgentOutput {
-            content: Value::String(text),
+            content,
             usage: usage_value,
             latency: start.elapsed(),
             metadata: HashMap::new(),
@@ -241,10 +243,10 @@ impl AgentExecutor for PandariaAgentExecutor {
             })
             .collect();
 
-        // Append final chunk with full text + usage
+        // Append final chunk with full text + usage (parse JSON if possible)
         if !chunks.is_empty() || !full_text.is_empty() {
             chunks.push(AgentOutputChunk {
-                content: Value::String(full_text),
+                content: try_parse_json(&full_text),
                 usage: usage_value,
             });
         }
@@ -374,6 +376,16 @@ impl PandariaAgentExecutor {
 }
 
 // ── Free functions ─────────────────────────────────────────────────────────
+
+/// Try to parse a string as JSON. If successful, return the parsed Value;
+/// otherwise return the original string wrapped in `Value::String`.
+///
+/// This enables Handoff detection in hierarchical mode: if the LLM returns
+/// `{"summary": "...", "next_role": "..."}`, it becomes a `Value::Object`
+/// that `Handoff::detect()` can match.
+fn try_parse_json(text: &str) -> Value {
+    serde_json::from_str::<Value>(text).unwrap_or_else(|_| Value::String(text.to_string()))
+}
 
 /// Convert `SkillConfig` list to `agent_core::tools::ToolConfig` list.
 ///

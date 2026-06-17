@@ -521,3 +521,113 @@ async fn model_override_creates_separate_session() {
         "expected 2 cached sessions: mock/mock-v1 and anthropic/claude"
     );
 }
+
+/// Hierarchical Manager-Worker mode: manager delegates missions to workers,
+/// then terminates when all done.
+#[tokio::test]
+async fn hierarchical_manager_delegates() {
+    use tavern_core::ManagerConfig;
+
+    // Sequence: manager(→researcher) → researcher → manager(→writer) → writer → manager(terminate)
+    let provider = Arc::new(MockProvider::sequence(vec![
+        // Manager call 1: delegate to researcher
+        ai_provider::test_utils::MockResponse::Text(
+            r#"{"summary": "start with research", "next_role": "researcher"}"#.into(),
+        ),
+        // Researcher call
+        ai_provider::test_utils::MockResponse::Text("research notes about AI".into()),
+        // Manager call 2: delegate to writer
+        ai_provider::test_utils::MockResponse::Text(
+            r#"{"summary": "now write", "next_role": "writer"}"#.into(),
+        ),
+        // Writer call
+        ai_provider::test_utils::MockResponse::Text("final article text".into()),
+        // Manager call 3: terminate
+        ai_provider::test_utils::MockResponse::Text(
+            r#"{"summary": "done", "terminate": true}"#.into(),
+        ),
+    ]));
+
+    let agents = vec![
+        make_agent("manager", "You are a project manager."),
+        make_agent("researcher", "You are a researcher."),
+        make_agent("writer", "You are a writer."),
+    ];
+    let resolver = Arc::new(HashMapAgentResolver::new(agents));
+
+    let harness_config = make_harness_config(provider);
+    let executor = Arc::new(PandariaAgentExecutor::new(
+        "test-tenant",
+        "test-team",
+        harness_config,
+        resolver,
+    ));
+
+    let team = Team {
+        id: "content_team".into(),
+        name: "Content Team".into(),
+        description: None,
+        roles: vec![
+            Role {
+                id: "manager".into(),
+                name: "Manager".into(),
+                agent_id: "manager".into(),
+                visibility: Visibility::default(),
+                ..Default::default()
+            },
+            Role {
+                id: "researcher".into(),
+                name: "Researcher".into(),
+                agent_id: "researcher".into(),
+                visibility: Visibility::default(),
+                ..Default::default()
+            },
+            Role {
+                id: "writer".into(),
+                name: "Writer".into(),
+                agent_id: "writer".into(),
+                visibility: Visibility::default(),
+                ..Default::default()
+            },
+        ],
+        missions: vec![
+            Mission {
+                id: "research".into(),
+                role: "researcher".into(),
+                task: "research {{topic}}".into(),
+                output_key: Some("notes".into()),
+                handoff_mode: HandoffMode::Inherit,
+                ..Default::default()
+            },
+            Mission {
+                id: "write".into(),
+                role: "writer".into(),
+                task: "write from {{notes}}".into(),
+                output_key: Some("article".into()),
+                handoff_mode: HandoffMode::Inherit,
+                ..Default::default()
+            },
+        ],
+        default_process: Process::Hierarchical(ManagerConfig {
+            agent_id: "manager".into(),
+            instructions: None,
+        }),
+        planning: None,
+        webhook: None,
+    };
+
+    let engine = SquadEngine::new();
+    let mut squad = engine
+        .deploy(&team, executor, serde_json::json!({ "topic": "AI" }))
+        .await
+        .expect("deploy squad");
+
+    let result = engine
+        .run(&team, &mut squad)
+        .await
+        .expect("run squad");
+
+    assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
+    assert_eq!(result.outputs.get("notes").unwrap(), "research notes about AI");
+    assert_eq!(result.outputs.get("article").unwrap(), "final article text");
+}
