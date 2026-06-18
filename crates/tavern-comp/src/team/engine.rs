@@ -1675,9 +1675,9 @@ mod tests {
             .position(|e| matches!(e, SquadEvent::MissionCompleted { mission_id, .. } if mission_id == "m_b"))
             .unwrap();
 
-        // Both missions start before either completes (interleaving)
-        assert!(started_a < completed_a, "m_a started before completed");
-        assert!(started_b < completed_b, "m_b started before completed");
+        // Both missions start before the OTHER completes (true interleaving)
+        assert!(started_a < completed_b, "m_a started before m_b completed");
+        assert!(started_b < completed_a, "m_b started before m_a completed");
 
         // Final event is SquadCompleted
         assert!(
