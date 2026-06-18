@@ -173,9 +173,105 @@ impl SquadEngine {
         team: &Team,
         squad: Arc<tokio::sync::Mutex<Squad>>,
     ) -> Result<StreamHandle, CompError> {
-        // stub — implemented in later task
-        let _ = (team, squad);
-        todo!("run_stream")
+        team.validate()?;
+
+        let (event_tx, event_rx) = tokio::sync::mpsc::channel::<SquadEvent>(256);
+        let (result_tx, result_rx) = tokio::sync::oneshot::channel::<SquadResult>();
+
+        let engine = self.clone();
+        let team_clone = team.clone();
+        let squad_clone = squad.clone();
+
+        // Set initial status to Running
+        let squad_id = {
+            let mut s = squad.lock().await;
+            s.status = SquadStatus::Running;
+            s.id.clone()
+        };
+
+        // Emit SquadStarted (both stream and persist)
+        self.emit_event(&squad_id, SquadEvent::SquadStarted, Some(&event_tx)).await?;
+
+        // Notify webhook on started
+        {
+            let s = squad.lock().await;
+            self.notify_webhook(&team_clone, &s, "started", None).await;
+        }
+
+        tokio::spawn(async move {
+            let mut s = squad_clone.lock().await;
+
+            // Planning phase (if enabled) — replicate from run()
+            let effective_team = if let Some(ref planning) = team_clone.planning
+                && planning.enabled
+            {
+                match engine.run_planning_phase(&team_clone, &s).await {
+                    Ok(t) => t,
+                    Err(e) => {
+                        let _ = engine.emit_event(
+                            &s.id,
+                            SquadEvent::SquadFailed {
+                                reason: e.to_string(),
+                                failed_at: chrono::Utc::now(),
+                            },
+                            Some(&event_tx),
+                        ).await;
+                        let _ = result_tx.send(SquadResult {
+                            squad_id: s.id.clone(),
+                            team_id: s.team_id.clone(),
+                            status: SquadStatus::Failed,
+                            context: s.context.clone(),
+                            outputs: s.context.shared.clone(),
+                        });
+                        return;
+                    }
+                }
+            } else {
+                team_clone.clone()
+            };
+
+            let result = engine.run_core(&effective_team, &mut s, Some(&event_tx)).await;
+
+            // Flush executor (best-effort, log on error)
+            if let Err(e) = s.executor.flush().await {
+                tracing::warn!(squad_id = %s.id, error = %e, "squad executor flush failed");
+            }
+
+            let squad_result = match result {
+                Ok(r) => r,
+                Err(_e) => SquadResult {
+                    squad_id: s.id.clone(),
+                    team_id: s.team_id.clone(),
+                    status: SquadStatus::Failed,
+                    context: s.context.clone(),
+                    outputs: s.context.shared.clone(),
+                },
+            };
+
+            // Notify webhook on terminal states
+            match &squad_result.status {
+                SquadStatus::Completed => {
+                    engine.notify_webhook(&effective_team, &s, "completed", None).await;
+                }
+                SquadStatus::Failed => {
+                    engine.notify_webhook(&effective_team, &s, "failed", None).await;
+                }
+                SquadStatus::WaitingForSignal { .. }
+                | SquadStatus::Sleeping { .. }
+                | SquadStatus::Breakpoint { .. } => {
+                    engine.notify_webhook(&effective_team, &s, "paused", None).await;
+                }
+                _ => {}
+            }
+
+            // Send final result (ignored if receiver dropped)
+            let _ = result_tx.send(squad_result);
+        });
+
+        Ok(StreamHandle {
+            events: event_rx,
+            result: result_rx,
+        })
     }
 
     /// Planning phase: invoke the planner agent to analyze missions and produce
