@@ -36,16 +36,25 @@ tavern-comp
 
 ## 4. SquadEngine 改动
 
+### 4.0 并发模型
+
+`run_stream()` 内部 spawn 一个 `tokio::task` 在克隆的 `Squad` 上执行，然后立即返回 `Receiver`。
+
+- **调用方 Squad 不被更新**：执行过程中 squad 的状态变更（context 合并、completed_missions、status）发生在内部克隆上。调用方通过 Receiver 接收事件，通过 `SquadResult`（执行完成后通过 EventStore 反查）获取最终状态。
+- **Receiver 关闭**：执行完成、失败、或 pause 时，内部 task 释放 `Sender`，导致 Receiver 返回 `None`。
+- **&mut Squad 参数**：用于读取初始状态（context、completed_missions）。执行开始后，调用方不再持有内部状态。
+
 ### 4.1 新增公共 API
 
 ```rust
 impl SquadEngine {
     /// 流式执行 squad，实时推送生命周期事件。
-    /// 返回 mpsc Receiver，通道在 squad 执行完成、失败、或 pause 后自动关闭。
+    /// 内部 spawn tokio task 在克隆的 Squad 上执行，立即返回 Receiver。
+    /// 通道在 squad 执行完成、失败、或 pause 后自动关闭。
     pub async fn run_stream(
         &self,
         team: &Team,
-        squad: &mut Squad,
+        squad: &Squad,
     ) -> Result<tokio::sync::mpsc::Receiver<SquadEvent>, CompError>;
 }
 ```
@@ -144,19 +153,42 @@ pub enum ServerEvent {
 
 `event_type_name()` 新增对应分支。
 
-### 5.2 SSE 端点
+### 5.2 Squad 注册表
+
+`TavernState` 新增内存 squad 注册表：
+
+```rust
+pub struct SquadHandle {
+    pub engine: SquadEngine,
+    pub squad: Squad,
+    pub team: Team,
+}
+
+pub struct TavernState {
+    // ... 现有字段 ...
+    pub squads: Arc<RwLock<HashMap<String, SquadHandle>>>,
+}
+```
+
+**生命周期：**
+- **注册**：`deploy()` 成功后，将 `SquadHandle` 插入 `squads` map（key = squad_id）
+- **淘汰**：squad 执行终态（Completed / Failed）时移除。使用 tokio spawn 的 `JoinHandle` 在完成后清理
+
+### 5.3 SSE 端点
 
 新增路由：`GET /tavern/squads/{squad_id}/events/stream`
 
 Handler 逻辑：
-1. 从内存 squad 注册表（`TavernState` 内 `HashMap<String, SquadHandle>`）查找 squad_id
-2. 调用 `squad_engine.run_stream()` 获取 `Receiver<SquadEvent>`
+1. 从 `TavernState.squads` 查找 `SquadHandle`
+2. 调用 `handle.engine.run_stream(&handle.team, &handle.squad)` 获取 Receiver
 3. spawn task 将 `SquadEvent` 映射为 `ServerEvent`，送入 mpsc
 4. 返回 `SseStream`（复用现有 `sse.rs`）
 
-> 注：`Squad` 含 `Arc<dyn AgentExecutor>` 不可序列化，因此 squad 查找走内存注册表而非 EventStore 恢复。TavernState 中新增 `squads: Arc<RwLock<HashMap<String, SquadHandle>>>` 维护运行中的 squad。
+> 认证/限流：继承 api-gateway 现有中间件（HMAC 认证、rate limit），无需额外配置。
 
-### 5.3 TUI 客户端
+> 注：`Squad` 含 `Arc<dyn AgentExecutor>` 不可序列化，因此 squad 查找走内存注册表而非 EventStore 恢复。
+
+### 5.4 TUI 客户端
 
 TUI 新增 squad 事件类型匹配：
 - `client/` SSE 连接逻辑扩展 squad 事件类型
@@ -192,7 +224,7 @@ run_stream() 被调用
 | mpsc channel full | `try_send` 失败 → 丢弃事件 + `tracing::warn`，不阻塞执行 |
 | 消费者提前断开 | `try_send` 返回 `Err` → 忽略，执行继续 |
 | mission 执行失败 | 推送 `MissionFailed`；若不可重试则推送 `SquadFailed` + 关闭通道 |
-| EventStore append 失败 | 事件先推送（保证实时性），然后 `EventStore::append().await?` 错误正常传播，与现有 `run()` 行为一致——store 失败视为执行失败 |
+| EventStore append 失败 | 事件先推送到 mpsc（保证实时性），然后 `EventStore::append().await?` 错误正常传播。注意：若 store append 失败，消费者已收到的事件未被持久化——这是实时性优先的 trade-off。重启后以 EventStore 为真相源 |
 | squad 中途 pause | 推送对应 pause 事件后关闭通道；恢复时调用方重新 `run_stream()` |
 
 ## 8. 测试策略
@@ -202,7 +234,7 @@ run_stream() 被调用
 1. 单 mission squad：验证完整事件序列
 2. 3 个并行 mission：验证事件交错顺序
 3. mission 失败：验证 MissionFailed + SquadFailed
-4. 通道容量：64 并发，验证无死锁无 panic
+4. 通道容量：64 个并发 mission（远大于默认 max_concurrency=4），验证无死锁无 panic（通道容量 256 足够缓冲）
 5. 消费者断开：提前 drop Receiver，验证执行不受影响
 6. `run()` 向后兼容：现有行为不变
 
