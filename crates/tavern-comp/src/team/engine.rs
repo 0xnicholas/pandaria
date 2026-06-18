@@ -1566,4 +1566,209 @@ mod tests {
         assert_eq!(result.status, SquadStatus::Completed);
         assert_eq!(result.outputs.get("out2").unwrap(), "step1 done");
     }
+
+    // ── run_stream tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn run_stream_single_mission_happy_path() {
+        let mission = Mission {
+            id: "m1".into(),
+            role: "researcher".into(),
+            task: "do it".into(),
+            handoff_mode: HandoffMode::Inherit,
+            ..Default::default()
+        };
+        let team = make_team(vec![mission], None);
+
+        let mut responses = HashMap::new();
+        responses.insert("researcher".into(), serde_json::json!({"done": true}));
+        let executor = Arc::new(MockAgentExecutor::new(team.roles.clone(), responses));
+
+        let engine = SquadEngine::new();
+        let squad = Arc::new(tokio::sync::Mutex::new(
+            engine
+                .deploy(&team, executor, serde_json::json!({}))
+                .await
+                .unwrap(),
+        ));
+
+        let mut handle = engine.run_stream(&team, squad.clone()).await.unwrap();
+        let mut events: Vec<SquadEvent> = vec![];
+        while let Some(e) = handle.events.recv().await {
+            events.push(e);
+        }
+
+        // Verify event sequence
+        assert!(matches!(events[0], SquadEvent::SquadStarted));
+        assert!(
+            matches!(&events[1], SquadEvent::MissionScheduled { mission_id, .. } if mission_id == "m1")
+        );
+        assert!(
+            matches!(&events[2], SquadEvent::MissionStarted { mission_id, .. } if mission_id == "m1")
+        );
+        assert!(
+            matches!(&events[3], SquadEvent::MissionCompleted { mission_id, .. } if mission_id == "m1")
+        );
+        assert!(matches!(events[4], SquadEvent::SquadCompleted { .. }));
+        assert_eq!(events.len(), 5);
+
+        // Verify Arc state was updated
+        let s = squad.lock().await;
+        assert_eq!(s.status, SquadStatus::Completed);
+        assert!(s.completed_missions.contains("m1"));
+    }
+
+    #[tokio::test]
+    async fn run_stream_parallel_interleaving() {
+        let missions = vec![
+            Mission {
+                id: "m_a".into(),
+                role: "researcher".into(),
+                task: "task a".into(),
+                handoff_mode: HandoffMode::Inherit,
+                ..Default::default()
+            },
+            Mission {
+                id: "m_b".into(),
+                role: "writer".into(),
+                task: "task b".into(),
+                handoff_mode: HandoffMode::Inherit,
+                ..Default::default()
+            },
+        ];
+        let team = make_team(missions, None);
+
+        let mut responses = HashMap::new();
+        responses.insert("researcher".into(), serde_json::json!("result a"));
+        responses.insert("writer".into(), serde_json::json!("result b"));
+        let executor = Arc::new(MockAgentExecutor::new(team.roles.clone(), responses));
+
+        let engine = SquadEngine::new();
+        let squad = Arc::new(tokio::sync::Mutex::new(
+            engine
+                .deploy(&team, executor, serde_json::json!({}))
+                .await
+                .unwrap(),
+        ));
+
+        let mut handle = engine.run_stream(&team, squad.clone()).await.unwrap();
+        let mut events: Vec<SquadEvent> = vec![];
+        while let Some(e) = handle.events.recv().await {
+            events.push(e);
+        }
+
+        // Find indices of MissionStarted events for both missions
+        let started_a = events
+            .iter()
+            .position(|e| matches!(e, SquadEvent::MissionStarted { mission_id, .. } if mission_id == "m_a"))
+            .unwrap();
+        let started_b = events
+            .iter()
+            .position(|e| matches!(e, SquadEvent::MissionStarted { mission_id, .. } if mission_id == "m_b"))
+            .unwrap();
+        let completed_a = events
+            .iter()
+            .position(|e| matches!(e, SquadEvent::MissionCompleted { mission_id, .. } if mission_id == "m_a"))
+            .unwrap();
+        let completed_b = events
+            .iter()
+            .position(|e| matches!(e, SquadEvent::MissionCompleted { mission_id, .. } if mission_id == "m_b"))
+            .unwrap();
+
+        // Both missions start before either completes (interleaving)
+        assert!(started_a < completed_a, "m_a started before completed");
+        assert!(started_b < completed_b, "m_b started before completed");
+
+        // Final event is SquadCompleted
+        assert!(
+            matches!(events.last().unwrap(), SquadEvent::SquadCompleted { .. }),
+            "last event should be SquadCompleted"
+        );
+
+        // Both missions completed
+        let s = squad.lock().await;
+        assert_eq!(s.status, SquadStatus::Completed);
+        assert!(s.completed_missions.contains("m_a"));
+        assert!(s.completed_missions.contains("m_b"));
+    }
+
+    #[tokio::test]
+    async fn run_stream_mission_failure_without_retry() {
+        use crate::team::executor::{AgentExecutor as AgentExecutorTrait, AgentExecutorError,
+            AgentInput as AgentInputT, AgentOutput, AgentOutputChunk};
+        use async_trait::async_trait;
+        use futures_util::stream::BoxStream;
+
+        /// Mock that always fails.
+        struct FailingMockExecutor {
+            role: Role,
+        }
+
+        #[async_trait]
+        impl AgentExecutorTrait for FailingMockExecutor {
+            async fn resolve_role(&self, _role_id: &str) -> Result<Role, AgentExecutorError> {
+                Ok(self.role.clone())
+            }
+            async fn execute(
+                &self,
+                _role_id: &str,
+                _input: AgentInputT,
+            ) -> Result<AgentOutput, AgentExecutorError> {
+                Err(AgentExecutorError::ExecutionFailed("intentional failure".into()))
+            }
+            async fn execute_stream(
+                &self,
+                _role_id: &str,
+                _input: AgentInputT,
+            ) -> Result<BoxStream<'static, AgentOutputChunk>, AgentExecutorError> {
+                Ok(Box::pin(futures_util::stream::empty()))
+            }
+        }
+
+        let mission = Mission {
+            id: "fail1".into(),
+            role: "researcher".into(),
+            task: "will fail".into(),
+            retries: Some(0), // no retries
+            handoff_mode: HandoffMode::Inherit,
+            ..Default::default()
+        };
+        let team = make_team(vec![mission], None);
+
+        let executor = Arc::new(FailingMockExecutor {
+            role: team.roles[0].clone(),
+        });
+
+        let engine = SquadEngine::new();
+        let squad = Arc::new(tokio::sync::Mutex::new(
+            engine
+                .deploy(&team, executor, serde_json::json!({}))
+                .await
+                .unwrap(),
+        ));
+
+        let mut handle = engine.run_stream(&team, squad.clone()).await.unwrap();
+        let mut events: Vec<SquadEvent> = vec![];
+        while let Some(e) = handle.events.recv().await {
+            events.push(e);
+        }
+
+        // Should see MissionFailed then SquadFailed
+        let has_mission_failed = events
+            .iter()
+            .any(|e| matches!(e, SquadEvent::MissionFailed { mission_id, .. } if mission_id == "fail1"));
+        let has_squad_failed = events
+            .iter()
+            .any(|e| matches!(e, SquadEvent::SquadFailed { .. }));
+        assert!(
+            has_mission_failed,
+            "expected MissionFailed event, got: {:?}",
+            events.iter().map(|e| std::mem::discriminant(e)).collect::<Vec<_>>()
+        );
+        assert!(has_squad_failed, "expected SquadFailed event");
+
+        // Arc state shows failed
+        let s = squad.lock().await;
+        assert_eq!(s.status, SquadStatus::Failed);
+    }
 }
