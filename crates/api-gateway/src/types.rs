@@ -80,6 +80,45 @@ pub enum ServerEvent {
         success: bool,
         error: Option<String>,
     },
+
+    // ── Squad lifecycle events ──
+    #[serde(rename = "squad_started")]
+    SquadStarted { squad_id: String, team_id: String },
+
+    #[serde(rename = "squad_mission_scheduled")]
+    SquadMissionScheduled { squad_id: String, mission_id: String, attempt: u64 },
+
+    #[serde(rename = "squad_mission_started")]
+    SquadMissionStarted { squad_id: String, mission_id: String },
+
+    #[serde(rename = "squad_mission_completed")]
+    SquadMissionCompleted { squad_id: String, mission_id: String, output: serde_json::Value },
+
+    #[serde(rename = "squad_mission_failed")]
+    SquadMissionFailed {
+        squad_id: String,
+        mission_id: String,
+        error: String,
+        attempt: u64,
+        will_retry: bool,
+    },
+
+    #[serde(rename = "squad_mission_retry_scheduled")]
+    SquadMissionRetryScheduled {
+        squad_id: String,
+        mission_id: String,
+        attempt: u64,
+        reason: String,
+    },
+
+    #[serde(rename = "squad_mission_waiting_signal")]
+    SquadMissionWaitingSignal { squad_id: String, mission_id: String, signal_name: String },
+
+    #[serde(rename = "squad_completed")]
+    SquadCompleted { squad_id: String, outputs: serde_json::Value },
+
+    #[serde(rename = "squad_failed")]
+    SquadFailed { squad_id: String, reason: String },
 }
 
 /// Token 使用量统计。api-gateway 独立定义，不依赖 ai-provider 的 Usage 类型。

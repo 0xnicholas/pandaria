@@ -19,7 +19,7 @@ pub mod workflow;
 pub use context::render_template;
 pub use engine::{ExecutionInfo, WorkflowEngine, send_webhook};
 pub use error::CompError;
-pub use event::{SignalAction, WorkflowEvent};
+pub use event::{SignalAction, SquadEvent, WorkflowEvent};
 pub use executor::StepExecutor;
 pub use flow_executor::FlowStepExecutor;
 pub use handle::ExecutionHandle;

@@ -85,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         registry: workflow_registry.clone(),
         event_store,
         tool_registry,
+        squads: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
     });
 
     // --- 7. Print startup info ---

@@ -7,7 +7,9 @@
 //! via shared/private context and explicit handoffs. It is not a general-purpose
 //! workflow engine.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use async_trait::async_trait;
 use axum::{
     Extension, Json,
     extract::{Path, Query},
@@ -18,13 +20,33 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
+use crate::sse::SseStream;
+use crate::types::ServerEvent;
+
 // ── State ──
+
+pub struct SquadHandle {
+    pub engine: tavern_comp::SquadEngine,
+    pub squad: Arc<tokio::sync::Mutex<tavern_comp::Squad>>,
+    pub team: tavern_comp::Team,
+}
+
+impl Clone for SquadHandle {
+    fn clone(&self) -> Self {
+        Self {
+            engine: self.engine.clone(),
+            squad: self.squad.clone(),
+            team: self.team.clone(),
+        }
+    }
+}
 
 pub struct TavernState {
     pub hero: Arc<tavern_comp::TavernHero>,
     pub registry: Arc<RwLock<tavern_comp::WorkflowRegistry>>,
     pub event_store: Arc<dyn tavern_comp::EventStore>,
     pub tool_registry: Arc<tavern_core::ToolRegistry>,
+    pub squads: Arc<RwLock<HashMap<String, SquadHandle>>>,
 }
 
 // ── API Types ──
@@ -61,6 +83,84 @@ pub struct RunWorkflowRequest {
     pub inputs: Value,
     #[serde(default)]
     pub async_mode: bool,
+}
+
+#[derive(Deserialize)]
+pub struct DeploySquadRequest {
+    pub team: tavern_comp::Team,
+    pub inputs: Value,
+}
+
+// ── Local Hero Executor ──
+
+/// Simple AgentExecutor that delegates to TavernHero for execution.
+struct LocalHeroExecutor {
+    hero: Arc<tavern_comp::TavernHero>,
+}
+
+impl LocalHeroExecutor {
+    fn new(hero: Arc<tavern_comp::TavernHero>) -> Self {
+        Self { hero }
+    }
+}
+
+#[async_trait]
+impl tavern_comp::AgentExecutor for LocalHeroExecutor {
+    async fn resolve_role(
+        &self,
+        role_id: &str,
+    ) -> Result<tavern_comp::Role, tavern_comp::AgentExecutorError> {
+        let agent = self
+            .hero
+            .get_agent(role_id)
+            .await
+            .ok_or_else(|| tavern_comp::AgentExecutorError::RoleNotFound {
+                id: role_id.into(),
+            })?;
+        Ok(tavern_comp::Role {
+            id: agent.id.clone(),
+            name: agent.name.clone(),
+            description: agent.description.clone(),
+            agent_id: agent.id,
+            team_instructions: Some(agent.instructions),
+            model_override: Some(agent.model),
+            visibility: tavern_comp::Visibility::default(),
+            skills: vec![],
+        })
+    }
+
+    async fn execute(
+        &self,
+        role_id: &str,
+        input: tavern_comp::AgentInput,
+    ) -> Result<tavern_comp::AgentOutput, tavern_comp::AgentExecutorError> {
+        let result = self
+            .hero
+            .execute(role_id, &input.task, Some(input.context.shared))
+            .await
+            .map_err(|e| {
+                tavern_comp::AgentExecutorError::ExecutionFailed(e.to_string())
+            })?;
+        Ok(tavern_comp::AgentOutput {
+            content: result,
+            usage: None,
+            latency: std::time::Duration::from_secs(0),
+            metadata: std::collections::HashMap::new(),
+        })
+    }
+
+    async fn execute_stream(
+        &self,
+        _role_id: &str,
+        _input: tavern_comp::AgentInput,
+    ) -> Result<
+        futures::stream::BoxStream<'static, tavern_comp::AgentOutputChunk>,
+        tavern_comp::AgentExecutorError,
+    > {
+        Err(tavern_comp::AgentExecutorError::ExecutionFailed(
+            "streaming not supported by LocalHeroExecutor".into(),
+        ))
+    }
 }
 
 // ── Handlers ──
@@ -193,6 +293,8 @@ pub fn routes() -> axum::Router<()> {
         .route("/flows/{id}/start", post(start_flow))
         .route("/flows/{id}/status", get(flow_status))
         .route("/flows/{id}/cancel", post(cancel_flow))
+        .route("/squads", post(deploy_squad))
+        .route("/squads/{squad_id}/events/stream", get(squad_events_stream))
 }
 
 pub fn tool_routes() -> axum::Router<()> {
@@ -358,6 +460,178 @@ pub async fn tool_call(
     }
 }
 
+// ── Squad Handlers ──
+
+pub async fn deploy_squad(
+    Extension(state): Extension<Arc<TavernState>>,
+    Json(req): Json<DeploySquadRequest>,
+) -> impl IntoResponse {
+    let executor: Arc<dyn tavern_comp::AgentExecutor> =
+        Arc::new(LocalHeroExecutor::new(state.hero.clone()));
+
+    let engine =
+        tavern_comp::SquadEngine::new().with_store(state.event_store.clone());
+
+    let squad = match engine.deploy(&req.team, executor, req.inputs).await {
+        Ok(s) => s,
+        Err(e) => {
+            return ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DeployError",
+                &e.to_string(),
+            )
+            .into_response()
+        }
+    };
+
+    let squad_id = squad.id.clone();
+    let squad_arc = Arc::new(tokio::sync::Mutex::new(squad));
+
+    state.squads.write().await.insert(
+        squad_id.clone(),
+        SquadHandle {
+            engine,
+            squad: squad_arc,
+            team: req.team,
+        },
+    );
+
+    Json(json!({
+        "squad_id": squad_id,
+        "status": "deployed",
+    }))
+    .into_response()
+}
+
+fn map_squad_event(
+    event: tavern_comp::SquadEvent,
+    squad_id: &str,
+    team_id: &str,
+) -> Option<ServerEvent> {
+    use tavern_comp::SquadEvent;
+    match event {
+        SquadEvent::SquadStarted => Some(ServerEvent::SquadStarted {
+            squad_id: squad_id.into(),
+            team_id: team_id.into(),
+        }),
+        SquadEvent::MissionScheduled {
+            mission_id,
+            attempt,
+        } => Some(ServerEvent::SquadMissionScheduled {
+            squad_id: squad_id.into(),
+            mission_id,
+            attempt,
+        }),
+        SquadEvent::MissionStarted { mission_id, .. } => {
+            Some(ServerEvent::SquadMissionStarted {
+                squad_id: squad_id.into(),
+                mission_id,
+            })
+        }
+        SquadEvent::MissionCompleted {
+            mission_id, output, ..
+        } => Some(ServerEvent::SquadMissionCompleted {
+            squad_id: squad_id.into(),
+            mission_id,
+            output,
+        }),
+        SquadEvent::MissionFailed {
+            mission_id,
+            error,
+            attempt,
+            will_retry,
+        } => Some(ServerEvent::SquadMissionFailed {
+            squad_id: squad_id.into(),
+            mission_id,
+            error,
+            attempt,
+            will_retry,
+        }),
+        SquadEvent::MissionRetryScheduled {
+            mission_id,
+            attempt,
+            reason,
+            ..
+        } => Some(ServerEvent::SquadMissionRetryScheduled {
+            squad_id: squad_id.into(),
+            mission_id,
+            attempt,
+            reason,
+        }),
+        SquadEvent::MissionWaitingForSignal {
+            mission_id,
+            signal_name,
+            ..
+        } => Some(ServerEvent::SquadMissionWaitingSignal {
+            squad_id: squad_id.into(),
+            mission_id,
+            signal_name,
+        }),
+        SquadEvent::SquadCompleted { outputs, .. } => {
+            Some(ServerEvent::SquadCompleted {
+                squad_id: squad_id.into(),
+                outputs,
+            })
+        }
+        SquadEvent::SquadFailed { reason, .. } => {
+            Some(ServerEvent::SquadFailed {
+                squad_id: squad_id.into(),
+                reason,
+            })
+        }
+        SquadEvent::SquadCreated { .. } => None,
+    }
+}
+
+pub async fn squad_events_stream(
+    Extension(state): Extension<Arc<TavernState>>,
+    Path(squad_id): Path<String>,
+) -> impl IntoResponse {
+    let handle = {
+        let squads = state.squads.read().await;
+        match squads.get(&squad_id).cloned() {
+            Some(h) => h,
+            None => {
+                return ApiError::new(
+                    StatusCode::NOT_FOUND,
+                    "SquadNotFound",
+                    &format!("Squad '{}' not found", squad_id),
+                )
+                .into_response()
+            }
+        }
+    };
+
+    let team_id = handle.team.id.clone();
+    let mut stream_handle =
+        match handle.engine.run_stream(&handle.team, handle.squad).await {
+            Ok(h) => h,
+            Err(e) => {
+                return ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "StreamError",
+                    &e.to_string(),
+                )
+                .into_response()
+            }
+        };
+
+    let (sse_tx, sse_rx) = tokio::sync::mpsc::channel::<ServerEvent>(256);
+    let abort_handle = tokio::spawn(async move {
+        while let Some(event) = stream_handle.events.recv().await {
+            if let Some(server_event) =
+                map_squad_event(event, &squad_id, &team_id)
+            {
+                if sse_tx.send(server_event).await.is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    SseStream::new(sse_rx, abort_handle.abort_handle()).into_response()
+}
+
 // ── Helpers ──
 
 fn map_hero_error(e: tavern_comp::TavernError) -> axum::response::Response {
@@ -368,5 +642,65 @@ fn map_hero_error(e: tavern_comp::TavernError) -> axum::response::Response {
         _ => {
             ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "InternalError", &e.to_string()).into_response()
         }
+    }
+}
+
+// ── Tests ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_map_squad_started() {
+        let result =
+            map_squad_event(tavern_comp::SquadEvent::SquadStarted, "s1", "t1");
+        assert!(matches!(
+            result,
+            Some(ServerEvent::SquadStarted { squad_id, team_id })
+                if squad_id == "s1" && team_id == "t1"
+        ));
+    }
+
+    #[test]
+    fn test_map_mission_failed() {
+        let result = map_squad_event(
+            tavern_comp::SquadEvent::MissionFailed {
+                mission_id: "m1".into(),
+                error: "timeout".into(),
+                attempt: 2,
+                will_retry: false,
+            },
+            "s1",
+            "t1",
+        );
+        assert!(matches!(
+            result,
+            Some(ServerEvent::SquadMissionFailed {
+                squad_id,
+                mission_id,
+                error,
+                attempt,
+                will_retry,
+            }) if squad_id == "s1"
+                && mission_id == "m1"
+                && error == "timeout"
+                && attempt == 2
+                && !will_retry
+        ));
+    }
+
+    #[test]
+    fn test_map_squad_created_is_none() {
+        let result = map_squad_event(
+            tavern_comp::SquadEvent::SquadCreated {
+                squad_id: "s1".into(),
+                team_id: "t1".into(),
+                inputs: serde_json::json!({}),
+            },
+            "s1",
+            "t1",
+        );
+        assert!(result.is_none());
     }
 }
