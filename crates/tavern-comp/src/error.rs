@@ -105,6 +105,14 @@ pub enum CompError {
     #[error("internal error: {0}")]
     Internal(String),
 
+    // ── Streaming ──
+    #[error("mission '{mission_id}' failed on attempt {attempt}: {reason}")]
+    MissionFailed {
+        mission_id: String,
+        attempt: u64,
+        reason: String,
+    },
+
     // ── Phase 1: CrewAI Alignment ──
     #[error("manager agent error: {reason}")]
     ManagerError { reason: String },
@@ -169,6 +177,11 @@ impl Clone for CompError {
             },
             CompError::StoreError(s) => CompError::StoreError(s.clone()),
             CompError::Internal(s) => CompError::Internal(s.clone()),
+            CompError::MissionFailed { mission_id, attempt, reason } => CompError::MissionFailed {
+                mission_id: mission_id.clone(),
+                attempt: *attempt,
+                reason: reason.clone(),
+            },
             CompError::ManagerError { reason } => CompError::ManagerError {
                 reason: reason.clone(),
             },
