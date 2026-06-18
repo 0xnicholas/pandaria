@@ -319,9 +319,10 @@ impl SquadEngine {
                     .expect("semaphore should not be closed");
                 let engine = self.clone();
                 let mut squad = squad.clone();
+                let event_tx_owned = event_tx.cloned();
                 tokio::spawn(async move {
                     let _permit = permit;
-                    let result = engine.execute_mission(&mut squad, &mission).await;
+                    let result = engine.execute_mission(&mut squad, &mission, event_tx_owned.as_ref()).await;
                     let _ = tx.send((mission.id.clone(), result, squad)).await;
                 });
             }
@@ -367,16 +368,15 @@ impl SquadEngine {
                     }
                     Err(e) => {
                         squad.status = SquadStatus::Failed;
-                        self.store
-                            .append(
-                                &squad.id,
-                                SquadEvent::SquadFailed {
-                                    reason: e.to_string(),
-                                    failed_at: Utc::now(),
-                                }
-                                .into(),
-                            )
-                            .await?;
+                        self.emit_event(
+                            &squad.id,
+                            SquadEvent::SquadFailed {
+                                reason: e.to_string(),
+                                failed_at: Utc::now(),
+                            },
+                            event_tx,
+                        )
+                        .await?;
                         return Err(e);
                     }
                 }
@@ -395,16 +395,15 @@ impl SquadEngine {
             outputs: squad.context.shared.clone(),
         };
 
-        self.store
-            .append(
-                &squad.id,
-                SquadEvent::SquadCompleted {
-                    outputs: result.outputs.clone(),
-                    completed_at: Utc::now(),
-                }
-                .into(),
-            )
-            .await?;
+        self.emit_event(
+            &squad.id,
+            SquadEvent::SquadCompleted {
+                outputs: result.outputs.clone(),
+                completed_at: Utc::now(),
+            },
+            event_tx,
+        )
+        .await?;
 
         Ok(result)
     }
@@ -431,19 +430,18 @@ impl SquadEngine {
             manager_loops += 1;
             if manager_loops > Self::MAX_MANAGER_LOOPS {
                 squad.status = SquadStatus::Failed;
-                self.store
-                    .append(
-                        &squad.id,
-                        SquadEvent::SquadFailed {
-                            reason: format!(
-                                "manager loop exceeded {} iterations",
-                                Self::MAX_MANAGER_LOOPS
-                            ),
-                            failed_at: Utc::now(),
-                        }
-                        .into(),
-                    )
-                    .await?;
+                self.emit_event(
+                    &squad.id,
+                    SquadEvent::SquadFailed {
+                        reason: format!(
+                            "manager loop exceeded {} iterations",
+                            Self::MAX_MANAGER_LOOPS
+                        ),
+                        failed_at: Utc::now(),
+                    },
+                    event_tx,
+                )
+                .await?;
                 return Err(CompError::ManagerLoopExceeded {
                     max_loops: Self::MAX_MANAGER_LOOPS,
                 });
@@ -516,7 +514,7 @@ impl SquadEngine {
 
             // Execute the delegated mission
             let mut branch_squad = squad.clone();
-            match self.execute_mission(&mut branch_squad, &next_mission).await {
+            match self.execute_mission(&mut branch_squad, &next_mission, event_tx).await {
                 Ok(()) => {
                     merge_context(&mut squad.context, &branch_squad.context);
                     // Check if squad paused (signal wait, retry sleep, or breakpoint)
@@ -552,16 +550,15 @@ impl SquadEngine {
                 }
                 Err(e) => {
                     squad.status = SquadStatus::Failed;
-                    self.store
-                        .append(
-                            &squad.id,
-                            SquadEvent::SquadFailed {
-                                reason: e.to_string(),
-                                failed_at: Utc::now(),
-                            }
-                            .into(),
-                        )
-                        .await?;
+                    self.emit_event(
+                        &squad.id,
+                        SquadEvent::SquadFailed {
+                            reason: e.to_string(),
+                            failed_at: Utc::now(),
+                        },
+                        event_tx,
+                    )
+                    .await?;
                     return Err(e);
                 }
             }
@@ -577,16 +574,15 @@ impl SquadEngine {
             outputs: squad.context.shared.clone(),
         };
 
-        self.store
-            .append(
-                &squad.id,
-                SquadEvent::SquadCompleted {
-                    outputs: result.outputs.clone(),
-                    completed_at: Utc::now(),
-                }
-                .into(),
-            )
-            .await?;
+        self.emit_event(
+            &squad.id,
+            SquadEvent::SquadCompleted {
+                outputs: result.outputs.clone(),
+                completed_at: Utc::now(),
+            },
+            event_tx,
+        )
+        .await?;
 
         Ok(result)
     }
@@ -668,31 +664,29 @@ impl SquadEngine {
                     squad.status = SquadStatus::WaitingForSignal {
                         signal: signal_name.clone(),
                     };
-                    self.store
-                        .append(
-                            &squad.id,
-                            SquadEvent::MissionWaitingForSignal {
-                                mission_id: mission.id.clone(),
-                                signal_name: signal_name.clone(),
-                                attempt,
-                            }
-                            .into(),
-                        )
-                        .await?;
+                    self.emit_event(
+                        &squad.id,
+                        SquadEvent::MissionWaitingForSignal {
+                            mission_id: mission.id.clone(),
+                            signal_name: signal_name.clone(),
+                            attempt,
+                        },
+                        event_tx,
+                    )
+                    .await?;
                     return Ok(()); // Caller should re-invoke run() after signal
                 }
             }
 
-            self.store
-                .append(
-                    &squad.id,
-                    SquadEvent::MissionScheduled {
-                        mission_id: mission.id.clone(),
-                        attempt,
-                    }
-                    .into(),
-                )
-                .await?;
+            self.emit_event(
+                &squad.id,
+                SquadEvent::MissionScheduled {
+                    mission_id: mission.id.clone(),
+                    attempt,
+                },
+                event_tx,
+            )
+            .await?;
 
             let role = squad
                 .executor
@@ -706,16 +700,15 @@ impl SquadEngine {
                 .map_err(|e| CompError::TemplateParse { reason: e.to_string() })?;
 
             let started_at = Utc::now();
-            self.store
-                .append(
-                    &squad.id,
-                    SquadEvent::MissionStarted {
-                        mission_id: mission.id.clone(),
-                        started_at,
-                    }
-                    .into(),
-                )
-                .await?;
+            self.emit_event(
+                &squad.id,
+                SquadEvent::MissionStarted {
+                    mission_id: mission.id.clone(),
+                    started_at,
+                },
+                event_tx,
+            )
+            .await?;
 
             let input = AgentInput {
                 task,
@@ -768,18 +761,17 @@ impl SquadEngine {
                         timestamp: Utc::now(),
                     });
 
-                    self.store
-                        .append(
-                            &squad.id,
-                            SquadEvent::MissionCompleted {
-                                mission_id: mission.id.clone(),
-                                output: value.clone(),
-                                output_key: mission.output_key.clone(),
-                                completed_at: Utc::now(),
-                            }
-                            .into(),
-                        )
-                        .await?;
+                    self.emit_event(
+                        &squad.id,
+                        SquadEvent::MissionCompleted {
+                            mission_id: mission.id.clone(),
+                            output: value.clone(),
+                            output_key: mission.output_key.clone(),
+                            completed_at: Utc::now(),
+                        },
+                        event_tx,
+                    )
+                    .await?;
 
                     // Check breakpoint: pause after completion for manual review
                     if mission.breakpoint {
@@ -807,24 +799,35 @@ impl SquadEngine {
                             wake_at = %wake_at,
                             "mission failed, scheduling retry"
                         );
-                        self.store
-                            .append(
-                                &squad.id,
-                                SquadEvent::MissionRetryScheduled {
-                                    mission_id: mission.id.clone(),
-                                    attempt: attempt + 1,
-                                    reason: e.to_string(),
-                                    scheduled_at: wake_at,
-                                }
-                                .into(),
-                            )
-                            .await?;
+                        self.emit_event(
+                            &squad.id,
+                            SquadEvent::MissionRetryScheduled {
+                                mission_id: mission.id.clone(),
+                                attempt: attempt + 1,
+                                reason: e.to_string(),
+                                scheduled_at: wake_at,
+                            },
+                            event_tx,
+                        )
+                        .await?;
 
                         squad.status = SquadStatus::Sleeping { wake_at };
                         return Ok(()); // Caller should re-invoke run() after sleep
                     }
-                    return Err(CompError::StepFailed {
-                        step_id: mission.id.clone(),
+                    self.emit_event(
+                        &squad.id,
+                        SquadEvent::MissionFailed {
+                            mission_id: mission.id.clone(),
+                            error: e.to_string(),
+                            attempt,
+                            will_retry: false,
+                        },
+                        event_tx,
+                    )
+                    .await?;
+                    return Err(CompError::MissionFailed {
+                        mission_id: mission.id.clone(),
+                        attempt,
                         reason: e.to_string(),
                     });
                 }
