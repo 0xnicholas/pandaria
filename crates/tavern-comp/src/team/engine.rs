@@ -49,6 +49,24 @@ impl SquadEngine {
         self
     }
 
+    /// Emit a squad event: push to streaming channel (if present), then persist.
+    async fn emit_event(
+        &self,
+        squad_id: &str,
+        event: SquadEvent,
+        event_tx: Option<&tokio::sync::mpsc::Sender<SquadEvent>>,
+    ) -> Result<(), CompError> {
+        // Push to streaming channel first (best-effort)
+        if let Some(tx) = event_tx {
+            if let Err(e) = tx.try_send(event.clone()) {
+                tracing::warn!(squad_id = %squad_id, error = %e,
+                    "stream channel full, dropping event");
+            }
+        }
+        // Persist (error propagates)
+        self.store.append(squad_id, event.into()).await
+    }
+
     pub async fn deploy(
         &self,
         team: &Team,
@@ -99,10 +117,7 @@ impl SquadEngine {
             team.clone()
         };
 
-        let result = match &effective_team.default_process {
-            Process::Sequential => self.run_dag(&effective_team, squad).await,
-            Process::Hierarchical(cfg) => self.run_hierarchical(&effective_team, squad, cfg).await,
-        };
+        let result = self.run_core(&effective_team, squad, None).await;
 
         // If execution paused (waiting for signal or sleeping for retry),
         // return the paused status so the caller can resume later.
@@ -244,11 +259,26 @@ impl SquadEngine {
         Ok(planned_team)
     }
 
+    /// Shared execution core.
+    /// event_tx: None for synchronous run(), Some for streaming run_stream().
+    async fn run_core(
+        &self,
+        team: &Team,
+        squad: &mut Squad,
+        event_tx: Option<&tokio::sync::mpsc::Sender<SquadEvent>>,
+    ) -> Result<SquadResult, CompError> {
+        match &team.default_process {
+            Process::Sequential => self.run_dag(team, squad, event_tx).await,
+            Process::Hierarchical(cfg) => self.run_hierarchical(team, squad, cfg, event_tx).await,
+        }
+    }
+
     /// P2: DAG-compatible sequential execution with parallel branches.
     async fn run_dag(
         &self,
         team: &Team,
         squad: &mut Squad,
+        event_tx: Option<&tokio::sync::mpsc::Sender<SquadEvent>>,
     ) -> Result<SquadResult, CompError> {
         let scheduler = MissionScheduler::new(team);
         // Seed from persisted completed set, work locally, sync back on return
@@ -387,6 +417,7 @@ impl SquadEngine {
         team: &Team,
         squad: &mut Squad,
         manager_cfg: &tavern_core::ManagerConfig,
+        event_tx: Option<&tokio::sync::mpsc::Sender<SquadEvent>>,
     ) -> Result<SquadResult, CompError> {
         let scheduler = MissionScheduler::new(team);
         let mut completed: HashSet<String> = squad.completed_missions.clone();
@@ -624,6 +655,7 @@ impl SquadEngine {
         &self,
         squad: &mut Squad,
         mission: &Mission,
+        event_tx: Option<&tokio::sync::mpsc::Sender<SquadEvent>>,
     ) -> Result<(), CompError> {
         let max_attempts = mission.retries.unwrap_or(0) + 1; // 1 initial + N retries
         let retry_delay = std::time::Duration::from_secs(mission.retry_delay.unwrap_or(0));
