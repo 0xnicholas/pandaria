@@ -52,21 +52,25 @@ impl SquadEngine {
 
 ### 4.2 内部重构：提取 run_core()
 
-`run()` 和 `run_stream()` 共享核心执行逻辑，通过回调注入事件分发：
+`run()` 和 `run_stream()` 共享核心执行逻辑，通过 `Option<mpsc::Sender>` 区分是否流式推送。
+
+EventStore 写入保持为执行路径中的 inline `await?` 调用（不在回调中），保证错误传播不变。
 
 ```rust
-async fn run_core<F>(
+/// 内部共享执行核心。
+/// - 如果 `event_tx` 为 Some，每个生命周期事件在 append 到 EventStore 后
+///   也会通过 try_send 推送到 mpsc（失败仅 warn，不阻塞执行）。
+/// - 如果 `event_tx` 为 None，事件仅 append 到 EventStore（与现有 run() 行为一致）。
+async fn run_core(
     &self,
     team: &Team,
     squad: &mut Squad,
-    emit: F,
-) -> Result<SquadResult, CompError>
-where
-    F: Fn(SquadEvent) + Send + Sync + Clone + 'static;
+    event_tx: Option<&tokio::sync::mpsc::Sender<SquadEvent>>,
+) -> Result<SquadResult, CompError>;
 ```
 
-- `run()` → `run_core(team, squad, |e| { self.store.append(e); })`（仅持久化）
-- `run_stream()` → 创建 mpsc channel，`run_core(team, squad, |e| { let _ = tx.try_send(e); self.store.append(e); })`（持久化 + 推送）
+- `run()` → `run_core(team, squad, None)` — EventStore 错误正常传播
+- `run_stream()` → 创建 mpsc channel，`run_core(team, squad, Some(&tx))` — EventStore 错误正常传播，mpsc 推送失败仅 warn
 
 ### 4.3 事件推送时机
 
@@ -95,9 +99,12 @@ where
 - loop 结束时发送 `SquadCompleted` / `SquadFailed`
 - pause 路径（WaitingForSignal / Breakpoint）发送对应事件后关闭通道
 
+`MissionFailed` 的发射点：在 `execute_mission()` 内部，当重试次数耗尽且最终 attempt 也失败时，先 emit `MissionFailed { mission_id, error, attempt, will_retry: false }`，再返回 `Err`。这保证调用方（`run_dag` / `run_hierarchical`）收到事件后才看到错误返回值。
+
 ### 4.5 mpsc 通道配置
 
-- **容量**：256（与现有 agent session SSE 通道一致）
+- **容量**：256（事件队列深度；与现有 agent session SSE 通道一致）
+- **并发关系**：最大并发 mission 数（`max_concurrency`，默认 4）控制同时执行的 mission 数量；256 容量保证每个 mission 产出的多个事件（Started/Completed/Failed 等）有充足缓冲
 - **发送策略**：`try_send()`，失败时丢弃 + `tracing::warn`，不阻塞执行
 - **关闭信号**：`drop(Sender)` → Receiver 返回 `None`
 
@@ -142,10 +149,12 @@ pub enum ServerEvent {
 新增路由：`GET /tavern/squads/{squad_id}/events/stream`
 
 Handler 逻辑：
-1. 从 EventStore 恢复 squad 上下文
+1. 从内存 squad 注册表（`TavernState` 内 `HashMap<String, SquadHandle>`）查找 squad_id
 2. 调用 `squad_engine.run_stream()` 获取 `Receiver<SquadEvent>`
 3. spawn task 将 `SquadEvent` 映射为 `ServerEvent`，送入 mpsc
 4. 返回 `SseStream`（复用现有 `sse.rs`）
+
+> 注：`Squad` 含 `Arc<dyn AgentExecutor>` 不可序列化，因此 squad 查找走内存注册表而非 EventStore 恢复。TavernState 中新增 `squads: Arc<RwLock<HashMap<String, SquadHandle>>>` 维护运行中的 squad。
 
 ### 5.3 TUI 客户端
 
@@ -183,7 +192,7 @@ run_stream() 被调用
 | mpsc channel full | `try_send` 失败 → 丢弃事件 + `tracing::warn`，不阻塞执行 |
 | 消费者提前断开 | `try_send` 返回 `Err` → 忽略，执行继续 |
 | mission 执行失败 | 推送 `MissionFailed`；若不可重试则推送 `SquadFailed` + 关闭通道 |
-| EventStore append 失败 | 先推送事件，EventStore 错误通过 `tracing::error` 记录 |
+| EventStore append 失败 | 事件先推送（保证实时性），然后 `EventStore::append().await?` 错误正常传播，与现有 `run()` 行为一致——store 失败视为执行失败 |
 | squad 中途 pause | 推送对应 pause 事件后关闭通道；恢复时调用方重新 `run_stream()` |
 
 ## 8. 测试策略
