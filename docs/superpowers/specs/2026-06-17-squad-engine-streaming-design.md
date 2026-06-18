@@ -16,7 +16,7 @@
 | API 共存 | 保留 `run()`，新增 `run_stream()`，两者共存 |
 | 消费者 | TUI SSE + 外部 API |
 | 持久化 | 同一事件双通道（EventStore + mpsc） |
-| 流式 API 形状 | 内部 mpsc，返回 `Receiver<SquadEvent>` |
+| 流式 API 形状 | 内部 mpsc，返回 `StreamHandle`（含 Receiver + oneshot） |
 
 ## 3. 架构
 
@@ -38,24 +38,32 @@ tavern-comp
 
 ### 4.0 并发模型
 
-`run_stream()` 内部 spawn 一个 `tokio::task` 在克隆的 `Squad` 上执行，然后立即返回 `Receiver`。
+`run_stream()` 通过 `Arc<tokio::sync::Mutex<Squad>>` 在调用方和内部 spawned task 之间共享 squad 状态。内部 spawn 一个 `tokio::task` 执行，立即返回 `StreamHandle`。
 
-- **调用方 Squad 不被更新**：执行过程中 squad 的状态变更（context 合并、completed_missions、status）发生在内部克隆上。调用方通过 Receiver 接收事件，通过 `SquadResult`（执行完成后通过 EventStore 反查）获取最终状态。
+- **状态共享**：spawned task 持有 `Arc<Mutex<Squad>>` 的克隆，执行过程中写入状态变更（context 合并、completed_missions、status）。调用方在 Receiver 返回 None 后可通过同一 Arc 读取最终状态。
+- **pause/resume**：pause 时 task 写入 paused status 并退出。调用方读取 paused squad 状态，持久化 completed_missions，恢复时以同一 `Arc<Mutex<Squad>>` 重新调用 `run_stream()`。
 - **Receiver 关闭**：执行完成、失败、或 pause 时，内部 task 释放 `Sender`，导致 Receiver 返回 `None`。
-- **&mut Squad 参数**：用于读取初始状态（context、completed_missions）。执行开始后，调用方不再持有内部状态。
+- **清理**：spawned task 结束时通过 `oneshot` 发送 `SquadResult`。注册表管理方 await oneshot 后移除 squad 条目。
 
 ### 4.1 新增公共 API
 
 ```rust
+pub struct StreamHandle {
+    /// 实时事件流，squad 执行终态后关闭。
+    pub events: tokio::sync::mpsc::Receiver<SquadEvent>,
+    /// spawned task 结束后的最终结果（用于注册表清理）。
+    pub result: tokio::sync::oneshot::Receiver<SquadResult>,
+}
+
 impl SquadEngine {
     /// 流式执行 squad，实时推送生命周期事件。
-    /// 内部 spawn tokio task 在克隆的 Squad 上执行，立即返回 Receiver。
+    /// 内部 spawn tokio task，通过 Arc<Mutex<Squad>> 共享状态，立即返回 StreamHandle。
     /// 通道在 squad 执行完成、失败、或 pause 后自动关闭。
     pub async fn run_stream(
         &self,
         team: &Team,
-        squad: &Squad,
-    ) -> Result<tokio::sync::mpsc::Receiver<SquadEvent>, CompError>;
+        squad: Arc<tokio::sync::Mutex<Squad>>,
+    ) -> Result<StreamHandle, CompError>;
 }
 ```
 
@@ -63,13 +71,12 @@ impl SquadEngine {
 
 `run()` 和 `run_stream()` 共享核心执行逻辑，通过 `Option<mpsc::Sender>` 区分是否流式推送。
 
-EventStore 写入保持为执行路径中的 inline `await?` 调用（不在回调中），保证错误传播不变。
+事件先推送到 mpsc（保证实时性），然后 `EventStore::append().await?`（保证持久化）。EventStore 错误正常传播，与现有 `run()` 一致。
 
 ```rust
 /// 内部共享执行核心。
-/// - 如果 `event_tx` 为 Some，每个生命周期事件在 append 到 EventStore 后
-///   也会通过 try_send 推送到 mpsc（失败仅 warn，不阻塞执行）。
-/// - 如果 `event_tx` 为 None，事件仅 append 到 EventStore（与现有 run() 行为一致）。
+/// - event_tx: Some → 事件先 try_send 到 mpsc（失败仅 warn），再 append 到 EventStore
+/// - event_tx: None → 事件仅 append 到 EventStore（与现有 run() 行为一致）
 async fn run_core(
     &self,
     team: &Team,
@@ -79,7 +86,7 @@ async fn run_core(
 ```
 
 - `run()` → `run_core(team, squad, None)` — EventStore 错误正常传播
-- `run_stream()` → 创建 mpsc channel，`run_core(team, squad, Some(&tx))` — EventStore 错误正常传播，mpsc 推送失败仅 warn
+- `run_stream()` → 创建 mpsc channel，`run_core(team, squad, Some(&tx))` — 先推送后持久化，EventStore 错误正常传播
 
 ### 4.3 事件推送时机
 
@@ -108,7 +115,13 @@ async fn run_core(
 - loop 结束时发送 `SquadCompleted` / `SquadFailed`
 - pause 路径（WaitingForSignal / Breakpoint）发送对应事件后关闭通道
 
-`MissionFailed` 的发射点：在 `execute_mission()` 内部，当重试次数耗尽且最终 attempt 也失败时，先 emit `MissionFailed { mission_id, error, attempt, will_retry: false }`，再返回 `Err`。这保证调用方（`run_dag` / `run_hierarchical`）收到事件后才看到错误返回值。
+**`MissionFailed` 发射路径**：`execute_mission()` 新增 `event_tx: Option<&mpsc::Sender<SquadEvent>>` 参数。当重试次数耗尽时：
+1. 构造 `MissionFailed { mission_id, error, attempt, will_retry: false }`
+2. 若 `event_tx.is_some()`，try_send 事件
+3. `EventStore::append()` 持久化
+4. 返回 `Err(CompError::MissionFailed { ... })`
+
+> 注：需要扩展 `CompError` 增加 `MissionFailed` 变体以携带 `mission_id` 和 `attempt`，供调用方后续处理。
 
 ### 4.5 mpsc 通道配置
 
@@ -140,6 +153,9 @@ pub enum ServerEvent {
     #[serde(rename = "squad_mission_failed")]
     SquadMissionFailed { squad_id: String, mission_id: String, error: String, attempt: u64, will_retry: bool },
 
+    #[serde(rename = "squad_mission_retry_scheduled")]
+    SquadMissionRetryScheduled { squad_id: String, mission_id: String, attempt: u64, reason: String },
+
     #[serde(rename = "squad_mission_waiting_signal")]
     SquadMissionWaitingSignal { squad_id: String, mission_id: String, signal_name: String },
 
@@ -153,6 +169,8 @@ pub enum ServerEvent {
 
 `event_type_name()` 新增对应分支。
 
+**映射说明**：`SquadEvent` 的部分变体为单元变体（`SquadStarted`、`SquadCompleted`、`SquadFailed`），映射层从执行上下文注入 `squad_id` / `team_id`。`SquadEvent::MissionCompleted` 中的 `output_key` 和 `completed_at` 对进度展示非必需，省略。
+
 ### 5.2 Squad 注册表
 
 `TavernState` 新增内存 squad 注册表：
@@ -160,8 +178,10 @@ pub enum ServerEvent {
 ```rust
 pub struct SquadHandle {
     pub engine: SquadEngine,
-    pub squad: Squad,
+    pub squad: Arc<tokio::sync::Mutex<Squad>>,
     pub team: Team,
+    /// 后台清理 task 的 AbortHandle。
+    _cleanup: tokio::task::AbortHandle,
 }
 
 pub struct TavernState {
@@ -171,8 +191,9 @@ pub struct TavernState {
 ```
 
 **生命周期：**
-- **注册**：`deploy()` 成功后，将 `SquadHandle` 插入 `squads` map（key = squad_id）
-- **淘汰**：squad 执行终态（Completed / Failed）时移除。使用 tokio spawn 的 `JoinHandle` 在完成后清理
+- **注册**：`deploy()` 成功后，插入 `squads` map（key = squad_id）
+- **淘汰**：spawn 一个后台 task 等待 `StreamHandle::result` oneshot，收到结果后从 map 移除条目。`SquadHandle` 持有该 task 的 `AbortHandle`（SSE 断开时可用于提前清理）
+- **pause 场景**：pause 时 spawned task 退出并发送 `SquadResult`（含 paused status）。清理 task 不移除条目——squad 在 pause 期间保留在注册表中，等待 resume
 
 ### 5.3 SSE 端点
 
@@ -180,7 +201,7 @@ pub struct TavernState {
 
 Handler 逻辑：
 1. 从 `TavernState.squads` 查找 `SquadHandle`
-2. 调用 `handle.engine.run_stream(&handle.team, &handle.squad)` 获取 Receiver
+2. 调用 `handle.engine.run_stream(&handle.team, handle.squad.clone())` 获取 `StreamHandle`
 3. spawn task 将 `SquadEvent` 映射为 `ServerEvent`，送入 mpsc
 4. 返回 `SseStream`（复用现有 `sse.rs`）
 
@@ -237,11 +258,13 @@ run_stream() 被调用
 4. 通道容量：64 个并发 mission（远大于默认 max_concurrency=4），验证无死锁无 panic（通道容量 256 足够缓冲）
 5. 消费者断开：提前 drop Receiver，验证执行不受影响
 6. `run()` 向后兼容：现有行为不变
+7. pause/resume 流式：mission 触发 WaitingForSignal → 验证事件序列 + Receiver 关闭 → 读取 Arc<Mutex<Squad>> 状态 → 重新 run_stream() → 验证恢复后事件序列
 
 ### tavern-comp 集成测试
 
 - `stream_events_dag_parallel`：DAG 模式流式事件完整性
 - `stream_events_hierarchical`：hierarchical 模式
+- `stream_events_pause_resume`：pause/resume 状态保持
 
 ### api-gateway 层
 
@@ -255,20 +278,24 @@ run_stream() 被调用
 
 ## 9. 不改动范围
 
-- `SquadEvent` 枚举
+- `SquadEvent` 枚举（类型定义不变，但新增发射点——现有代码从未 emit `MissionFailed`）
 - `EventStore` trait 和实现
 - `AgentExecutor` trait
 - `run()` 方法签名和行为
 - `sse.rs` 基础设施
 
+需要扩展的类型：
+- `CompError` 新增 `MissionFailed { mission_id: String, attempt: u64, source: Box<CompError> }` 变体（携带 mission 元数据供事件构造）
+
 ## 10. 实施文件清单
 
 | 文件 | 改动类型 |
 |---|---|
-| `crates/tavern-comp/src/team/engine.rs` | 重构 + 新增 `run_core()`, `run_stream()` |
+| `crates/tavern-comp/src/team/engine.rs` | 重构 + 新增 `run_core()`, `run_stream()`, `StreamHandle` |
 | `crates/tavern-comp/src/team/engine.rs` (tests) | 新增单元测试 |
+| `crates/tavern-comp/src/error.rs` | 新增 `CompError::MissionFailed` 变体 |
 | `crates/tavern-comp/tests/squad_integration.rs` | 新增流式集成测试 |
 | `crates/api-gateway/src/types.rs` | 新增 squad ServerEvent 变体 + 映射 |
-| `crates/api-gateway/src/tavern.rs` | 新增 squad SSE handler + 路由 |
+| `crates/api-gateway/src/tavern.rs` | 新增 squad SSE handler + 路由 + `SquadHandle` 类型 + 注册表管理 |
 | `crates/api-gateway/tests/` | 新增 SSE E2E 测试 |
 | TUI `client/` | SSE 事件扩展 + squad 进度 UI |
