@@ -168,6 +168,10 @@ impl SquadEngine {
 
     /// Stream squad execution in real-time. Spawns a tokio task internally,
     /// sharing squad state via Arc<Mutex<Squad>>. Returns immediately.
+    ///
+    /// # Errors
+    /// Returns `CompError::SquadClosed` if the squad is already running, completed,
+    /// or failed. `run_stream()` may only be called on a Pending or paused squad.
     pub async fn run_stream(
         &self,
         team: &Team,
@@ -182,9 +186,25 @@ impl SquadEngine {
         let team_clone = team.clone();
         let squad_clone = squad.clone();
 
-        // Set initial status to Running
+        // Re-entry guard: only start from Pending or paused states
         let squad_id = {
             let mut s = squad.lock().await;
+            match &s.status {
+                SquadStatus::Pending
+                | SquadStatus::WaitingForSignal { .. }
+                | SquadStatus::Sleeping { .. }
+                | SquadStatus::Breakpoint { .. } => {}
+                SquadStatus::Running => {
+                    return Err(CompError::SquadClosed {
+                        id: s.id.clone(),
+                    });
+                }
+                SquadStatus::Completed | SquadStatus::Failed => {
+                    return Err(CompError::SquadClosed {
+                        id: s.id.clone(),
+                    });
+                }
+            }
             s.status = SquadStatus::Running;
             s.id.clone()
         };
@@ -223,6 +243,11 @@ impl SquadEngine {
                             context: s.context.clone(),
                             outputs: s.context.shared.clone(),
                         });
+                        tracing::warn!(
+                            squad_id = %s.id,
+                            error = %e,
+                            "planning phase failed"
+                        );
                         return;
                     }
                 }
@@ -239,13 +264,20 @@ impl SquadEngine {
 
             let squad_result = match result {
                 Ok(r) => r,
-                Err(_e) => SquadResult {
-                    squad_id: s.id.clone(),
-                    team_id: s.team_id.clone(),
-                    status: SquadStatus::Failed,
-                    context: s.context.clone(),
-                    outputs: s.context.shared.clone(),
-                },
+                Err(e) => {
+                    tracing::error!(
+                        squad_id = %s.id,
+                        error = %e,
+                        "squad execution failed"
+                    );
+                    SquadResult {
+                        squad_id: s.id.clone(),
+                        team_id: s.team_id.clone(),
+                        status: SquadStatus::Failed,
+                        context: s.context.clone(),
+                        outputs: s.context.shared.clone(),
+                    }
+                }
             };
 
             // Notify webhook on terminal states

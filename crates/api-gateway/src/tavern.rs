@@ -617,6 +617,11 @@ pub async fn squad_events_stream(
         };
 
     let (sse_tx, sse_rx) = tokio::sync::mpsc::channel::<ServerEvent>(256);
+
+    // Spawn cleanup task: remove squad from registry when streaming ends
+    let squads = state.squads.clone();
+    let sid = squad_id.clone();
+
     let abort_handle = tokio::spawn(async move {
         while let Some(event) = stream_handle.events.recv().await {
             if let Some(server_event) =
@@ -627,6 +632,8 @@ pub async fn squad_events_stream(
                 }
             }
         }
+        // Stream ended — clean up registry entry
+        squads.write().await.remove(&sid);
     });
 
     SseStream::new(sse_rx, abort_handle.abort_handle()).into_response()
