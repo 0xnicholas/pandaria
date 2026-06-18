@@ -151,6 +151,18 @@ impl SquadEngine {
         result
     }
 
+    /// Stream squad execution in real-time. Spawns a tokio task internally,
+    /// sharing squad state via Arc<Mutex<Squad>>. Returns immediately.
+    pub async fn run_stream(
+        &self,
+        team: &Team,
+        squad: Arc<tokio::sync::Mutex<Squad>>,
+    ) -> Result<StreamHandle, CompError> {
+        // stub — implemented in later task
+        let _ = (team, squad);
+        todo!("run_stream")
+    }
+
     /// Planning phase: invoke the planner agent to analyze missions and produce
     /// a structured plan. The plan's strategy and per-mission reasoning are
     /// injected into mission tasks as context. In Sequential mode, the planner
@@ -842,6 +854,15 @@ impl SquadEngine {
             crate::engine::send_webhook(&url, &payload, secret.as_deref(), timeout_secs, retries, retry_delay).await;
         })
     }
+}
+
+/// Handle returned by SquadEngine::run_stream().
+/// Combines the real-time event stream with a oneshot for final result.
+pub struct StreamHandle {
+    /// Real-time squad lifecycle events. Closes when execution completes, fails, or pauses.
+    pub events: tokio::sync::mpsc::Receiver<SquadEvent>,
+    /// Final SquadResult sent when the spawned execution task finishes.
+    pub result: tokio::sync::oneshot::Receiver<SquadResult>,
 }
 
 // ── Planning helpers ───────────────────────────────────────────────────────
