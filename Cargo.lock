@@ -5444,6 +5444,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "libsqlite3-sys",
+ "lru",
  "minijinja",
  "reqwest",
  "serde",
