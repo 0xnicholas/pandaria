@@ -186,4 +186,25 @@ impl SessionStore for PgSessionStore {
             .await
             .map_err(|e| AgentError::Persistence(e.to_string()))
     }
+
+    async fn cleanup_expired_sessions(
+        &self,
+        older_than: std::time::Duration,
+    ) -> Result<u64, AgentError> {
+        let cutoff_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .saturating_sub(older_than)
+            .as_secs() as i64;
+
+        let result = sqlx::query(
+            "DELETE FROM sessions WHERE status IN ('completed', 'failed') AND EXTRACT(EPOCH FROM updated_at) < $1",
+        )
+        .bind(cutoff_secs)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AgentError::Persistence(format!("pg cleanup: {e}")))?;
+
+        Ok(result.rows_affected())
+    }
 }
