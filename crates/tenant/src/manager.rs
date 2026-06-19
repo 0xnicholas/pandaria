@@ -241,6 +241,36 @@ pub struct TenantManagerImpl {
 impl TenantManagerImpl {
     /// Create a new `TenantManagerImpl`.
     pub fn new(registry: Arc<TenantRegistry>, runtime_config: Arc<HarnessConfig>) -> Self {
+        // Spawn background session cleanup task
+        if let Some(ref store) = runtime_config.store {
+            let store = store.clone();
+            let retention_days = runtime_config.session_retention_days;
+            let interval_hours = runtime_config.session_cleanup_interval_hours;
+
+            let retention = std::time::Duration::from_secs(retention_days as u64 * 86400);
+            let interval = std::time::Duration::from_secs(interval_hours as u64 * 3600);
+
+            tokio::spawn(async move {
+                // Wait for the first interval before starting
+                tokio::time::sleep(interval).await;
+
+                loop {
+                    match store.cleanup_expired_sessions(retention).await {
+                        Ok(0) => {
+                            tracing::debug!("session cleanup: no expired sessions found");
+                        }
+                        Ok(count) => {
+                            tracing::info!(count, "session cleanup: deleted expired sessions");
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "session cleanup failed");
+                        }
+                    }
+                    tokio::time::sleep(interval).await;
+                }
+            });
+        }
+
         Self {
             registry,
             runtime_config,

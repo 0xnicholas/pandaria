@@ -53,11 +53,10 @@ impl TenantRegistry {
         &self,
         ctx: &TenantContext,
     ) -> Result<Arc<TenantSupervisor>, TenantError> {
-        if let Some(existing) = self.tenants.get(&ctx.tenant_id) {
-            if !existing.is_stale(self.cache_ttl) {
+        if let Some(existing) = self.tenants.get(&ctx.tenant_id)
+            && !existing.is_stale(self.cache_ttl) {
                 return Ok(existing.clone());
             }
-        }
         let supervisor = Arc::new(TenantSupervisor::from_context(ctx));
         self.tenants.insert(ctx.tenant_id.clone(), supervisor.clone());
         Ok(supervisor)
