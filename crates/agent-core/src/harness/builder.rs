@@ -357,6 +357,8 @@ mod tests {
             agent_space: AgentSpace::default(),
             hook_config: crate::harness::config::HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         }
     }
 

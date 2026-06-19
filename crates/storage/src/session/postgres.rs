@@ -191,16 +191,15 @@ impl SessionStore for PgSessionStore {
         &self,
         older_than: std::time::Duration,
     ) -> Result<u64, AgentError> {
-        let cutoff_secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .saturating_sub(older_than)
-            .as_secs() as i64;
+        // Use NOW() - interval to allow index usage on updated_at.
+        // The interval is computed from older_than in seconds.
+        let interval_secs = older_than.as_secs() as i64;
+        let interval_str = format!("{} seconds", interval_secs);
 
         let result = sqlx::query(
-            "DELETE FROM sessions WHERE status IN ('completed', 'failed') AND EXTRACT(EPOCH FROM updated_at) < $1",
+            "DELETE FROM sessions WHERE status IN ('completed', 'failed') AND updated_at < NOW() - $1::INTERVAL",
         )
-        .bind(cutoff_secs)
+        .bind(&interval_str)
         .execute(&self.pool)
         .await
         .map_err(|e| AgentError::Persistence(format!("pg cleanup: {e}")))?;

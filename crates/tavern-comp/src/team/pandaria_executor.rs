@@ -127,9 +127,22 @@ impl PandariaAgentExecutor {
     }
 
     /// Set the idle timeout for cached sessions (default: 5 minutes).
-    /// Sessions unused for longer than this duration are evicted on next access.
+    /// Sessions unused for longer than this duration are evicted by the
+    /// background cleanup task.
+    ///
+    /// **Important:** this method recreates the internal cache and restarts
+    /// the background cleanup task. Call only during builder configuration,
+    /// before any sessions are created.
     pub fn with_session_idle_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.session_idle_timeout = timeout;
+        self.sessions = Arc::new(super::session_cache::SessionCache::new(
+            16, // max_cached_sessions unchanged
+            timeout,
+        ));
+        self._cleanup_handle = Some(super::session_cache::spawn_cache_cleanup(
+            self.sessions.clone(),
+            self.cleanup_interval,
+        ));
         self
     }
 
