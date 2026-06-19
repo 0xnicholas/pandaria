@@ -62,4 +62,24 @@ pub trait SessionStore: Send + Sync {
     ) -> Result<(), AgentError> {
         Ok(())
     }
+
+    /// Clean up sessions in terminal states (`completed` / `failed`)
+    /// that haven't been updated within `older_than`.
+    ///
+    /// This is a **global** operation — it scans across all tenants.
+    /// The method does NOT accept a `tenant_id` because cleanup is
+    /// performed by a single background task in `TenantManagerImpl`
+    /// and a single SQL query is more efficient than per-tenant calls.
+    ///
+    /// Returns the number of sessions deleted.
+    ///
+    /// # Default
+    ///
+    /// Returns `Ok(0)` for stores that do not track lifecycle status.
+    async fn cleanup_expired_sessions(
+        &self,
+        _older_than: std::time::Duration,
+    ) -> Result<u64, AgentError> {
+        Ok(0)
+    }
 }
