@@ -165,6 +165,9 @@ if map.len() >= self.max_cached {
         if let Ok(mut actor) = evicted.actor.try_lock() {
             let _ = actor.flush().await;
         }
+        // If try_lock fails, the actor is currently executing —
+        // dropping without flush is acceptable since authoritative
+        // state lives in PostgreSQL/Redis (persistence layer).
         // Re-acquire lock to continue
         map = self.sessions.lock().expect("...");
     }
@@ -190,6 +193,12 @@ async fn cleanup_expired_sessions(
 - **范围**：仅 `Completed` / `Failed` 状态
 - **不清理**：`Aborted`、`Paused`、`WaitingForSignal` 等非终态
 
+> **设计决策**：此方法为**全局清理**，不接受 `tenant_id` 参数。与 `append_entries` / `load_entries` 等 per-tenant 方法不同，cleanup 由 `TenantManagerImpl` 中的**单例后台任务**执行，一次扫描所有 tenant 的过期 session。这是因为：
+>
+> 1. 清理是全量操作，按 tenant 逐个调用会产生 N 次 DB 查询，不如一条 SQL 高效
+> 2. 不需要 per-tenant 配置差异（所有租户共享同一保留策略）
+> 3. 避免与 per-tenant session quota 的语义混淆
+
 ### 3.2 各后端实现
 
 #### PostgreSQL
@@ -197,9 +206,10 @@ async fn cleanup_expired_sessions(
 ```sql
 DELETE FROM sessions
 WHERE status IN ('completed', 'failed')
-  AND updated_at < $1
-RETURNING id;
+  AND updated_at < $1;
 ```
+
+> 注意：不带 `tenant_id` 过滤，一次扫描所有租户。依赖 `(status, updated_at)` 联合索引确保性能。
 
 返回删除行数。
 
@@ -215,7 +225,11 @@ RETURNING id;
 
 ### 3.3 调度
 
-在 `tenant::TenantManagerImpl` 初始化时 spawn 后台任务：
+清理任务在 `tenant::TenantManagerImpl` 初始化时 spawn，原因：
+
+- `TenantManagerImpl` 是进程级单例（`api-gateway/main.rs` 中构造一次），与 `SessionStore` 共享生命周期
+- 它是唯一持有 `Arc<dyn SessionStore>` 引用的组件，无需引入额外依赖注入
+- 清理是存储维护操作，与 session 生命周期管理内聚
 
 ```rust
 let store = self.store.clone();
@@ -245,10 +259,26 @@ tokio::spawn(async move {
 
 ### 3.4 配置
 
-| 环境变量 | 默认值 | 说明 |
-|---------|--------|------|
-| `PANDARIA_SESSION_RETENTION_DAYS` | 7 | 终态 session 保留天数 |
-| `PANDARIA_SESSION_CLEANUP_INTERVAL_HOURS` | 24 | 清理任务执行间隔 |
+配置通过 `HarnessConfig` 的环境变量加载（遵循 `crates/agent-core/src/harness/config.rs` 中 `from_env()` 的既有模式）：
+
+| 环境变量 | 默认值 | 说明 | 加载位置 |
+|---------|--------|------|---------|
+| `PANDARIA_SESSION_RETENTION_DAYS` | 7 | 终态 session 保留天数 | `HarnessConfig::from_env()` |
+| `PANDARIA_SESSION_CLEANUP_INTERVAL_HOURS` | 24 | 清理任务执行间隔 | `HarnessConfig::from_env()` |
+
+`HarnessConfig` 新增字段：
+
+```rust
+pub struct HarnessConfig {
+    // ... existing fields ...
+    /// Days to retain completed/failed sessions before cleanup (default: 7).
+    pub session_retention_days: u32,
+    /// Hours between cleanup task executions (default: 24).
+    pub session_cleanup_interval_hours: u32,
+}
+```
+
+> `TenantManagerImpl` 从 `HarnessConfig` 读取这两个值，传递给后台清理任务。这样所有环境变量集中在 `HarnessConfig::from_env()` 管理，不分散在各 crate。
 
 ---
 
