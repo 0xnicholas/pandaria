@@ -8,6 +8,7 @@ pub mod pandaria_executor;
 pub mod registry;
 pub mod role;
 pub mod scheduler;
+pub(crate) mod session_cache;
 pub mod squad;
 
 pub use context::{Message, MessageKind, TeamContext, VisibilityRules};
