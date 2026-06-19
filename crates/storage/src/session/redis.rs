@@ -148,4 +148,16 @@ impl SessionStore for RedisSessionStore {
 
         Ok(sessions)
     }
+
+    async fn cleanup_expired_sessions(
+        &self,
+        _older_than: std::time::Duration,
+    ) -> Result<u64, AgentError> {
+        // Redis session keys already have a TTL (default 7 days).
+        // Active scanning would require SCAN + HGET status + DEL,
+        // which is expensive for large deployments. Rely on key
+        // expiration instead.
+        tracing::debug!("redis session cleanup: relying on key TTL ({}s)", self.ttl_seconds);
+        Ok(0)
+    }
 }
