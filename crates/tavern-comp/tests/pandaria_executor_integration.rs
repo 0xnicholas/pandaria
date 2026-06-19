@@ -69,6 +69,8 @@ fn make_harness_config(provider: Arc<MockProvider>) -> agent_core::HarnessConfig
         agent_space: agent_core::AgentSpace::default(),
         hook_config: agent_core::HookConfig::default(),
         memory_store: None,
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     }
 }
 

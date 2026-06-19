@@ -66,6 +66,7 @@ impl DoubaoMediaProvider {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn generate_video(
         &self,
         model: &str,

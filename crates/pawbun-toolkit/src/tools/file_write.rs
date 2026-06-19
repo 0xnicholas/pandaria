@@ -97,12 +97,12 @@ impl Tool for FileWriteTool {
         // TOCTOU 二次校验：写入前确认目标文件（或其父目录）未通过符号链接逃逸 base 范围。
         if let Ok(canonical) = target.canonicalize() {
             let base = self.base_dir.as_deref().unwrap_or(Path::new("."));
-            if let Ok(base_canonical) = base.canonicalize() {
-                if !canonical.starts_with(&base_canonical) {
-                    return Err(ToolError::invalid_input(
-                        "path traversal detected (TOCTOU check failed)",
-                    ));
-                }
+            if let Ok(base_canonical) = base.canonicalize()
+                && !canonical.starts_with(&base_canonical)
+            {
+                return Err(ToolError::invalid_input(
+                    "path traversal detected (TOCTOU check failed)",
+                ));
             }
         }
 

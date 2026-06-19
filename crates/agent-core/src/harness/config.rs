@@ -96,7 +96,10 @@ impl std::fmt::Debug for HarnessConfig {
             .field("agent_space", &self.agent_space)
             .field("hook_config", &self.hook_config)
             .field("session_retention_days", &self.session_retention_days)
-            .field("session_cleanup_interval_hours", &self.session_cleanup_interval_hours)
+            .field(
+                "session_cleanup_interval_hours",
+                &self.session_cleanup_interval_hours,
+            )
             .finish()
     }
 }
@@ -157,10 +160,11 @@ impl HarnessConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(7);
 
-        let session_cleanup_interval_hours = std::env::var("PANDARIA_SESSION_CLEANUP_INTERVAL_HOURS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(24);
+        let session_cleanup_interval_hours =
+            std::env::var("PANDARIA_SESSION_CLEANUP_INTERVAL_HOURS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(24);
 
         Self {
             provider,
