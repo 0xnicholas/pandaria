@@ -1273,11 +1273,10 @@ impl SessionActor {
                 if abort.is_cancelled() {
                     break;
                 }
-                if let Some(max) = max {
-                    if iteration >= max {
+                if let Some(max) = max
+                    && iteration >= max {
                         break;
                     }
-                }
 
                 tokio::select! {
                     _ = tokio::time::sleep(delay) => {}
@@ -1353,7 +1352,7 @@ impl SessionActor {
         session_id: &str,
         abort: &CancellationToken,
     ) -> Result<Vec<AgentMessage>, AgentError> {
-        let mut builder = match context {
+        let builder = match context {
             ContextStrategy::Clear => {
                 let mut b = PromptBuilder::from_base(base_persona);
                 crate::skills::inject_skills_into_builder(&mut b, skills);
@@ -1535,6 +1534,45 @@ impl SessionActor {
     /// Return the tools registered for this session.
     pub fn tools(&self) -> &[crate::types::AgentToolRef] {
         &self.tools
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl SessionActor {
+    /// Create a minimal, non-functional SessionActor for use in unit tests
+    /// of downstream crates (e.g., session cache tests in tavern-comp).
+    /// The returned actor cannot execute prompts — it exists solely as a
+    /// placeholder for cache data structure tests.
+    pub fn dummy_for_test() -> Self {
+        use crate::harness::compaction::CompactionConfig;
+        use crate::harness::session::SessionConfig;
+        use crate::hook::default_dispatcher::DefaultHookDispatcher;
+        use crate::space::AgentSpace;
+        use std::sync::Arc;
+
+        let dispatcher = Arc::new(DefaultHookDispatcher::from_config(
+            AgentSpace::default(),
+            &crate::harness::config::HookConfig::default(),
+        ));
+        let compaction = Arc::new(crate::harness::compaction::Compactor::new(
+            CompactionConfig::default(),
+            Arc::new(ai_provider::RouterProvider::new()),
+            "dummy".into(),
+            Arc::new(crate::file_ops::DefaultFileOperationExtractor::default()),
+        ));
+
+        Self::new(SessionConfig {
+            tenant_id: "dummy".into(),
+            session_id: "dummy".into(),
+            system_prompt: String::new(),
+            model: "dummy".into(),
+            provider: Arc::new(ai_provider::RouterProvider::new()),
+            hook_dispatcher: dispatcher,
+            compaction_actor: compaction,
+            tools: vec![],
+            store: None,
+            skills: vec![],
+        })
     }
 }
 

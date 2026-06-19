@@ -147,3 +147,107 @@ pub(crate) fn spawn_cache_cleanup(
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn make_entry() -> CachedSession {
+        CachedSession {
+            actor: Arc::new(tokio::sync::Mutex::new(
+                agent_core::SessionActor::dummy_for_test(),
+            )),
+            last_used: Instant::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_put_and_get() {
+        let cache = SessionCache::new(4, Duration::from_secs(300));
+        cache.put("a".into(), make_entry());
+        assert!(cache.get("a").is_some());
+        assert_eq!(cache.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_get_miss_returns_none() {
+        let cache = SessionCache::new(4, Duration::from_secs(300));
+        assert!(cache.get("nonexistent").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_expired_returns_none() {
+        let cache = SessionCache::new(4, Duration::from_millis(10));
+        let mut entry = make_entry();
+        entry.last_used = Instant::now() - Duration::from_secs(1);
+        cache.put("a".into(), entry);
+        // Should be expired
+        assert!(cache.get("a").is_none());
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_lru_eviction_on_full() {
+        let cache = SessionCache::new(2, Duration::from_secs(300));
+        cache.put("a".into(), make_entry());
+        cache.put("b".into(), make_entry());
+        // Cache is full; inserting 'c' should evict LRU ('a')
+        let evicted = cache.put("c".into(), make_entry());
+        assert!(evicted.is_some());
+        assert!(cache.get("a").is_none());
+        assert!(cache.get("b").is_some());
+        assert!(cache.get("c").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_promotes_to_mru() {
+        let cache = SessionCache::new(2, Duration::from_secs(300));
+        cache.put("a".into(), make_entry());
+        cache.put("b".into(), make_entry());
+        // Access 'a' to promote it
+        assert!(cache.get("a").is_some());
+        // Insert 'c' — should evict 'b' (now LRU)
+        let evicted = cache.put("c".into(), make_entry());
+        assert!(evicted.is_some());
+        assert!(cache.get("a").is_some());
+        assert!(cache.get("b").is_none());
+        assert!(cache.get("c").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_evict_idle_removes_expired() {
+        let cache = SessionCache::new(4, Duration::from_millis(10));
+        cache.put("a".into(), make_entry());
+
+        let mut old = make_entry();
+        old.last_used = Instant::now() - Duration::from_secs(1);
+        cache.put("b".into(), old);
+
+        std::thread::sleep(Duration::from_millis(20));
+
+        let evicted = cache.evict_idle();
+        assert_eq!(evicted.len(), 2, "both entries should be expired");
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_pop_removes_entry() {
+        let cache = SessionCache::new(4, Duration::from_secs(300));
+        cache.put("a".into(), make_entry());
+        let popped = cache.pop("a");
+        assert!(popped.is_some());
+        assert_eq!(cache.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_put_same_key_no_eviction() {
+        let cache = SessionCache::new(2, Duration::from_secs(300));
+        cache.put("a".into(), make_entry());
+        cache.put("b".into(), make_entry());
+        // Update existing key — should not evict
+        let evicted = cache.put("a".into(), make_entry());
+        assert!(evicted.is_none());
+        assert_eq!(cache.len(), 2);
+    }
+}
