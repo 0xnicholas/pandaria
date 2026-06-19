@@ -64,6 +64,12 @@ pub struct AgentRuntime {
     provider: Arc<dyn ai_provider::LlmProvider>,
 }
 
+impl Default for AgentRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentRuntime {
     /// 创建运行时（直接模式，使用 RouterProvider 自动路由 LLM provider）。
     pub fn new() -> Self {

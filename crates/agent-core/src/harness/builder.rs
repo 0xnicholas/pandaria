@@ -303,7 +303,7 @@ fn build_pawbun_tool_refs(
         Arc::new(PawbunToolAdapter::new(tool))
     };
 
-    let mut tools: Vec<AgentToolRef> = vec![
+    let tools: Vec<AgentToolRef> = vec![
         make(Box::new(
             FileReadTool::new(workspace.to_path_buf()).with_max_size(DEFAULT_MAX_FILE_SIZE),
         )),

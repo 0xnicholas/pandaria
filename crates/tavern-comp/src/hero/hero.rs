@@ -219,14 +219,13 @@ fn describe_skill_config(skill_id: &str, config: &serde_json::Value) -> Option<S
             Some("Read and extract content from files".to_string())
         }
         _ => {
-            if let Some(obj) = config.as_object() {
-                if !obj.is_empty() {
+            if let Some(obj) = config.as_object()
+                && !obj.is_empty() {
                     let fields: Vec<String> = obj.iter()
                         .map(|(k, v)| format!("{}={}", k, v))
                         .collect();
                     return Some(fields.join(", "));
                 }
-            }
             None
         }
     }

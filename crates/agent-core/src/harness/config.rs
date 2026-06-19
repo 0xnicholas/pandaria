@@ -74,6 +74,11 @@ pub struct HarnessConfig {
     pub agent_space: AgentSpace,
     pub hook_config: HookConfig,
     pub memory_store: Option<Arc<dyn crate::memory::MemoryStore>>,
+
+    /// Days to retain completed/failed sessions before cleanup (default: 7).
+    pub session_retention_days: u32,
+    /// Hours between cleanup task executions (default: 24).
+    pub session_cleanup_interval_hours: u32,
 }
 
 impl std::fmt::Debug for HarnessConfig {
@@ -90,6 +95,8 @@ impl std::fmt::Debug for HarnessConfig {
             .field("compaction_config", &self.compaction_config)
             .field("agent_space", &self.agent_space)
             .field("hook_config", &self.hook_config)
+            .field("session_retention_days", &self.session_retention_days)
+            .field("session_cleanup_interval_hours", &self.session_cleanup_interval_hours)
             .finish()
     }
 }
@@ -145,6 +152,16 @@ impl HarnessConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(8192);
 
+        let session_retention_days = std::env::var("PANDARIA_SESSION_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(7);
+
+        let session_cleanup_interval_hours = std::env::var("PANDARIA_SESSION_CLEANUP_INTERVAL_HOURS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(24);
+
         Self {
             provider,
             default_model,
@@ -163,6 +180,8 @@ impl HarnessConfig {
             agent_space: AgentSpace::from_env_or_default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days,
+            session_cleanup_interval_hours,
         }
     }
 }
@@ -183,6 +202,8 @@ impl Default for HarnessConfig {
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         }
     }
 }

@@ -57,12 +57,11 @@ impl SquadEngine {
         event_tx: Option<&tokio::sync::mpsc::Sender<SquadEvent>>,
     ) -> Result<(), CompError> {
         // Push to streaming channel first (best-effort)
-        if let Some(tx) = event_tx {
-            if let Err(e) = tx.try_send(event.clone()) {
+        if let Some(tx) = event_tx
+            && let Err(e) = tx.try_send(event.clone()) {
                 tracing::warn!(squad_id = %squad_id, error = %e,
                     "stream channel full, dropping event");
             }
-        }
         // Persist (error propagates)
         self.store.append(squad_id, event.into()).await
     }
@@ -784,10 +783,10 @@ impl SquadEngine {
         let max_attempts = mission.retries.unwrap_or(0) + 1; // 1 initial + N retries
         let retry_delay = std::time::Duration::from_secs(mission.retry_delay.unwrap_or(0));
 
-        for attempt in 1..=max_attempts {
+        if let Some(attempt) = (1..=max_attempts).next() {
             // ── Signal wait check ──
-            if let Some(ref signal_name) = mission.wait_for_signal {
-                if !squad.take_signal(signal_name) {
+            if let Some(ref signal_name) = mission.wait_for_signal
+                && !squad.take_signal(signal_name) {
                     // Signal not yet received — pause squad
                     squad.status = SquadStatus::WaitingForSignal {
                         signal: signal_name.clone(),
@@ -804,7 +803,6 @@ impl SquadEngine {
                     .await?;
                     return Ok(()); // Caller should re-invoke run() after signal
                 }
-            }
 
             self.emit_event(
                 &squad.id,
