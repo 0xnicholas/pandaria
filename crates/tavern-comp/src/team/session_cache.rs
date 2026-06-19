@@ -122,6 +122,15 @@ impl SessionCache {
         }
         drained
     }
+
+    /// Apply a function to each entry in the cache without removing them.
+    /// Used by `flush()` to persist all cached sessions.
+    pub fn for_each(&self, mut f: impl FnMut(&str, &CachedSession)) {
+        let map = self.entries.lock().expect("session cache poisoned");
+        for (key, entry) in map.iter() {
+            f(key, entry);
+        }
+    }
 }
 
 /// Spawn a background task that periodically evicts idle sessions,

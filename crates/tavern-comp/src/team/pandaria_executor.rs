@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
@@ -19,13 +18,6 @@ use super::executor::{
 };
 use super::role::Role;
 
-/// Wraps a cached `SessionActor` with metadata for eviction policies.
-#[derive(Clone)]
-struct CachedSession {
-    actor: Arc<Mutex<SessionActor>>,
-    last_used: Instant,
-}
-
 /// Production implementation of `AgentExecutor` backed by `agent-core::SessionActor`.
 ///
 /// - Caches sessions by `role_id:model` key, reusing `SessionActor` across
@@ -35,17 +27,20 @@ struct CachedSession {
 ///   resource exhaustion.
 /// - Skills are converted to `ToolConfig` for Sidecar-runner skills only;
 ///   Rust/subprocess skills are skipped (P0 limitation).
-#[derive(Clone)]
 pub struct PandariaAgentExecutor {
     tenant_id: String,
     team_id: String,
     harness_config: HarnessConfig,
     agent_resolver: Arc<dyn AgentResolver>,
-    sessions: Arc<std::sync::Mutex<HashMap<String, CachedSession>>>,
+    sessions: Arc<super::session_cache::SessionCache>,
     session_semaphore: Arc<Semaphore>,
     /// Idle timeout for cached sessions. Sessions unused for longer than
     /// this duration are evicted on next access. Default: 5 minutes.
     session_idle_timeout: std::time::Duration,
+    /// Interval between background idle-eviction scans (default: 60s).
+    cleanup_interval: std::time::Duration,
+    /// Handle for the background cleanup task.
+    _cleanup_handle: Option<tokio::task::JoinHandle<()>>,
     /// Optional base URL for the Tavern tool server (e.g. `http://localhost:8080`).
     /// When set, Rust and Subprocess skills are also converted to HTTP proxy tools
     /// pointing at `{tool_server_base_url}/api/tools/{skill_id}`.
@@ -60,16 +55,59 @@ impl PandariaAgentExecutor {
         harness_config: HarnessConfig,
         agent_resolver: Arc<dyn AgentResolver>,
     ) -> Self {
+        let session_idle_timeout = std::time::Duration::from_secs(300); // 5 min
+        let cleanup_interval = std::time::Duration::from_secs(60); // 60s
+
+        let sessions = Arc::new(super::session_cache::SessionCache::new(
+            16, // max_cached_sessions
+            session_idle_timeout,
+        ));
+        let cleanup_handle = super::session_cache::spawn_cache_cleanup(
+            sessions.clone(),
+            cleanup_interval,
+        );
+
         Self {
             tenant_id: tenant_id.into(),
             team_id: team_id.into(),
             harness_config,
             agent_resolver,
-            sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            sessions,
             session_semaphore: Arc::new(Semaphore::new(8)),
-            session_idle_timeout: std::time::Duration::from_secs(300), // 5 min
+            session_idle_timeout,
+            cleanup_interval,
+            _cleanup_handle: Some(cleanup_handle),
             tool_server_base_url: None,
         }
+    }
+
+    /// Set the maximum number of cached sessions (default: 16).
+    /// When the cache is full, the least-recently-used entry is evicted
+    /// on the next insert.
+    ///
+    /// **Important:** this method replaces the internal cache and restarts
+    /// the background cleanup task. Call only during builder configuration,
+    /// before any sessions are created.
+    pub fn with_max_cached_sessions(mut self, n: usize) -> Self {
+        self.sessions = Arc::new(super::session_cache::SessionCache::new(
+            n.max(1),
+            self.session_idle_timeout,
+        ));
+        self._cleanup_handle = Some(super::session_cache::spawn_cache_cleanup(
+            self.sessions.clone(),
+            self.cleanup_interval,
+        ));
+        self
+    }
+
+    /// Set the interval between background idle-eviction scans (default: 60s).
+    pub fn with_cleanup_interval(mut self, interval: std::time::Duration) -> Self {
+        self.cleanup_interval = interval;
+        self._cleanup_handle = Some(super::session_cache::spawn_cache_cleanup(
+            self.sessions.clone(),
+            interval,
+        ));
+        self
     }
 
     /// Set the maximum number of concurrent sessions (default: 8).
@@ -97,10 +135,7 @@ impl PandariaAgentExecutor {
 
     /// Return the number of cached sessions. Available for test assertions.
     pub fn session_count(&self) -> usize {
-        self.sessions
-            .lock()
-            .expect("pandaria executor session map poisoned")
-            .len()
+        self.sessions.len()
     }
 }
 
@@ -171,7 +206,7 @@ impl AgentExecutor for PandariaAgentExecutor {
         let text = actor
             .complete(prompt)
             .await
-            .map_err(|e| map_agent_error(e))?;
+            .map_err(map_agent_error)?;
         let usage = actor.last_usage().cloned();
         drop(actor);
 
@@ -221,7 +256,7 @@ impl AgentExecutor for PandariaAgentExecutor {
         let (full_text, deltas) = actor
             .complete_with_deltas(prompt)
             .await
-            .map_err(|e| map_agent_error(e))?;
+            .map_err(map_agent_error)?;
         let usage = actor.last_usage().cloned();
         drop(actor);
 
@@ -255,18 +290,19 @@ impl AgentExecutor for PandariaAgentExecutor {
     }
 
     async fn flush(&self) -> Result<(), AgentExecutorError> {
-        let map = {
-            self.sessions
-                .lock()
-                .expect("pandaria executor session map poisoned")
-                .clone()
+        // Collect actor handles first (drop the cache lock before awaiting)
+        let actors: Vec<(String, Arc<tokio::sync::Mutex<SessionActor>>)> = {
+            let mut v = Vec::new();
+            self.sessions.for_each(|key, entry| {
+                v.push((key.to_string(), entry.actor.clone()));
+            });
+            v
         };
-        for (cache_key, cached) in map {
-            let mut actor = cached.actor.lock().await;
-            actor.flush().await.map_err(|e| {
+        for (cache_key, actor) in actors {
+            let mut a = actor.lock().await;
+            a.flush().await.map_err(|e| {
                 AgentExecutorError::ExecutionFailed(format!(
-                    "flush session {} failed: {}",
-                    cache_key, e
+                    "flush session {cache_key} failed: {e}"
                 ))
             })?;
         }
@@ -290,23 +326,10 @@ impl PandariaAgentExecutor {
         agent: &AgentConfig,
     ) -> Result<Arc<Mutex<SessionActor>>, AgentExecutorError> {
         let cache_key = format!("{}:{}", role_id, model);
-        let timeout = self.session_idle_timeout;
 
         // Fast path: check cache without acquiring semaphore
-        {
-            let mut map = self
-                .sessions
-                .lock()
-                .expect("pandaria executor session map poisoned");
-            if let Some(cached) = map.get(&cache_key) {
-                if cached.last_used.elapsed() < timeout {
-                    let actor = cached.actor.clone();
-                    // Update last_used timestamp
-                    map.get_mut(&cache_key).unwrap().last_used = Instant::now();
-                    return Ok(actor);
-                }
-                // Expired — remove and flush below
-            }
+        if let Some(cached) = self.sessions.get(&cache_key) {
+            return Ok(cached.actor.clone());
         }
 
         // Slow path: bounded by semaphore
@@ -316,30 +339,10 @@ impl PandariaAgentExecutor {
             .await
             .expect("session semaphore should not be closed");
 
-        // Double-check after acquiring semaphore, with eviction
-        let expired_actor: Option<Arc<Mutex<SessionActor>>> = {
-            let mut map = self
-                .sessions
-                .lock()
-                .expect("pandaria executor session map poisoned");
-            if let Some(cached) = map.get(&cache_key) {
-                if cached.last_used.elapsed() < timeout {
-                    let actor = cached.actor.clone();
-                    map.get_mut(&cache_key).unwrap().last_used = Instant::now();
-                    return Ok(actor);
-                }
-                // Remove expired entry, return actor for async flush
-                map.remove(&cache_key).map(|c| c.actor)
-            } else {
-                None
-            }
-        }; // map lock released here
-
-        // Flush expired session outside the lock
-        if let Some(actor_arc) = expired_actor {
-            if let Ok(mut actor) = actor_arc.try_lock() {
-                let _ = actor.flush().await;
-            }
+        // Double-check after acquiring semaphore
+        // (SessionCache::get handles idle-expiry internally.)
+        if let Some(cached) = self.sessions.get(&cache_key) {
+            return Ok(cached.actor.clone());
         }
 
         let session_id = format!("{}-{}-{}", self.tenant_id, role_id, uuid::Uuid::new_v4());
@@ -358,20 +361,21 @@ impl PandariaAgentExecutor {
                 reason: e.to_string(),
             })?;
 
-        let actor_arc = Arc::new(Mutex::new(built.actor));
+        let actor = Arc::new(tokio::sync::Mutex::new(built.actor));
+        let entry = super::session_cache::CachedSession {
+            actor: actor.clone(),
+            last_used: std::time::Instant::now(),
+        };
 
-        {
-            let mut map = self
-                .sessions
-                .lock()
-                .expect("pandaria executor session map poisoned");
-            map.entry(cache_key).or_insert(CachedSession {
-                actor: actor_arc.clone(),
-                last_used: Instant::now(),
-            });
+        // Insert — SessionCache::put handles LRU eviction and returns evicted entry
+        if let Some(evicted) = self.sessions.put(cache_key, entry) {
+            // Flush evicted LRU entry outside the lock (best-effort)
+            if let Ok(mut a) = evicted.actor.try_lock() {
+                let _ = a.flush().await;
+            }
         }
 
-        Ok(actor_arc)
+        Ok(actor)
     }
 }
 
@@ -420,11 +424,10 @@ fn build_role_prompt(input: &AgentInput, role_id: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
 
     // 1. Current role's private context
-    if let Some(private_val) = input.context.private.get(role_id) {
-        if !private_val.is_null() {
+    if let Some(private_val) = input.context.private.get(role_id)
+        && !private_val.is_null() {
             parts.push(format!("[Private Context]\n{}", private_val));
         }
-    }
 
     // 2. Shared context
     if !input.context.shared.is_null() {
@@ -673,8 +676,8 @@ mod tests {
         assert!(matches!(result, Err(AgentExecutorError::RoleNotFound { .. })));
     }
 
-    #[test]
-    fn session_cache_key_includes_model() {
+    #[tokio::test]
+    async fn session_cache_key_includes_model() {
         // Verify that different models produce different cache keys.
         // (We test this by checking the cache map behavior)
         let agent = make_agent("test_agent");
@@ -691,7 +694,7 @@ mod tests {
         let key_b = format!("{}:{}", "test_agent", "anthropic/claude");
 
         // Initially empty
-        assert!(executor.sessions.lock().unwrap().is_empty());
+        assert_eq!(executor.session_count(), 0);
 
         // Keys differ
         assert_ne!(key_a, key_b);
