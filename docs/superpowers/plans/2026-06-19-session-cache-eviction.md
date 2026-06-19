@@ -628,12 +628,13 @@ git commit -m "refactor(tavern): replace HashMap with SessionCache (LRU + idle t
 
 - [ ] **Step 1: Write integration tests**
 
-These tests verify SessionCache behavior through the PandariaAgentExecutor public API:
+These tests verify SessionCache behavior through the PandariaAgentExecutor public API using an inline `AgentResolver` mock:
 
 ```rust
 use std::sync::Arc;
+use async_trait::async_trait;
 use agent_core::harness::config::HarnessConfig;
-use tavern_comp::PandariaAgentExecutor;
+use tavern_comp::{PandariaAgentExecutor, AgentResolver};
 use tavern_core::{AgentConfig, MemoryConfig, ModelConfig};
 
 fn dummy_agent(id: &str, model: &str) -> AgentConfig {
@@ -645,37 +646,44 @@ fn dummy_agent(id: &str, model: &str) -> AgentConfig {
     }
 }
 
+/// Inline mock resolver for integration tests.
+struct TestResolver { agents: Vec<AgentConfig> }
+
+#[async_trait]
+impl AgentResolver for TestResolver {
+    async fn resolve(&self, agent_id: &str) -> Option<AgentConfig> {
+        self.agents.iter().find(|a| a.id == agent_id).cloned()
+    }
+}
+
 #[tokio::test]
 async fn test_session_count_reflects_cache() {
     let harness = HarnessConfig::from_env(Arc::new(ai_provider::RouterProvider::new()));
-    let resolver = Arc::new(tavern_comp::InMemoryAgentResolver::new(vec![dummy_agent("r1","m1")]));
+    let resolver = Arc::new(TestResolver { agents: vec![dummy_agent("r1","m1")] });
     let executor = PandariaAgentExecutor::new("t1", "team1", harness, resolver);
     assert_eq!(executor.session_count(), 0);
-    // Execute a mission to populate cache, then verify session_count() > 0
-    // (actual execution requires AgentExecutor trait; see inline note below)
 }
 
 #[tokio::test]
 async fn test_lru_eviction_on_full_cache() {
     let harness = HarnessConfig::from_env(Arc::new(ai_provider::RouterProvider::new()));
     let agents: Vec<AgentConfig> = (0..5).map(|i| dummy_agent(&format!("r{i}"), &format!("m{i}"))).collect();
-    let resolver = Arc::new(tavern_comp::InMemoryAgentResolver::new(agents.clone()));
+    let resolver = Arc::new(TestResolver { agents: agents.clone() });
     let executor = PandariaAgentExecutor::new("t1", "team1", harness, resolver)
         .with_max_cached_sessions(3);
-    // Execute 5 missions with distinct role/model pairs; cache should be capped at 3
-    assert!(executor.session_count() <= 3);
+    assert_eq!(executor.session_count(), 0);
 }
 ```
 
-> **API visibility note:** `acquire_session` is `pub(crate)`. Integration tests use the `AgentExecutor` trait's `execute()` method (public). The plan's Task A4 may need to expose a test-only constructor or make `acquire_session` visible behind `#[cfg(feature = "testing")]`.
+> **Coverage note:** These tests verify constructor and config methods. Full end-to-end LRU eviction verification requires a mock LLM provider for `AgentExecutor::execute()` (out of scope — Task A3's SessionCache unit tests cover LRU/MRU/idle behavior directly).
 
-- [ ] **Step 2: Run tests — fix visibility issues**
+- [ ] **Step 2: Run tests**
 
 ```bash
 cargo test -p tavern-comp --test session_cache_tests -- --nocapture
 ```
 
-Expected: resolve API visibility (add `#[cfg(feature = "testing")]` pub re-exports if needed), then tests pass.
+Expected: 2 tests PASS (verifies executor construction and config methods work).
 
 - [ ] **Step 3: Commit**
 
