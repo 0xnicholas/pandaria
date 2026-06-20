@@ -340,6 +340,7 @@ impl TenantManagerImpl {
     }
 
     /// Finalize session setup: event bridge, abort token, and registration.
+    #[allow(clippy::too_many_arguments)]
     fn insert_active_session(
         &self,
         tenant_id: &str,

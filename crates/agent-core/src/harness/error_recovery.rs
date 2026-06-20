@@ -6,6 +6,7 @@ pub(crate) enum RecoveryAction {
     RetryAfterBackoff {
         delay_ms: u64,
     },
+    #[allow(dead_code)]
     RetryAfterCompaction {
         reason: crate::hook::context::CompactReason,
     },

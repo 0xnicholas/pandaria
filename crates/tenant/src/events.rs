@@ -51,6 +51,7 @@ impl AgentEventListener for SessionEventBridge {
 }
 
 /// Delivers session events to an external webhook endpoint.
+#[allow(dead_code)]
 pub struct WebhookEventListener {
     config: crate::manager::WebhookConfig,
     tenant_id: String,

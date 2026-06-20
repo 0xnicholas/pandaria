@@ -21,6 +21,7 @@ pub struct ActiveSession {
     pub bridge: Arc<SessionEventBridge>,
     pub turn_counter: AtomicU64,
     /// Tools registered for this session (used by clone_session).
+    #[allow(dead_code)]
     pub tools: Vec<agent_core::AgentToolRef>,
     /// Webhook configuration for this session.
     pub webhook: Option<crate::manager::WebhookConfig>,

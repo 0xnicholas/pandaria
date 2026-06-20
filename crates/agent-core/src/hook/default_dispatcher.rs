@@ -43,6 +43,7 @@ pub struct DefaultHookDispatcher {
     /// TokenBudget: session_id -> turn count.
     session_turn_counts: DashMap<String, AtomicUsize>,
     /// Optional callback for media cost tracking: (tenant_id, cost_cny).
+    #[allow(clippy::type_complexity)]
     pub cost_callback: Option<std::sync::Arc<dyn Fn(&str, f64) + Send + Sync>>,
 }
 

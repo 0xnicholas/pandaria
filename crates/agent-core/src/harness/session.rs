@@ -67,6 +67,7 @@ pub struct SessionActor {
     /// Entry count at the time of last save (incremental save boundary)
     last_saved_entry_count: usize,
     /// Timestamp when this session actor was created
+    #[allow(dead_code)]
     session_started_at: std::time::SystemTime,
     /// Skills available for this session.
     skills: Vec<crate::skills::Skill>,
@@ -311,6 +312,7 @@ impl SessionActor {
                     TerminationStrategy::Goal { .. } => {
                         self.run_goal_sync(text.clone()).await?.into_messages()
                     }
+                    #[allow(unreachable_patterns)]
                     _ => return Err(AgentError::LoopDisabled),
                 };
 
@@ -450,7 +452,7 @@ impl SessionActor {
         self.push_message(user_msg);
 
         let deltas: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
-        let deltas_capture = deltas.clone();
+        let _deltas_capture = deltas.clone();
 
         // Run with a text_stream_tx that captures deltas
         let messages = {

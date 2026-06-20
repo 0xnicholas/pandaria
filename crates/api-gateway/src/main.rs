@@ -59,22 +59,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tavern_runtime = Arc::new(tavern_comp::AgentRuntime::new());
     let hero = tavern_comp::TavernHero::new(tavern_runtime);
     let agent_config_dir = std::path::Path::new("./configs/agents");
-    if agent_config_dir.exists() {
-        if let Err(e) = hero.load_from_dir(agent_config_dir).await {
-            tracing::error!("failed to load agent configs: {}", e);
-        }
+    if agent_config_dir.exists()
+        && let Err(e) = hero.load_from_dir(agent_config_dir).await
+    {
+        tracing::error!("failed to load agent configs: {}", e);
     }
     let hero = Arc::new(hero);
     let mut workflow_registry = tavern_comp::WorkflowRegistry::new();
     let workflow_config_dir = std::path::Path::new("./configs/workflows");
-    if workflow_config_dir.exists() {
-        if let Err(e) = workflow_registry.load_from_dir(workflow_config_dir) {
-            tracing::error!("failed to load workflow configs: {}", e);
-        }
+    if workflow_config_dir.exists()
+        && let Err(e) = workflow_registry.load_from_dir(workflow_config_dir)
+    {
+        tracing::error!("failed to load workflow configs: {}", e);
     }
     let workflow_registry = Arc::new(tokio::sync::RwLock::new(workflow_registry));
     let event_store: Arc<dyn tavern_comp::EventStore> = Arc::new(tavern_comp::MemoryEventStore::new());
-    let mut tool_registry = tavern_core::ToolRegistry::new();
+    let tool_registry = tavern_core::ToolRegistry::new();
     tool_registry.register(
         "web_search".into(),
         std::sync::Arc::new(api_gateway::tavern_tools::web_search::WebSearchHandler::new()),

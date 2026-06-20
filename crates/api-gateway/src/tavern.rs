@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::{
     Extension, Json,
-    extract::{Path, Query},
+    extract::Path,
     http::StatusCode,
     response::IntoResponse,
 };
@@ -268,7 +268,7 @@ pub async fn get_execution(
 // ── Routes ──
 
 pub fn routes() -> axum::Router<()> {
-    use axum::routing::{delete, get, post};
+    use axum::routing::{get, post};
 
     axum::Router::new()
         .route("/health", get(health))
@@ -335,7 +335,7 @@ pub async fn execution_events_stream(
 }
 
 pub async fn signal_execution(
-    Extension(state): Extension<Arc<TavernState>>,
+    Extension(_state): Extension<Arc<TavernState>>,
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> impl IntoResponse {
@@ -626,10 +626,9 @@ pub async fn squad_events_stream(
         while let Some(event) = stream_handle.events.recv().await {
             if let Some(server_event) =
                 map_squad_event(event, &squad_id, &team_id)
+                && sse_tx.send(server_event).await.is_err()
             {
-                if sse_tx.send(server_event).await.is_err() {
-                    break;
-                }
+                break;
             }
         }
         // Stream ended — clean up registry entry

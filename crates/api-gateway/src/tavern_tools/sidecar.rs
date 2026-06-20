@@ -1,7 +1,7 @@
 use serde_json::Value;
 use tavern_core::{ContentPart, ToolError, ToolHandler, ToolResult};
 
-const MAX_RESPONSE_BYTES: usize = 1 * 1024 * 1024; // 1 MB
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024; // 1 MB
 
 /// HTTP 边车工具执行器。通过 HTTP POST 调用外部工具服务。
 pub struct SidecarHandler {

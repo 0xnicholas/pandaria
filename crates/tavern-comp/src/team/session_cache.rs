@@ -79,6 +79,7 @@ impl SessionCache {
     }
 
     /// Remove an entry by key and return it. Does NOT flush.
+    #[allow(dead_code)]
     pub fn pop(&self, key: &str) -> Option<CachedSession> {
         let mut map = self.entries.lock().expect("session cache poisoned");
         map.pop(key)
@@ -111,6 +112,7 @@ impl SessionCache {
 
     /// Drain all entries from the cache (used at executor shutdown).
     /// Returns all cached sessions for the caller to flush.
+    #[allow(dead_code)]
     pub fn drain_all(&self) -> Vec<(String, CachedSession)> {
         let mut map = self.entries.lock().expect("session cache poisoned");
         let keys: Vec<String> = map.iter().map(|(k, _)| k.clone()).collect();

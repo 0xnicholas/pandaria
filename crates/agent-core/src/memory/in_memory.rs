@@ -9,9 +9,12 @@ use tokio::sync::RwLock;
 use super::store::{MemoryError, MemoryStore};
 use super::types::MemoryContext;
 
+#[allow(dead_code)]
 struct MemoryRecord {
     content: String,
+    #[allow(dead_code)]
     metadata: serde_json::Value,
+    #[allow(dead_code)]
     timestamp: SystemTime,
 }
 

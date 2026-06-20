@@ -37,7 +37,7 @@ impl TenantCache {
     /// Every 1024th call triggers a cleanup pass: entries older than 300s are removed.
     pub fn get(&self, token: &str) -> Option<TenantContext> {
         // Probabilistic cleanup every 1024 lookups
-        if self.counter.fetch_add(1, Ordering::Relaxed) % 1024 == 0 {
+        if self.counter.fetch_add(1, Ordering::Relaxed).is_multiple_of(1024) {
             let now = Instant::now();
             self.entries.retain(|_, v| {
                 now.duration_since(v.inserted_at) < Duration::from_secs(300)
@@ -64,6 +64,11 @@ impl TenantCache {
     /// Number of entries currently in the cache.
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Whether the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 

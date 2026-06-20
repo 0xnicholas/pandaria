@@ -103,7 +103,7 @@ async fn introspect_with_retry(
     loop {
         match client.introspect(token).await {
             Ok(resp) => return Ok(resp),
-            Err(e) if attempts < 2 => {
+            Err(_e) if attempts < 2 => {
                 attempts += 1;
                 let delay = Duration::from_millis(100 * 2u64.pow(attempts - 1));
                 tokio::time::sleep(delay).await;

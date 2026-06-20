@@ -105,7 +105,7 @@ impl ToolHandler for SubprocessHandler {
         // Start bounded async reads on stdout and stderr BEFORE waiting for the process.
         // This prevents deadlocks: the child process may block on writing to a full pipe
         // if no reader is consuming the output.
-        let stdout_reader = child.stdout.take().map(|mut stdout| {
+        let stdout_reader = child.stdout.take().map(|stdout| {
             tokio::spawn(async move {
                 let mut buf = Vec::new();
                 let mut limited = stdout.take((MAX_STDOUT_BYTES + 1) as u64);

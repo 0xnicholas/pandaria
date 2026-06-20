@@ -13,6 +13,7 @@ pub struct HookConfig {
     pub max_turns_per_session: usize,
     /// Optional media-cost callback.  The first argument is `tenant_id`, the
     /// second is the cost in dollars.
+    #[allow(clippy::type_complexity)]
     pub cost_callback: Option<Arc<dyn Fn(&str, f64) + Send + Sync>>,
 }
 

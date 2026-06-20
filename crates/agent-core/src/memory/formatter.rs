@@ -103,6 +103,7 @@ pub fn format_turn_content(turn_index: u64, messages: &[AgentMessage]) -> String
 }
 
 /// Build structured metadata for a turn, for external memory system indexing.
+#[allow(clippy::too_many_arguments)]
 pub fn build_turn_metadata(
     tenant_id: &str,
     session_id: &str,

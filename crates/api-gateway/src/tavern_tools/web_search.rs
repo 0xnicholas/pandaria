@@ -33,6 +33,12 @@ impl WebSearchHandler {
     }
 }
 
+impl Default for WebSearchHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl ToolHandler for WebSearchHandler {
     async fn execute(
@@ -62,12 +68,12 @@ impl ToolHandler for WebSearchHandler {
 
 fn format_ddg_response(data: &Value) -> String {
     let mut parts = Vec::new();
-    if let Some(abs) = data["AbstractText"].as_str() {
-        if !abs.is_empty() {
-            parts.push(format!("Summary: {}", abs));
-            if let Some(url) = data["AbstractURL"].as_str() {
-                parts.push(format!("Source: {}", url));
-            }
+    if let Some(abs) = data["AbstractText"].as_str()
+        && !abs.is_empty()
+    {
+        parts.push(format!("Summary: {}", abs));
+        if let Some(url) = data["AbstractURL"].as_str() {
+            parts.push(format!("Source: {}", url));
         }
     }
     if let Some(topics) = data["RelatedTopics"].as_array() {
