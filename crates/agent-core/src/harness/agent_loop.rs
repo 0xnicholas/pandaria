@@ -957,6 +957,7 @@ mod tests {
             }),
             circuit_breaker: None,
             skills: Vec::new(),
+            text_stream_tx: None,
         }
     }
 
@@ -1806,6 +1807,7 @@ mod tests {
             }),
             circuit_breaker: None,
             skills: Vec::new(),
+            text_stream_tx: None,
         };
         let loop_ = AgentLoop::new(config);
 
@@ -1858,6 +1860,7 @@ mod tests {
             }),
             circuit_breaker: None,
             skills: Vec::new(),
+            text_stream_tx: None,
         };
         let loop_ = AgentLoop::new(config);
 
