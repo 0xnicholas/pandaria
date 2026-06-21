@@ -30,6 +30,11 @@ impl RecoveryStateMachine {
         }
     }
 
+    #[allow(dead_code)] // Used by SessionStateMachine tests (cfg(test)) and SessionActor delegation (Task 5)
+    pub(crate) fn max_attempts(&self) -> u32 {
+        self.max_retries
+    }
+
     pub(crate) fn evaluate(&mut self, msg: &AssistantMessage) -> RecoveryAction {
         if is_context_overflow(msg) {
             if self.overflow_attempted {
