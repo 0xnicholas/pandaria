@@ -1,6 +1,8 @@
+pub mod event_hub;
 pub mod history;
 pub mod state;
 
+pub use event_hub::SessionEventHub;
 pub use history::SessionHistory;
 pub use state::SessionStateMachine;
 
