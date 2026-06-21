@@ -24,9 +24,7 @@ use crate::persistence::store::SessionStore;
 use crate::prompt::{FragmentKind, FragmentSource, PromptBuilder, PromptFragment};
 use crate::types::{AgentMessage, AgentToolRef};
 
-struct QueuedEvent {
-    event: AgentEvent,
-}
+// QueuedEvent is defined in event_hub.rs (pub(crate)).
 
 /// Explicit session state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -45,60 +43,36 @@ pub enum SessionState {
 /// Owns message history, tool set, and steer/follow-up queues.
 /// Each session is isolated — no shared mutable state with other sessions.
 pub struct SessionActor {
+    // ── Identity & Config (top-level, accessed by most methods) ──
     tenant_id: String,
     session_id: String,
     model: String,
     prompt_builder: PromptBuilder,
     stream_options: ai_provider::StreamOptions,
     max_retries: u32,
+    /// Saved base persona for context-clear rebuilds.
+    base_persona: String,
+    /// Skills available for this session.
+    skills: Vec<crate::skills::Skill>,
+
+    // ── LLM Wiring ──
     provider: Arc<dyn ai_provider::LlmProvider>,
     hook_dispatcher: Arc<dyn HookDispatcher>,
     compaction_actor: Arc<Compactor>,
     tools: Vec<AgentToolRef>,
-    entries: Vec<SessionEntry>,
-    /// Messages queued for injection before the next LLM call
-    steer_queue: Arc<Mutex<Vec<AgentMessage>>>,
-    /// Messages queued for injection after the agent would stop
-    follow_up_queue: Arc<Mutex<Vec<AgentMessage>>>,
-    /// Optional persistence backend for session history
-    store: Option<Arc<dyn SessionStore>>,
-    /// Whether auto-restore should run before the next prompt
-    needs_restore: bool,
-    /// Entry count at the time of last save (incremental save boundary)
-    last_saved_entry_count: usize,
-    /// Timestamp when this session actor was created
-    #[allow(dead_code)]
-    session_started_at: std::time::SystemTime,
-    /// Skills available for this session.
-    skills: Vec<crate::skills::Skill>,
-    /// Handle of the most recent fire-and-forget persistence task.
-    /// Awaiting this before spawning a new save guarantees write ordering
-    /// and prevents stale snapshots from overwriting newer ones.
-    last_save: Option<tokio::task::JoinHandle<()>>,
-    abort_token: CancellationToken,
 
-    recovery: RecoveryStateMachine,
-    event_listeners: Arc<Mutex<Vec<Arc<dyn AgentEventListener>>>>,
-    event_tx: Option<tokio::sync::mpsc::Sender<QueuedEvent>>,
-    event_processor_handle: Option<tokio::task::JoinHandle<()>>,
-    state: AtomicU8, // 0=Idle, 1=Running, 2=Error
-    error_reason: Mutex<Option<String>>,
+    // ── Strategy & Bookkeeping ──
     /// Execution strategy for this session.
     strategy: SessionStrategy,
     /// Token usage from the most recent agent loop turn.
     last_usage: Option<ai_provider::Usage>,
-    /// Saved base persona for context-clear rebuilds.
-    base_persona: String,
 
-    // ── Subsystems (Task 5: refactor delegation in progress) ──
+    // ── Subsystems (Task 6: legacy fields removed, subsystems own the data) ──
     /// Message history + persistence + restore + flush.
-    #[allow(dead_code)] // Migration target — consumed after Task 6 removes legacy fields
     history: super::history::SessionHistory,
     /// Events + steer/follow-up queues + processor.
-    #[allow(dead_code)] // Migration target — consumed after Task 6 removes legacy fields
     event_hub: super::event_hub::SessionEventHub,
     /// State machine + error reason + recovery + abort token.
-    #[allow(dead_code)] // Migration target — consumed after Task 6 removes legacy fields
     state_machine: super::state::SessionStateMachine,
 }
 
@@ -211,61 +185,21 @@ impl SessionActor {
             prompt_builder,
             stream_options: ai_provider::StreamOptions::default(),
             max_retries: 3,
+            base_persona,
+            skills: config.skills,
             provider: config.provider,
             hook_dispatcher: config.hook_dispatcher,
             compaction_actor: config.compaction_actor,
             tools: config.tools,
-            skills: config.skills,
-            entries: Vec::new(),
-            steer_queue: Arc::new(Mutex::new(Vec::new())),
-            follow_up_queue: Arc::new(Mutex::new(Vec::new())),
-            store: config.store,
-            needs_restore: has_store,
-            last_saved_entry_count: 0,
-            session_started_at: std::time::SystemTime::now(),
-            last_save: None,
-            abort_token: CancellationToken::new(),
-            recovery: RecoveryStateMachine::new(3),
-            event_listeners: Arc::new(Mutex::new(Vec::new())),
-            event_tx: None,
-            event_processor_handle: None,
-            state: AtomicU8::new(0),
-            error_reason: Mutex::new(None),
             strategy: SessionStrategy::default(),
             last_usage: None,
-            base_persona,
             history,
             event_hub: super::event_hub::SessionEventHub::new(),
             state_machine: super::state::SessionStateMachine::new(3),
         };
-        let event_tx = actor.spawn_event_processor();
-        actor.event_tx = Some(event_tx);
         actor
     }
 
-    fn spawn_event_processor(&mut self) -> tokio::sync::mpsc::Sender<QueuedEvent> {
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<QueuedEvent>(1024);
-        let listeners = self.event_listeners.clone();
-
-        let handle = tokio::spawn(async move {
-            while let Some(queued) = rx.recv().await {
-                let ls: Vec<_> = {
-                    listeners
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .iter()
-                        .cloned()
-                        .collect()
-                };
-                for listener in &ls {
-                    let _ = listener.on_event(&queued.event).await;
-                }
-            }
-        });
-
-        self.event_processor_handle = Some(handle);
-        tx
-    }
 
     /// Attempt to restore session history from the configured store.
     ///
@@ -347,46 +281,13 @@ impl SessionActor {
         &mut self,
         content: Vec<Content>,
     ) -> Result<Vec<AgentMessage>, AgentError> {
-        if self.state.load(Ordering::SeqCst) == 2 {
-            let reason = self
-                .error_reason
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone()
-                .unwrap_or_default();
+        if self.state_machine.state() == SessionState::Error {
+            let reason = self.state_machine.error_reason().unwrap_or_default();
             return Err(AgentError::SessionInError { reason });
         }
 
-        // Auto-restore session history from store before first prompt
-        if self.needs_restore {
-            self.needs_restore = false;
-            if let Some(ref store) = self.store {
-                match store.load_session(&self.tenant_id, &self.session_id).await {
-                    Ok(entries) if !entries.is_empty() => {
-                        let count = entries.len();
-                        self.entries = entries;
-                        self.last_saved_entry_count = count;
-                        info!(
-                            tenant_id = %self.tenant_id,
-                            session_id = %self.session_id,
-                            restored_count = count,
-                            "auto-restored session history",
-                        );
-                    }
-                    Ok(_) => {
-                        // Empty store — fresh session
-                    }
-                    Err(e) => {
-                        warn!(
-                            tenant_id = %self.tenant_id,
-                            session_id = %self.session_id,
-                            error = %e,
-                            "auto-restore failed, starting with empty session",
-                        );
-                    }
-                }
-            }
-        }
+        // Auto-restore session history from store before first prompt (delegated to SessionHistory)
+        self.history.auto_restore().await?;
 
         // Handle /skill:name invocation only when there's exactly one Text part
         if content.len() == 1
@@ -475,19 +376,19 @@ impl SessionActor {
 
         // Run with a text_stream_tx that captures deltas
         let messages = {
-            self.state.store(1, Ordering::SeqCst);
+            self.state_machine.enter_running();
             self.persist_status("active");
             self.emit_event(AgentEvent::StateChanged {
                 state: SessionState::Running,
             });
-            self.abort_token = CancellationToken::new();
+            self.state_machine.reset_abort_token();
 
-            let ctx = SessionContextBuilder::build_context(&self.entries);
-            let event_tx = self.event_tx.clone();
+            let ctx = SessionContextBuilder::build_context(&self.history.entries());
+            let event_tx = self.event_hub.event_tx_clone();
             let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static> =
                 Arc::new(move |event| {
                     if let Some(tx) = &event_tx
-                        && tx.try_send(QueuedEvent { event }).is_err()
+                        && tx.try_send(super::event_hub::QueuedEvent { event }).is_err()
                     {
                         tracing::warn!("event queue full, dropping event");
                     }
@@ -513,15 +414,15 @@ impl SessionActor {
                 prompt_builder: self.prompt_builder.clone(),
                 stream_options: self.stream_options.clone(),
                 event_sink,
-                steer_queue: self.steer_queue.clone(),
-                follow_up_queue: self.follow_up_queue.clone(),
+                steer_queue: self.event_hub.steer_queue_clone(),
+                follow_up_queue: self.event_hub.follow_up_queue_clone(),
                 circuit_breaker: None,
                 skills: self.skills.clone(),
                 text_stream_tx: Some(text_tx),
             };
 
             let result = AgentLoop::new(config)
-                .run(ctx, self.abort_token.child_token())
+                .run(ctx, self.state_machine.child_token())
                 .await;
 
             // Drop the sender to close the channel and let the collector task finish
@@ -529,7 +430,7 @@ impl SessionActor {
 
             match result {
                 Ok(msgs) => {
-                    self.state.store(0, Ordering::SeqCst);
+                    self.state_machine.enter_idle();
                     // Capture last turn's usage
                     if let Some(AgentMessage::Assistant(a)) = msgs.last() {
                         self.last_usage = Some(a.usage.clone());
@@ -540,7 +441,7 @@ impl SessionActor {
                     msgs
                 }
                 Err(e) => {
-                    self.state.store(0, Ordering::SeqCst);
+                    self.state_machine.enter_idle();
                     return Err(e);
                 }
             }
@@ -573,58 +474,40 @@ impl SessionActor {
     }
 
     pub async fn continue_(&mut self) -> Result<Vec<AgentMessage>, AgentError> {
-        if self.state.load(Ordering::SeqCst) == 2 {
-            let reason = self
-                .error_reason
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone()
-                .unwrap_or_default();
+        if self.state_machine.state() == SessionState::Error {
+            let reason = self.state_machine.error_reason().unwrap_or_default();
             return Err(AgentError::SessionInError { reason });
         }
         self.run_with_messages(None).await
     }
 
     pub fn is_streaming(&self) -> bool {
-        self.state.load(Ordering::SeqCst) == 1
+        self.state_machine.is_streaming()
     }
 
     pub fn state(&self) -> SessionState {
-        match self.state.load(Ordering::SeqCst) {
-            1 => SessionState::Running,
-            2 => SessionState::Error,
-            _ => SessionState::Idle,
-        }
+        self.state_machine.state()
     }
 
     pub fn error_reason(&self) -> Option<String> {
-        self.error_reason
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.state_machine.error_reason()
     }
 
     pub async fn reset(&mut self) -> Result<CancellationToken, AgentError> {
-        self.abort_token.cancel();
-        self.entries.clear();
-        self.recovery = RecoveryStateMachine::new(self.max_retries);
-        self.state.store(0, Ordering::SeqCst);
-        *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        self.abort_token = CancellationToken::new();
-        Ok(self.abort_token.clone())
+        self.state_machine.abort();
+        self.history.clear_entries();
+        self.state_machine.reset_recovery_only(self.max_retries);
+        self.state_machine.enter_idle();
+        self.state_machine.clear_error();
+        Ok(self.state_machine.abort_token())
     }
 
     pub fn add_event_listener(&mut self, listener: Arc<dyn AgentEventListener>) {
-        self.event_listeners
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(listener);
+        self.event_hub.add_listener(listener);
     }
 
     fn emit_event(&self, event: AgentEvent) {
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.try_send(QueuedEvent { event });
-        }
+        self.event_hub.emit(event);
     }
 
     pub fn set_system_prompt(&mut self, prompt: String) {
@@ -672,20 +555,20 @@ impl SessionActor {
         let mut all_new_msgs = Vec::new();
 
         loop {
-            self.state.store(1, Ordering::SeqCst);
+            self.state_machine.enter_running();
             self.persist_status("active");
             self.emit_event(AgentEvent::StateChanged {
                 state: SessionState::Running,
             });
-            self.abort_token = CancellationToken::new();
+            self.state_machine.reset_abort_token();
 
-            let messages = SessionContextBuilder::build_context(&self.entries);
+            let messages = SessionContextBuilder::build_context(&self.history.entries());
 
-            let event_tx = self.event_tx.clone();
+            let event_tx = self.event_hub.event_tx_clone();
             let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static> =
                 Arc::new(move |event| {
                     if let Some(tx) = &event_tx
-                        && tx.try_send(QueuedEvent { event }).is_err()
+                        && tx.try_send(super::event_hub::QueuedEvent { event }).is_err()
                     {
                         tracing::warn!("event queue full, dropping event");
                     }
@@ -701,52 +584,52 @@ impl SessionActor {
                 prompt_builder: self.prompt_builder.clone(),
                 stream_options: self.stream_options.clone(),
                 event_sink,
-                steer_queue: self.steer_queue.clone(),
-                follow_up_queue: self.follow_up_queue.clone(),
+                steer_queue: self.event_hub.steer_queue_clone(),
+                follow_up_queue: self.event_hub.follow_up_queue_clone(),
                 circuit_breaker: None,
                 skills: self.skills.clone(),
                 text_stream_tx: None,
             };
 
             match AgentLoop::new(config)
-                .run(messages, self.abort_token.child_token())
+                .run(messages, self.state_machine.child_token())
                 .await
             {
                 Ok(msgs) => {
-                    self.state.store(0, Ordering::SeqCst);
+                    self.state_machine.enter_idle();
                     // Capture last turn's usage for external consumers
                     if let Some(AgentMessage::Assistant(a)) = msgs.last() {
                         self.last_usage = Some(a.usage.clone());
                     }
                     if let Some(AgentMessage::Assistant(assistant)) = msgs.iter().rfind(|m| matches!(m, AgentMessage::Assistant(a) if a.stop_reason != StopReason::ToolUse)) {
-                        let action = self.recovery.evaluate(assistant);
+                        let action = self.state_machine.recovery_mut().evaluate(assistant);
                         match action {
                             RecoveryAction::RetryAfterBackoff { delay_ms } => {
+                                let cancel_token = self.state_machine.abort_token();
                                 tokio::select! {
                                     _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
-                                    _ = self.abort_token.cancelled() => {
-                                        self.recovery.mark_success();
+                                    _ = cancel_token.cancelled() => {
+                                        self.state_machine.recovery_mut().mark_success();
                                         return Err(AgentError::RecoveryAborted(
                                             "recovery aborted via backoff timeout".into()
                                         ));
                                     }
                                 }
-                                self.recovery.mark_success();
+                                self.state_machine.recovery_mut().mark_success();
                                 continue;
                             }
                             RecoveryAction::RetryAfterCompaction { .. } => {
-                                self.recovery.mark_success();
+                                self.state_machine.recovery_mut().mark_success();
                                 self.run_auto_compaction(CompactReason::Overflow, true).await?;
                                 continue;
                             }
                             RecoveryAction::Abort { reason } => {
-                                self.recovery.mark_success();
-                                self.state.store(2, Ordering::SeqCst);
-                                *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = Some(reason.clone());
+                                self.state_machine.recovery_mut().mark_success();
+                                                                self.state_machine.enter_error(reason.clone());
                                 self.emit_event(AgentEvent::StateChanged { state: SessionState::Error });
                                 return Err(AgentError::RecoveryAborted(reason));
                             }
-                            RecoveryAction::Continue => { self.recovery.mark_success(); }
+                            RecoveryAction::Continue => { self.state_machine.recovery_mut().mark_success(); }
                         }
                     }
                     for msg in &msgs {
@@ -755,47 +638,44 @@ impl SessionActor {
                     all_new_msgs.extend(msgs);
                 }
                 Err(e) => {
-                    self.state.store(0, Ordering::SeqCst);
+                    self.state_machine.enter_idle();
                     match e {
                         AgentError::Cancelled => {
                             self.persist_status("aborted");
                             return Err(AgentError::Cancelled);
                         }
                         AgentError::ContextOverflow(msg) => {
-                            let action = self.recovery.evaluate_overflow(&msg);
+                            let action = self.state_machine.recovery_mut().evaluate_overflow(&msg);
                             match action {
                                 RecoveryAction::RetryAfterCompaction { .. } => {
-                                    self.recovery.mark_success();
+                                    self.state_machine.recovery_mut().mark_success();
                                     self.run_auto_compaction(CompactReason::Overflow, true)
                                         .await?;
                                     continue;
                                 }
                                 RecoveryAction::Abort { reason } => {
-                                    self.state.store(2, Ordering::SeqCst);
-                                    *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) =
-                                        Some(reason.clone());
+                                    self.state_machine.enter_error(reason.clone());
                                     self.emit_event(AgentEvent::StateChanged {
                                         state: SessionState::Error,
                                     });
                                     return Err(AgentError::CompactionFailed(reason));
                                 }
                                 RecoveryAction::RetryAfterBackoff { delay_ms } => {
+                                    let cancel_token = self.state_machine.abort_token();
                                     tokio::select! {
                                         _ = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
-                                        _ = self.abort_token.cancelled() => {
-                                            self.recovery.mark_success();
+                                        _ = cancel_token.cancelled() => {
+                                            self.state_machine.recovery_mut().mark_success();
                                             return Err(AgentError::RecoveryAborted(
                                                 "recovery aborted via backoff timeout".into()
                                             ));
                                         }
                                     }
-                                    self.recovery.mark_success();
+                                    self.state_machine.recovery_mut().mark_success();
                                     continue;
                                 }
                                 RecoveryAction::Continue => {
-                                    self.state.store(2, Ordering::SeqCst);
-                                    *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) =
-                                        Some(msg.clone());
+                                    self.state_machine.enter_error(msg.clone());
                                     self.emit_event(AgentEvent::StateChanged {
                                         state: SessionState::Error,
                                     });
@@ -804,9 +684,7 @@ impl SessionActor {
                             }
                         }
                         other => {
-                            self.state.store(2, Ordering::SeqCst);
-                            *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) =
-                                Some(other.to_string());
+                            self.state_machine.enter_error(other.to_string());
                             self.emit_event(AgentEvent::StateChanged {
                                 state: SessionState::Error,
                             });
@@ -818,7 +696,7 @@ impl SessionActor {
 
             // Mid-loop threshold compaction
             if self.compaction_actor.config.enabled {
-                let context_tokens = estimate_context_tokens(&self.entries);
+                let context_tokens = estimate_context_tokens(&self.history.entries());
                 let context_window = self.model_context_window();
                 if should_compact(
                     context_tokens,
@@ -837,10 +715,7 @@ impl SessionActor {
 
         // Emit final Idle event and clear any stale error reason.
         // State is already Idle set by the Ok(msgs) branch above.
-        self.error_reason
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take();
+        self.state_machine.clear_error();
         self.emit_event(AgentEvent::StateChanged {
             state: SessionState::Idle,
         });
@@ -848,7 +723,7 @@ impl SessionActor {
         info!(
             tenant_id = %self.tenant_id,
             session_id = %self.session_id,
-            total_entries = self.entries.len(),
+            total_entries = self.history.entries().len(),
             new_msg_count = all_new_msgs.len(),
             "agent run complete",
         );
@@ -869,29 +744,7 @@ impl SessionActor {
         // Persist incrementally — only save new entries since last save.
         // Await the previous save task to preserve ordering, then spawn a new
         // fire-and-forget task for the new entries.
-        if let Some(ref store) = self.store {
-            let new_entries = &self.entries[self.last_saved_entry_count..];
-            if !new_entries.is_empty() {
-                if let Some(handle) = self.last_save.take() {
-                    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
-                }
-                let entries_to_save = new_entries.to_vec();
-                self.last_saved_entry_count = self.entries.len();
-                let tenant_id = self.tenant_id.clone();
-                let session_id = self.session_id.clone();
-                let store = store.clone();
-                self.last_save = Some(tokio::spawn(async move {
-                    if let Err(e) = store.append_entries(&tenant_id, &session_id, &entries_to_save).await {
-                        warn!(
-                            tenant_id = %tenant_id,
-                            session_id = %session_id,
-                            error = %e,
-                            "failed to persist session",
-                        );
-                    }
-                }));
-            }
-        }
+        self.history.persist_incremental().await;
 
         Ok(all_new_msgs)
     }
@@ -908,28 +761,22 @@ impl SessionActor {
         reason: CompactReason,
         will_retry: bool,
     ) -> Result<(), AgentError> {
-        // Emit compaction_start
-        if let Some(tx) = &self.event_tx {
-            tx.send(QueuedEvent {
-                event: AgentEvent::CompactionStart {
-                    reason: reason.clone(),
-                },
-            })
-            .await
-            .ok();
-        }
+        // Emit compaction_start via event_hub
+        self.event_hub.emit(AgentEvent::CompactionStart {
+            reason: reason.clone(),
+        });
 
         // 1. Extension hook
         let preparation = self
             .compaction_actor
-            .prepare(&self.entries)
+            .prepare(&self.history.entries())
             .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
 
         let compact_ctx = CompactCtx {
             tenant_id: self.tenant_id.clone(),
             session_id: self.session_id.clone(),
             preparation,
-            entries: self.entries.clone(),
+            entries: self.history.entries_clone(),
             reason: reason.clone(),
         };
 
@@ -946,26 +793,20 @@ impl SessionActor {
             crate::mutations::CompactDecision::Block {
                 reason: block_reason,
             } => {
-                if let Some(tx) = &self.event_tx {
-                    tx.send(QueuedEvent {
-                        event: AgentEvent::CompactionEnd {
-                            reason: original_reason,
-                            result: None,
-                            aborted: true,
-                            will_retry: false,
-                            error_message: Some(block_reason),
-                        },
-                    })
-                    .await
-                    .ok();
-                }
+                self.event_hub.emit(AgentEvent::CompactionEnd {
+                    reason: original_reason,
+                    result: None,
+                    aborted: true,
+                    will_retry: false,
+                    error_message: Some(block_reason),
+                });
                 return Ok(());
             }
             crate::mutations::CompactDecision::Replace { result } => (true, result),
             crate::mutations::CompactDecision::Continue => {
                 let result = self
                     .compaction_actor
-                    .compact(&self.entries, &self.abort_token.child_token())
+                    .compact(&self.history.entries(), &self.state_machine.child_token())
                     .await
                     .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
                 (false, result)
@@ -982,27 +823,21 @@ impl SessionActor {
             from_extension,
             timestamp: std::time::SystemTime::now(),
         };
-        self.entries.push(compaction_entry);
+        self.history.append_compaction_entry(compaction_entry);
 
         // 3. Truncate entries before the compaction boundary to prevent
         // unbounded memory growth.
         self.truncate_entries_before(result.first_kept_entry_id);
 
-        // 4. Emit compaction_end
+        // 4. Emit compaction_end via event_hub
         let result_for_hook = result.clone();
-        if let Some(tx) = &self.event_tx {
-            tx.send(QueuedEvent {
-                event: AgentEvent::CompactionEnd {
-                    reason: reason.clone(),
-                    result: Some(result),
-                    aborted: false,
-                    will_retry,
-                    error_message: None,
-                },
-            })
-            .await
-            .ok();
-        }
+        self.event_hub.emit(AgentEvent::CompactionEnd {
+            reason: reason.clone(),
+            result: Some(result),
+            aborted: false,
+            will_retry,
+            error_message: None,
+        });
 
         // 5. Trigger on_compact_end hook
         let compact_end_ctx = crate::hook::context::CompactEndCtx {
@@ -1045,30 +880,27 @@ impl SessionActor {
         }
 
         // Skip if assistant message is from before last compaction
-        if let Some(SessionEntry::Compaction { timestamp, .. }) = self
-            .entries
-            .iter()
-            .rfind(|e| matches!(e, SessionEntry::Compaction { .. }))
-            && last_assistant.timestamp <= *timestamp
+        if let Some(ts) = self.history.last_compaction_timestamp()
+            && last_assistant.timestamp <= ts
         {
             return Ok(());
         }
 
         // Case 1: Overflow (recovery is handled by RecoveryStateMachine, here we just compact)
         if Self::is_context_overflow(last_assistant) {
-            if self.recovery.overflow_attempted {
+            if self.state_machine.recovery_mut().overflow_attempted {
                 return Err(AgentError::CompactionFailed(
                     "Context overflow recovery failed after one compact-and-retry attempt".into(),
                 ));
             }
-            self.recovery.overflow_attempted = true;
+            self.state_machine.recovery_mut().overflow_attempted = true;
             self.run_auto_compaction(CompactReason::Overflow, false)
                 .await?;
             return Ok(());
         }
 
         // Case 2: Threshold
-        let context_tokens = estimate_context_tokens(&self.entries);
+        let context_tokens = estimate_context_tokens(&self.history.entries());
         let context_window = self.model_context_window();
 
         if should_compact(context_tokens, context_window, config) {
@@ -1087,7 +919,7 @@ impl SessionActor {
         // For manual compaction, we always use Continue decision (no extension override)
         let result = self
             .compaction_actor
-            .compact(&self.entries, &self.abort_token.child_token())
+            .compact(&self.history.entries(), &self.state_machine.child_token())
             .await
             .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
 
@@ -1100,7 +932,7 @@ impl SessionActor {
             from_extension: false,
             timestamp: std::time::SystemTime::now(),
         };
-        self.entries.push(compaction_entry);
+        self.history.append_compaction_entry(compaction_entry);
 
         // Truncate entries before the compaction boundary to prevent
         // unbounded memory growth.
@@ -1114,35 +946,20 @@ impl SessionActor {
     /// Called after compaction to prevent unbounded in-memory growth
     /// of the session history `Vec`.
     fn truncate_entries_before(&mut self, first_kept_entry_id: uuid::Uuid) {
-        if let Some(kept_idx) = self
-            .entries
-            .iter()
-            .position(|e| e.id() == first_kept_entry_id)
-        {
-            self.entries.drain(..kept_idx);
-        }
+        self.history.truncate_before(first_kept_entry_id);
     }
 
     pub fn push_message(&mut self, msg: AgentMessage) {
-        self.entries.push(SessionEntry::Message {
-            id: uuid::Uuid::new_v4(),
-            message: msg,
-        });
+        self.history.push(msg);
     }
 
     /// Queue a steering message (injected before next LLM call in current run)
     pub fn steer(&mut self, message: AgentMessage) {
-        self.steer_queue
-            .lock()
-            .expect("steer queue poisoned")
-            .push(message);
+        self.event_hub.steer(message);
     }
 
     pub fn follow_up(&mut self, message: AgentMessage) {
-        self.follow_up_queue
-            .lock()
-            .expect("follow_up queue poisoned")
-            .push(message);
+        self.event_hub.follow_up(message);
     }
 
     /// Flush pending persistence writes.
@@ -1156,25 +973,21 @@ impl SessionActor {
     /// previously held a shared reference must obtain a mutable reference
     /// before calling `flush()`.
     pub async fn flush(&mut self) -> Result<(), AgentError> {
-        if let Some(handle) = self.last_save.take() {
+        if let Some(handle) = self.history.take_last_save() {
             let _ = handle.await;
         }
-        if let Some(ref store) = self.store {
-            store
-                .save_session(&self.tenant_id, &self.session_id, &self.entries)
-                .await?;
-            info!(
-                tenant_id = %self.tenant_id,
-                session_id = %self.session_id,
-                "session state flushed to store",
-            );
-        }
+        self.history.flush().await?;
+        info!(
+            tenant_id = %self.tenant_id,
+            session_id = %self.session_id,
+            "session state flushed to store",
+        );
         Ok(())
     }
 
     /// Get a clone of the cancellation token for this session.
     pub fn abort_token(&self) -> CancellationToken {
-        self.abort_token.clone()
+        self.state_machine.abort_token()
     }
 
     /// Abort the current run
@@ -1185,7 +998,7 @@ impl SessionActor {
             "session aborted",
         );
         self.persist_status("aborted");
-        self.abort_token.cancel();
+        self.state_machine.abort();
     }
 
     /// Set the execution strategy for this session.
@@ -1273,8 +1086,8 @@ impl SessionActor {
         delay: std::time::Duration,
         max: Option<u32>,
     ) {
-        let abort = self.abort_token.clone();
-        let event_tx = self.event_tx.clone();
+        let abort = self.state_machine.abort_token();
+        let event_tx = self.event_hub.event_tx_clone();
         let termination = self.strategy.termination.clone();
         let context = self.strategy.context.clone();
         let provider = self.provider.clone();
@@ -1329,7 +1142,7 @@ impl SessionActor {
                 match result {
                     Ok(msgs) => {
                         if let Some(tx) = &event_tx {
-                            let _ = tx.try_send(QueuedEvent {
+                            let _ = tx.try_send(super::event_hub::QueuedEvent {
                                 event: AgentEvent::LoopIterationComplete {
                                     iteration,
                                     messages: msgs,
@@ -1344,7 +1157,7 @@ impl SessionActor {
                             "background loop iteration failed, continuing"
                         );
                         if let Some(tx) = &event_tx {
-                            let _ = tx.try_send(QueuedEvent {
+                            let _ = tx.try_send(super::event_hub::QueuedEvent {
                                 event: AgentEvent::LoopIterationError {
                                     iteration,
                                     error: e.to_string(),
@@ -1426,12 +1239,17 @@ impl SessionActor {
         match &self.strategy.context {
             ContextStrategy::Accumulate => {}
             ContextStrategy::Compact { keep_last_n } => {
-                if self.entries.len() > *keep_last_n {
-                    let split_at = self.entries.len() - *keep_last_n;
-                    let old: Vec<_> = self.entries.drain(..split_at).collect();
+                if self.history.entries().len() > *keep_last_n {
+                    let split_at = self.history.entries().len() - *keep_last_n;
+                    let old: Vec<_> = self.history.entries().to_vec();
+                    self.history.clear_entries();
+                    let kept_tail: Vec<_> = old.iter().skip(split_at).cloned().collect();
+                    for entry in kept_tail {
+                        self.history.append_compaction_entry(entry);
+                    }
                     let summary = self
                         .compaction_actor
-                        .compact(&old, &self.abort_token)
+                        .compact(&old, &self.state_machine.child_token())
                         .await
                         .map(|r| r.summary)
                         .unwrap_or_else(|e| {
@@ -1448,7 +1266,7 @@ impl SessionActor {
                 }
             }
             ContextStrategy::Clear => {
-                self.entries.clear();
+                self.history.clear_entries();
                 self.prompt_builder =
                     PromptBuilder::from_base(self.base_persona.clone());
                 crate::skills::inject_skills_into_builder(
@@ -1465,26 +1283,7 @@ impl SessionActor {
     /// No-op if no store is configured. Fire-and-forget — failures are
     /// logged but never block the agent loop.
     fn persist_status(&self, status: &str) {
-        if let Some(ref store) = self.store {
-            let store = store.clone();
-            let tenant_id = self.tenant_id.clone();
-            let session_id = self.session_id.clone();
-            let status = status.to_string();
-            tokio::spawn(async move {
-                if let Err(e) = store
-                    .update_session_status(&tenant_id, &session_id, &status)
-                    .await
-                {
-                    tracing::warn!(
-                        %tenant_id,
-                        %session_id,
-                        %status,
-                        error = %e,
-                        "failed to persist session status",
-                    );
-                }
-            });
-        }
+        self.history.persist_status(status);
     }
 
     /// Gracefully shut down the session.
@@ -1500,18 +1299,18 @@ impl SessionActor {
         );
 
         // 1. Cancel any ongoing prompt or compaction
-        self.abort_token.cancel();
+        self.state_machine.abort();
 
         // 2. Wait for in-flight persistence to complete
-        if let Some(handle) = self.last_save.take() {
+        if let Some(handle) = self.history.take_last_save() {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
         }
 
         // 3. Drop event sender to signal the processor to exit
-        self.event_tx.take();
+        self.event_hub.take_event_tx();
 
         // 4. Wait for the event processor with a timeout
-        if let Some(handle) = self.event_processor_handle.take() {
+        if let Some(handle) = self.event_hub.shutdown_handle() {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(1), handle).await;
         }
 
@@ -1523,18 +1322,18 @@ impl SessionActor {
     }
 
     pub fn messages(&self) -> Vec<AgentMessage> {
-        self.entries
-            .iter()
-            .filter_map(|e| match e {
-                SessionEntry::Message { message: msg, .. } => Some(msg.clone()),
-                SessionEntry::Compaction { .. } => None,
+        self.history.messages()
+            .into_iter()
+            .filter_map(|msg| match msg {
+                AgentMessage::Assistant(_) => Some(msg),
+                _ => Some(msg),
             })
             .collect()
     }
 
     /// Return the full session history including compaction entries.
     pub fn entries(&self) -> &[SessionEntry] {
-        &self.entries
+        &self.history.entries()
     }
 
     /// Get the tenant ID
@@ -1600,18 +1399,18 @@ impl SessionActor {
 impl Drop for SessionActor {
     fn drop(&mut self) {
         // 1. Cancel any in-flight operations
-        self.abort_token.cancel();
+        self.state_machine.abort();
 
         // 2. Drop event sender so the event processor sees channel closed
         //    and drains any buffered events before exiting naturally.
         //    We do NOT abort the handle here — a forced abort would drop
         //    events already sitting in the mpsc buffer (e.g. TurnEnd).
-        self.event_tx.take();
+        self.event_hub.take_event_tx();
 
         // Take the handle out so it is dropped alongside this SessionActor.
         // JoinHandle::drop does NOT abort the task; the task continues to
         // run until the recv loop observes the closed channel.
-        let _ = self.event_processor_handle.take();
+        let _ = self.event_hub.shutdown_handle();
 
         // NOTE: `last_save` is intentionally NOT awaited here because
         // `Drop` cannot be async. Callers MUST call `shutdown()` (which
@@ -1954,7 +1753,7 @@ mod tests {
 
         // 1. Verify abort doesn't panic
         session.abort();
-        assert!(session.abort_token.is_cancelled());
+        assert!(session.state_machine.abort_token_ref().is_cancelled());
 
         // 2. Start a prompt — it creates a new token
         let prompt_handle = tokio::spawn(async move { session.prompt("hello".to_string()).await });
@@ -2119,7 +1918,7 @@ mod tests {
         });
 
         // Add a compaction entry manually
-        session.entries.push(SessionEntry::Compaction {
+        session.history.entries_mut().push(SessionEntry::Compaction {
             id: uuid::Uuid::new_v4(),
             summary: "test summary".to_string(),
             first_kept_entry_id: uuid::Uuid::new_v4(),

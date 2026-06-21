@@ -98,6 +98,18 @@ impl SessionStateMachine {
         *self.error_reason.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
+    /// Reset only the abort token (used at the start of each run_with_messages iteration).
+    #[allow(dead_code)]
+    pub fn reset_abort_token(&mut self) {
+        self.abort_token = CancellationToken::new();
+    }
+
+    /// Reset only the recovery state machine (used by SessionActor::reset which also clears entries).
+    #[allow(dead_code)]
+    pub fn reset_recovery_only(&mut self, max_retries: u32) {
+        self.recovery = RecoveryStateMachine::new(max_retries);
+    }
+
     // ── Test-only accessor (compat with test_abort_session's field access) ──
 
     #[cfg(any(test, feature = "testing"))]

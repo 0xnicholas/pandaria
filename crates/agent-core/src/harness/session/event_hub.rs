@@ -106,6 +106,19 @@ impl SessionEventHub {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(1), handle).await;
         }
     }
+
+    /// Take the event_tx sender without awaiting processor (used in Drop).
+    #[allow(dead_code)]
+    pub(crate) fn take_event_tx(&mut self) -> Option<mpsc::Sender<QueuedEvent>> {
+        self.event_tx.take()
+    }
+
+    /// Take the processor handle without awaiting (used in Drop).
+    /// Drop on JoinHandle lets the task finish naturally when its sender closes.
+    #[allow(dead_code)]
+    pub(crate) fn shutdown_handle(&mut self) -> Option<JoinHandle<()>> {
+        self.event_processor_handle.take()
+    }
 }
 
 impl Default for SessionEventHub {

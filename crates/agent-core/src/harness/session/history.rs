@@ -188,6 +188,30 @@ impl SessionHistory {
         Ok(())
     }
 
+    /// Take the in-flight save join handle (used by flush / shutdown).
+    #[allow(dead_code)]
+    pub(crate) fn take_last_save(&mut self) -> Option<JoinHandle<()>> {
+        self.last_save.take()
+    }
+
+    /// Append a compaction entry directly (used by auto-compaction).
+    #[allow(dead_code)]
+    pub fn append_compaction_entry(&mut self, entry: SessionEntry) {
+        self.entries.push(entry);
+    }
+
+    /// Clear all entries (used by reset / context-clear strategy).
+    #[allow(dead_code)]
+    pub fn clear_entries(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Borrow the underlying entries (used by compaction hooks).
+    #[allow(dead_code)]
+    pub fn entries_clone(&self) -> Vec<SessionEntry> {
+        self.entries.clone()
+    }
+
     // ── Test-only accessor (compat with test_entries_api_with_compaction's field access) ──
 
     #[cfg(any(test, feature = "testing"))]
