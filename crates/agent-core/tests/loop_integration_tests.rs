@@ -31,6 +31,7 @@ fn make_loop_config(
         }),
         circuit_breaker: None,
         skills: Vec::new(),
+        text_stream_tx: None,
     }
 }
 
@@ -67,6 +68,7 @@ async fn test_follow_up_triggers_second_turn() {
         }),
         circuit_breaker: None,
         skills: Vec::new(),
+        text_stream_tx: None,
     };
     let loop_ = AgentLoop::new(config);
 
@@ -210,6 +212,7 @@ async fn test_steer_injection() {
         }),
         circuit_breaker: None,
         skills: Vec::new(),
+        text_stream_tx: None,
     };
     let loop_ = AgentLoop::new(config);
 
@@ -256,6 +259,7 @@ async fn test_event_sequence() {
         }),
         circuit_breaker: None,
         skills: Vec::new(),
+        text_stream_tx: None,
     };
     let loop_ = AgentLoop::new(config);
 
