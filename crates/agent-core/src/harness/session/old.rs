@@ -89,6 +89,17 @@ pub struct SessionActor {
     last_usage: Option<ai_provider::Usage>,
     /// Saved base persona for context-clear rebuilds.
     base_persona: String,
+
+    // ── Subsystems (Task 5: refactor delegation in progress) ──
+    /// Message history + persistence + restore + flush.
+    #[allow(dead_code)] // Migration target — consumed after Task 6 removes legacy fields
+    history: super::history::SessionHistory,
+    /// Events + steer/follow-up queues + processor.
+    #[allow(dead_code)] // Migration target — consumed after Task 6 removes legacy fields
+    event_hub: super::event_hub::SessionEventHub,
+    /// State machine + error reason + recovery + abort token.
+    #[allow(dead_code)] // Migration target — consumed after Task 6 removes legacy fields
+    state_machine: super::state::SessionStateMachine,
 }
 
 /// Configuration for creating a new [`SessionActor`].
@@ -187,6 +198,11 @@ impl SessionActor {
 
         let has_store = config.store.is_some();
         let base_persona = config.system_prompt.clone();
+        let history = super::history::SessionHistory::new(
+            config.tenant_id.clone(),
+            config.session_id.clone(),
+            config.store.clone(),
+        );
 
         let mut actor = Self {
             tenant_id: config.tenant_id,
@@ -218,6 +234,9 @@ impl SessionActor {
             strategy: SessionStrategy::default(),
             last_usage: None,
             base_persona,
+            history,
+            event_hub: super::event_hub::SessionEventHub::new(),
+            state_machine: super::state::SessionStateMachine::new(3),
         };
         let event_tx = actor.spawn_event_processor();
         actor.event_tx = Some(event_tx);
