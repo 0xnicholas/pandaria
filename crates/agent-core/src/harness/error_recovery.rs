@@ -30,7 +30,8 @@ impl RecoveryStateMachine {
         }
     }
 
-    #[allow(dead_code)] // Used by SessionStateMachine tests (cfg(test)) and SessionActor delegation (Task 5)
+   
+    #[allow(dead_code)]
     pub(crate) fn max_attempts(&self) -> u32 {
         self.max_retries
     }

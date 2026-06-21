@@ -1357,6 +1357,21 @@ impl SessionActor {
     pub fn tools(&self) -> &[crate::types::AgentToolRef] {
         &self.tools
     }
+
+    /// Access the session's message history subsystem.
+    pub fn history(&self) -> &history::SessionHistory {
+        &self.history
+    }
+
+    /// Access the session's event hub subsystem.
+    pub fn event_hub(&self) -> &event_hub::SessionEventHub {
+        &self.event_hub
+    }
+
+    /// Access the session's state machine subsystem.
+    pub fn state_machine(&self) -> &state::SessionStateMachine {
+        &self.state_machine
+    }
 }
 
 #[cfg(any(test, feature = "testing"))]

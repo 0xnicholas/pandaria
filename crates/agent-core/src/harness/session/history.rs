@@ -27,12 +27,13 @@ impl SessionHistory {
         session_id: impl Into<String>,
         store: Option<Arc<dyn SessionStore>>,
     ) -> Self {
+        let needs_restore = store.is_some();
         Self {
             tenant_id: tenant_id.into(),
             session_id: session_id.into(),
             entries: Vec::new(),
             store,
-            needs_restore: true,
+            needs_restore,
             last_saved_entry_count: 0,
             last_save: None,
         }
@@ -126,7 +127,6 @@ impl SessionHistory {
     /// Save only newly added entries since the last save boundary.
     /// Awaits the previous in-flight save (with 5s timeout) to preserve ordering,
     /// then spawns a new fire-and-forget save task.
-    #[allow(dead_code)] // Called by SessionActor after delegation arrives in Task 5/6
     pub async fn persist_incremental(&mut self) {
         let Some(ref store) = self.store else { return; };
         if let Some(handle) = self.last_save.take() {
@@ -153,7 +153,7 @@ impl SessionHistory {
         }));
     }
 
-    #[allow(dead_code)] // Called by SessionActor after delegation arrives in Task 5/6
+   
     pub fn persist_status(&self, status: &str) {
         let Some(ref store) = self.store else { return; };
         let store = store.clone();

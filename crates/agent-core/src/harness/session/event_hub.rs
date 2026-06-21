@@ -81,24 +81,24 @@ impl SessionEventHub {
 
     // ── Internal accessors (pub(crate) — SessionActor uses these to build AgentLoopConfig) ──
 
-    #[allow(dead_code)] // Used by SessionActor delegation in Task 5/6
+   
     pub(crate) fn event_tx_clone(&self) -> Option<mpsc::Sender<QueuedEvent>> {
         self.event_tx.clone()
     }
 
-    #[allow(dead_code)] // Used by SessionActor delegation in Task 5/6
+   
     pub(crate) fn steer_queue_clone(&self) -> Arc<Mutex<Vec<AgentMessage>>> {
         self.steer_queue.clone()
     }
 
-    #[allow(dead_code)] // Used by SessionActor delegation in Task 5/6
+   
     pub(crate) fn follow_up_queue_clone(&self) -> Arc<Mutex<Vec<AgentMessage>>> {
         self.follow_up_queue.clone()
     }
 
     // ── Lifecycle ──
 
-    #[allow(dead_code)] // Used by SessionActor::shutdown delegation in Task 6
+   
     pub async fn shutdown(&mut self) {
         // Drop sender so the processor sees channel closed.
         self.event_tx.take();

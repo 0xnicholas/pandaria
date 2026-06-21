@@ -67,12 +67,13 @@ impl SessionStateMachine {
         self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    #[allow(dead_code)] // Used by SessionActor (delegation arrives in Task 5)
+   
+    #[allow(dead_code)]
     pub(crate) fn recovery(&self) -> &RecoveryStateMachine {
         &self.recovery
     }
 
-    #[allow(dead_code)] // Used by SessionActor (delegation arrives in Task 5)
+   
     pub(crate) fn recovery_mut(&mut self) -> &mut RecoveryStateMachine {
         &mut self.recovery
     }
