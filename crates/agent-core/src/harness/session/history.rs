@@ -51,7 +51,7 @@ impl SessionHistory {
         self.entries.push(entry);
     }
 
-    /// Remove entries strictly before the boundary (entries[boundary] is kept).
+    /// Remove entries strictly before the boundary (the boundary entry itself is kept).
     /// No-op if the boundary ID is not found.
     pub fn truncate_before(&mut self, boundary: uuid::Uuid) {
         if let Some(idx) = self.entries.iter().position(|e| e.id() == boundary) {

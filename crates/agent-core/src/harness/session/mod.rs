@@ -181,7 +181,6 @@ impl SessionActor {
             "session started",
         );
 
-        let has_store = config.store.is_some();
         let base_persona = config.system_prompt.clone();
         let history = history::SessionHistory::new(
             config.tenant_id.clone(),
@@ -189,7 +188,7 @@ impl SessionActor {
             config.store.clone(),
         );
 
-        let mut actor = Self {
+        Self {
             tenant_id: config.tenant_id,
             session_id: config.session_id,
             model: config.model,
@@ -207,10 +206,8 @@ impl SessionActor {
             history,
             event_hub: event_hub::SessionEventHub::new(),
             state_machine: state::SessionStateMachine::new(3),
-        };
-        actor
+        }
     }
-
 
     /// Attempt to restore session history from the configured store.
     ///
@@ -394,7 +391,7 @@ impl SessionActor {
             });
             self.state_machine.reset_abort_token();
 
-            let ctx = SessionContextBuilder::build_context(&self.history.entries());
+            let ctx = SessionContextBuilder::build_context(self.history.entries());
             let event_tx = self.event_hub.event_tx_clone();
             let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static> =
                 Arc::new(move |event| {
@@ -573,7 +570,7 @@ impl SessionActor {
             });
             self.state_machine.reset_abort_token();
 
-            let messages = SessionContextBuilder::build_context(&self.history.entries());
+            let messages = SessionContextBuilder::build_context(self.history.entries());
 
             let event_tx = self.event_hub.event_tx_clone();
             let event_sink: Arc<dyn Fn(AgentEvent) + Send + Sync + 'static> =
@@ -707,7 +704,7 @@ impl SessionActor {
 
             // Mid-loop threshold compaction
             if self.compaction_actor.config.enabled {
-                let context_tokens = estimate_context_tokens(&self.history.entries());
+                let context_tokens = estimate_context_tokens(self.history.entries());
                 let context_window = self.model_context_window();
                 if should_compact(
                     context_tokens,
@@ -780,7 +777,7 @@ impl SessionActor {
         // 1. Extension hook
         let preparation = self
             .compaction_actor
-            .prepare(&self.history.entries())
+            .prepare(self.history.entries())
             .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
 
         let compact_ctx = CompactCtx {
@@ -817,7 +814,7 @@ impl SessionActor {
             crate::mutations::CompactDecision::Continue => {
                 let result = self
                     .compaction_actor
-                    .compact(&self.history.entries(), &self.state_machine.child_token())
+                    .compact(self.history.entries(), &self.state_machine.child_token())
                     .await
                     .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
                 (false, result)
@@ -911,7 +908,7 @@ impl SessionActor {
         }
 
         // Case 2: Threshold
-        let context_tokens = estimate_context_tokens(&self.history.entries());
+        let context_tokens = estimate_context_tokens(self.history.entries());
         let context_window = self.model_context_window();
 
         if should_compact(context_tokens, context_window, config) {
@@ -930,7 +927,7 @@ impl SessionActor {
         // For manual compaction, we always use Continue decision (no extension override)
         let result = self
             .compaction_actor
-            .compact(&self.history.entries(), &self.state_machine.child_token())
+            .compact(self.history.entries(), &self.state_machine.child_token())
             .await
             .map_err(|e| AgentError::CompactionFailed(e.to_string()))?;
 
@@ -1334,17 +1331,11 @@ impl SessionActor {
 
     pub fn messages(&self) -> Vec<AgentMessage> {
         self.history.messages()
-            .into_iter()
-            .filter_map(|msg| match msg {
-                AgentMessage::Assistant(_) => Some(msg),
-                _ => Some(msg),
-            })
-            .collect()
     }
 
     /// Return the full session history including compaction entries.
     pub fn entries(&self) -> &[SessionEntry] {
-        &self.history.entries()
+        self.history.entries()
     }
 
     /// Get the tenant ID
