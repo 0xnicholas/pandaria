@@ -23,12 +23,13 @@ use tracing::{info, instrument, warn};
 use crate::error::AgentError;
 use crate::events::{AgentEvent, AgentEventListener};
 use crate::harness::agent_loop::{AgentLoop, AgentLoopConfig};
-use crate::harness::compaction::{CompactionResult, Compactor, estimate_context_tokens, should_compact};
+use crate::harness::compaction::{
+    CompactionResult, Compactor, estimate_context_tokens, should_compact,
+};
 use crate::harness::error_recovery::RecoveryAction;
 use crate::harness::strategy::{
-    ContextStrategy, CriteriaEvaluation, GoalCriterion, GoalExhaustedAction, GoalOutcome,
-    GoalVerification, RhythmStrategy, SessionStrategy, TerminationStrategy,
-    DEFAULT_LOOP_INTERVAL,
+    ContextStrategy, CriteriaEvaluation, DEFAULT_LOOP_INTERVAL, GoalCriterion, GoalExhaustedAction,
+    GoalOutcome, GoalVerification, RhythmStrategy, SessionStrategy, TerminationStrategy,
 };
 use crate::hook::context::{CompactCtx, CompactReason, SessionCtx};
 use crate::hook::dispatcher::HookDispatcher;
@@ -214,7 +215,10 @@ impl SessionActor {
     /// **Deprecated:** Restore now happens automatically in `prompt()` /
     /// `run_with_messages()`. This method is a no-op and will be removed
     /// in a future version.
-    #[deprecated(since = "0.2.0", note = "restore is now automatic; this method is a no-op")]
+    #[deprecated(
+        since = "0.2.0",
+        note = "restore is now automatic; this method is a no-op"
+    )]
     pub async fn restore(&mut self) -> Result<usize, AgentError> {
         Ok(0)
     }
@@ -256,10 +260,14 @@ impl SessionActor {
             }
 
             // ── Loop: background execution ──
-            (_, RhythmStrategy::Loop { interval, max_iterations }) => {
-                if std::env::var("PANDARIA_DISABLE_CRON")
-                    .as_deref() == Ok("1")
-                {
+            (
+                _,
+                RhythmStrategy::Loop {
+                    interval,
+                    max_iterations,
+                },
+            ) => {
+                if std::env::var("PANDARIA_DISABLE_CRON").as_deref() == Ok("1") {
                     return Err(AgentError::LoopDisabled);
                 }
                 let delay = interval.unwrap_or(DEFAULT_LOOP_INTERVAL);
@@ -267,9 +275,7 @@ impl SessionActor {
 
                 // First iteration: synchronous
                 let first = match &termination {
-                    TerminationStrategy::Once => {
-                        self.prompt_with_content(content).await?
-                    }
+                    TerminationStrategy::Once => self.prompt_with_content(content).await?,
                     TerminationStrategy::Goal { .. } => {
                         self.run_goal_sync(text.clone()).await?.into_messages()
                     }
@@ -300,30 +306,32 @@ impl SessionActor {
         // Handle /skill:name invocation only when there's exactly one Text part
         if content.len() == 1
             && let Content::Text { ref text, .. } = content[0]
-                && let Some(skill_name) = crate::skills::parse_skill_invocation(text) {
-                    if let Some(skill) = self.skills.iter().find(|s| s.name == skill_name) {
-                        let skill_content = tokio::fs::read_to_string(&skill.file_path)
-                            .await
-                            .map_err(|e| {
-                                AgentError::SkillLoadFailed(format!(
-                                    "failed to read skill {}: {}",
-                                    skill.name, e
-                                ))
-                            })?;
+            && let Some(skill_name) = crate::skills::parse_skill_invocation(text)
+        {
+            if let Some(skill) = self.skills.iter().find(|s| s.name == skill_name) {
+                let skill_content =
+                    tokio::fs::read_to_string(&skill.file_path)
+                        .await
+                        .map_err(|e| {
+                            AgentError::SkillLoadFailed(format!(
+                                "failed to read skill {}: {}",
+                                skill.name, e
+                            ))
+                        })?;
 
-                        let skill_msg = AgentMessage::User(ai_provider::UserMessage {
-                            content: vec![Content::Text {
-                                text: format!("[Skill: {}]\n{}", skill.name, skill_content),
-                                text_signature: None,
-                            }],
-                            timestamp: std::time::SystemTime::now(),
-                        });
-                        self.steer(skill_msg);
-                        return self.run_with_messages(None).await;
-                    } else {
-                        return Err(AgentError::SkillNotFound(skill_name.to_string()));
-                    }
-                }
+                let skill_msg = AgentMessage::User(ai_provider::UserMessage {
+                    content: vec![Content::Text {
+                        text: format!("[Skill: {}]\n{}", skill.name, skill_content),
+                        text_signature: None,
+                    }],
+                    timestamp: std::time::SystemTime::now(),
+                });
+                self.steer(skill_msg);
+                return self.run_with_messages(None).await;
+            } else {
+                return Err(AgentError::SkillNotFound(skill_name.to_string()));
+            }
+        }
 
         let user_msg = AgentMessage::User(ai_provider::UserMessage {
             content,
@@ -1024,15 +1032,14 @@ impl SessionActor {
     // ═══════════════════════════════════════════════════════════════
 
     async fn run_goal_sync(&mut self, task: String) -> Result<GoalOutcome, AgentError> {
-        let (criteria, max_attempts, on_exhausted) =
-            match &self.strategy.termination {
-                TerminationStrategy::Goal {
-                    criteria,
-                    max_attempts,
-                    on_exhausted,
-                } => (criteria.clone(), *max_attempts, on_exhausted.clone()),
-                _ => unreachable!(),
-            };
+        let (criteria, max_attempts, on_exhausted) = match &self.strategy.termination {
+            TerminationStrategy::Goal {
+                criteria,
+                max_attempts,
+                on_exhausted,
+            } => (criteria.clone(), *max_attempts, on_exhausted.clone()),
+            _ => unreachable!(),
+        };
 
         let mut last_eval: Option<CriteriaEvaluation> = None;
 
@@ -1042,19 +1049,15 @@ impl SessionActor {
             let prompt = if attempt == 0 {
                 build_initial_goal_prompt(&task, &criteria)
             } else {
-                build_retry_prompt(
-                    &task,
-                    &criteria,
-                    attempt,
-                    max_attempts,
-                    last_eval.as_ref(),
-                )
+                build_retry_prompt(&task, &criteria, attempt, max_attempts, last_eval.as_ref())
             };
 
-            let result = self.prompt_with_content(vec![Content::Text {
-                text: prompt,
-                text_signature: None,
-            }]).await?;
+            let result = self
+                .prompt_with_content(vec![Content::Text {
+                    text: prompt,
+                    text_signature: None,
+                }])
+                .await?;
 
             let eval = evaluate_criteria(&result, &criteria);
             if eval.all_passed() {
@@ -1072,10 +1075,12 @@ impl SessionActor {
                 attempts: max_attempts,
             }),
             GoalExhaustedAction::ReturnLast => {
-                let result = self.prompt_with_content(vec![Content::Text {
-                    text: task,
-                    text_signature: None,
-                }]).await?;
+                let result = self
+                    .prompt_with_content(vec![Content::Text {
+                        text: task,
+                        text_signature: None,
+                    }])
+                    .await?;
                 Ok(GoalOutcome::Exhausted {
                     messages: result,
                     attempts: max_attempts,
@@ -1088,12 +1093,7 @@ impl SessionActor {
     // Strategy: Loop — background execution
     // ═══════════════════════════════════════════════════════════════
 
-    fn spawn_background_loop(
-        &self,
-        task: String,
-        delay: std::time::Duration,
-        max: Option<u32>,
-    ) {
+    fn spawn_background_loop(&self, task: String, delay: std::time::Duration, max: Option<u32>) {
         let abort = self.state_machine.abort_token();
         let event_tx = self.event_hub.event_tx_clone();
         let termination = self.strategy.termination.clone();
@@ -1116,9 +1116,10 @@ impl SessionActor {
                     break;
                 }
                 if let Some(max) = max
-                    && iteration >= max {
-                        break;
-                    }
+                    && iteration >= max
+                {
+                    break;
+                }
 
                 tokio::select! {
                     _ = tokio::time::sleep(delay) => {}
@@ -1275,12 +1276,8 @@ impl SessionActor {
             }
             ContextStrategy::Clear => {
                 self.history.clear_entries();
-                self.prompt_builder =
-                    PromptBuilder::from_base(self.base_persona.clone());
-                crate::skills::inject_skills_into_builder(
-                    &mut self.prompt_builder,
-                    &self.skills,
-                );
+                self.prompt_builder = PromptBuilder::from_base(self.base_persona.clone());
+                crate::skills::inject_skills_into_builder(&mut self.prompt_builder, &self.skills);
             }
         }
         Ok(())
@@ -1479,9 +1476,7 @@ fn build_retry_prompt(
             p.push_str(&format!("{mark} {id} — {desc}\n"));
         }
     }
-    p.push_str(&format!(
-        "\n## Original Task\n\n{task}\n\n"
-    ));
+    p.push_str(&format!("\n## Original Task\n\n{task}\n\n"));
     p.push_str("Please fix the failing criteria and respond with the corrected implementation.\n");
     p.push_str("End with [CRITERION_RESULT: ...] as before.\n");
     p
@@ -1935,15 +1930,18 @@ mod tests {
         });
 
         // Add a compaction entry manually
-        session.history.entries_mut().push(SessionEntry::Compaction {
-            id: uuid::Uuid::new_v4(),
-            summary: "test summary".to_string(),
-            first_kept_entry_id: uuid::Uuid::new_v4(),
-            tokens_before: 100,
-            details: None,
-            from_extension: false,
-            timestamp: std::time::SystemTime::now(),
-        });
+        session
+            .history
+            .entries_mut()
+            .push(SessionEntry::Compaction {
+                id: uuid::Uuid::new_v4(),
+                summary: "test summary".to_string(),
+                first_kept_entry_id: uuid::Uuid::new_v4(),
+                tokens_before: 100,
+                details: None,
+                from_extension: false,
+                timestamp: std::time::SystemTime::now(),
+            });
 
         // entries() should include compaction
         let all_entries = session.entries();

@@ -1,12 +1,12 @@
 //! SessionStateMachine — state + error + recovery + abort_token (split from SessionActor).
 
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use tokio_util::sync::CancellationToken;
 
-use crate::harness::error_recovery::RecoveryStateMachine;
 use crate::SessionState;
+use crate::harness::error_recovery::RecoveryStateMachine;
 
 /// Encapsulates the session lifecycle state machine, error reason,
 /// recovery state machine, and cancellation token. All four share the
@@ -46,7 +46,10 @@ impl SessionStateMachine {
 
     pub fn clear_error(&self) {
         self.state.store(0, Ordering::SeqCst);
-        self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).take();
+        self.error_reason
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
     }
 
     // ── Reads ──
@@ -64,16 +67,17 @@ impl SessionStateMachine {
     }
 
     pub fn error_reason(&self) -> Option<String> {
-        self.error_reason.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.error_reason
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
-   
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Used only by SessionStateMachine tests (cfg(test)) — see state.rs tests.
     pub(crate) fn recovery(&self) -> &RecoveryStateMachine {
         &self.recovery
     }
 
-   
     pub(crate) fn recovery_mut(&mut self) -> &mut RecoveryStateMachine {
         &mut self.recovery
     }
@@ -100,13 +104,11 @@ impl SessionStateMachine {
     }
 
     /// Reset only the abort token (used at the start of each run_with_messages iteration).
-    #[allow(dead_code)]
     pub fn reset_abort_token(&mut self) {
         self.abort_token = CancellationToken::new();
     }
 
     /// Reset only the recovery state machine (used by SessionActor::reset which also clears entries).
-    #[allow(dead_code)]
     pub fn reset_recovery_only(&mut self, max_retries: u32) {
         self.recovery = RecoveryStateMachine::new(max_retries);
     }

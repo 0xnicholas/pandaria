@@ -63,10 +63,13 @@ impl SessionHistory {
     // ── Reads ──
 
     pub fn messages(&self) -> Vec<AgentMessage> {
-        self.entries.iter().filter_map(|e| match e {
-            SessionEntry::Message { message, .. } => Some(message.clone()),
-            SessionEntry::Compaction { .. } => None,
-        }).collect()
+        self.entries
+            .iter()
+            .filter_map(|e| match e {
+                SessionEntry::Message { message, .. } => Some(message.clone()),
+                SessionEntry::Compaction { .. } => None,
+            })
+            .collect()
     }
 
     pub fn entries(&self) -> &[SessionEntry] {
@@ -128,7 +131,9 @@ impl SessionHistory {
     /// Awaits the previous in-flight save (with 5s timeout) to preserve ordering,
     /// then spawns a new fire-and-forget save task.
     pub async fn persist_incremental(&mut self) {
-        let Some(ref store) = self.store else { return; };
+        let Some(ref store) = self.store else {
+            return;
+        };
         if let Some(handle) = self.last_save.take() {
             let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
         }
@@ -142,7 +147,10 @@ impl SessionHistory {
         let session_id = self.session_id.clone();
         let store = store.clone();
         self.last_save = Some(tokio::spawn(async move {
-            if let Err(e) = store.append_entries(&tenant_id, &session_id, &entries_to_save).await {
+            if let Err(e) = store
+                .append_entries(&tenant_id, &session_id, &entries_to_save)
+                .await
+            {
                 tracing::warn!(
                     tenant_id = %tenant_id,
                     session_id = %session_id,
@@ -153,15 +161,19 @@ impl SessionHistory {
         }));
     }
 
-   
     pub fn persist_status(&self, status: &str) {
-        let Some(ref store) = self.store else { return; };
+        let Some(ref store) = self.store else {
+            return;
+        };
         let store = store.clone();
         let tenant_id = self.tenant_id.clone();
         let session_id = self.session_id.clone();
         let status = status.to_string();
         tokio::spawn(async move {
-            if let Err(e) = store.update_session_status(&tenant_id, &session_id, &status).await {
+            if let Err(e) = store
+                .update_session_status(&tenant_id, &session_id, &status)
+                .await
+            {
                 tracing::warn!(
                     %tenant_id,
                     %session_id,
@@ -178,7 +190,9 @@ impl SessionHistory {
             let _ = handle.await;
         }
         if let Some(ref store) = self.store {
-            store.save_session(&self.tenant_id, &self.session_id, &self.entries).await?;
+            store
+                .save_session(&self.tenant_id, &self.session_id, &self.entries)
+                .await?;
             tracing::info!(
                 tenant_id = %self.tenant_id,
                 session_id = %self.session_id,
@@ -189,25 +203,21 @@ impl SessionHistory {
     }
 
     /// Take the in-flight save join handle (used by flush / shutdown).
-    #[allow(dead_code)]
     pub(crate) fn take_last_save(&mut self) -> Option<JoinHandle<()>> {
         self.last_save.take()
     }
 
     /// Append a compaction entry directly (used by auto-compaction).
-    #[allow(dead_code)]
     pub fn append_compaction_entry(&mut self, entry: SessionEntry) {
         self.entries.push(entry);
     }
 
     /// Clear all entries (used by reset / context-clear strategy).
-    #[allow(dead_code)]
     pub fn clear_entries(&mut self) {
         self.entries.clear();
     }
 
     /// Borrow the underlying entries (used by compaction hooks).
-    #[allow(dead_code)]
     pub fn entries_clone(&self) -> Vec<SessionEntry> {
         self.entries.clone()
     }
@@ -237,7 +247,10 @@ mod tests {
 
     fn msg(text: &str) -> AgentMessage {
         AgentMessage::Assistant(AssistantMessage {
-            content: vec![Content::Text { text: text.to_string(), text_signature: None }],
+            content: vec![Content::Text {
+                text: text.to_string(),
+                text_signature: None,
+            }],
             provider: "test".to_string(),
             model: "test".to_string(),
             api: ai_provider::Api {

@@ -58,17 +58,26 @@ impl SessionEventHub {
     }
 
     pub fn add_listener(&mut self, listener: Arc<dyn AgentEventListener>) {
-        self.listeners.lock().unwrap_or_else(|e| e.into_inner()).push(listener);
+        self.listeners
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(listener);
     }
 
     // ── Steer / Follow-up ──
 
     pub fn steer(&self, msg: AgentMessage) {
-        self.steer_queue.lock().expect("steer queue poisoned").push(msg);
+        self.steer_queue
+            .lock()
+            .expect("steer queue poisoned")
+            .push(msg);
     }
 
     pub fn follow_up(&self, msg: AgentMessage) {
-        self.follow_up_queue.lock().expect("follow_up queue poisoned").push(msg);
+        self.follow_up_queue
+            .lock()
+            .expect("follow_up queue poisoned")
+            .push(msg);
     }
 
     pub fn drain_steer(&self) -> Vec<AgentMessage> {
@@ -76,29 +85,30 @@ impl SessionEventHub {
     }
 
     pub fn drain_follow_up(&self) -> Vec<AgentMessage> {
-        std::mem::take(&mut *self.follow_up_queue.lock().expect("follow_up queue poisoned"))
+        std::mem::take(
+            &mut *self
+                .follow_up_queue
+                .lock()
+                .expect("follow_up queue poisoned"),
+        )
     }
 
     // ── Internal accessors (pub(crate) — SessionActor uses these to build AgentLoopConfig) ──
 
-   
     pub(crate) fn event_tx_clone(&self) -> Option<mpsc::Sender<QueuedEvent>> {
         self.event_tx.clone()
     }
 
-   
     pub(crate) fn steer_queue_clone(&self) -> Arc<Mutex<Vec<AgentMessage>>> {
         self.steer_queue.clone()
     }
 
-   
     pub(crate) fn follow_up_queue_clone(&self) -> Arc<Mutex<Vec<AgentMessage>>> {
         self.follow_up_queue.clone()
     }
 
     // ── Lifecycle ──
 
-   
     pub async fn shutdown(&mut self) {
         // Drop sender so the processor sees channel closed.
         self.event_tx.take();
@@ -108,14 +118,12 @@ impl SessionEventHub {
     }
 
     /// Take the event_tx sender without awaiting processor (used in Drop).
-    #[allow(dead_code)]
     pub(crate) fn take_event_tx(&mut self) -> Option<mpsc::Sender<QueuedEvent>> {
         self.event_tx.take()
     }
 
     /// Take the processor handle without awaiting (used in Drop).
     /// Drop on JoinHandle lets the task finish naturally when its sender closes.
-    #[allow(dead_code)]
     pub(crate) fn shutdown_handle(&mut self) -> Option<JoinHandle<()>> {
         self.event_processor_handle.take()
     }
@@ -156,7 +164,10 @@ mod tests {
 
     fn user_msg(text: &str) -> AgentMessage {
         AgentMessage::User(UserMessage {
-            content: vec![Content::Text { text: text.to_string(), text_signature: None }],
+            content: vec![Content::Text {
+                text: text.to_string(),
+                text_signature: None,
+            }],
             timestamp: SystemTime::now(),
         })
     }
@@ -166,7 +177,9 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let mut hub = SessionEventHub::new();
         hub.add_listener(Arc::new(CountingListener(counter.clone())));
-        hub.emit(AgentEvent::StateChanged { state: crate::SessionState::Idle });
+        hub.emit(AgentEvent::StateChanged {
+            state: crate::SessionState::Idle,
+        });
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
@@ -192,6 +205,8 @@ mod tests {
     async fn event_hub_shutdown_terminates_processor() {
         let mut hub = SessionEventHub::new();
         hub.shutdown().await;
-        hub.emit(AgentEvent::StateChanged { state: crate::SessionState::Idle });
+        hub.emit(AgentEvent::StateChanged {
+            state: crate::SessionState::Idle,
+        });
     }
 }
