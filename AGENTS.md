@@ -248,7 +248,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | observability crate | ❌ 已删除（v0.1.3）。sanitize 移至 agent-core，metrics/tracing 暂无需求 |
 | api-gateway | ✅ 核心功能已实现（REST API + SSE + HMAC 认证 + 限流 + persist store 接入 + Squad streaming SSE endpoint）。E2E 测试矩阵 9 个 suite 全部通过 |
 | storage 集成测试 | ✅ 已实现（testcontainers 启动 PostgreSQL + Redis，8 PG + 7 Redis；E2E 持久化恢复/故障注入/并发隔离） |
-| 代码质量 | ✅ 生产代码零 unwrap（229 个全部位于 `mod tests` 块内；tenant 3 个生产代码 unwrap 已修复为 `.expect()`）。`SessionActor` 已拆分（`history.rs` 318 / `event_hub.rs` 196 / `state.rs` 181 / `mod.rs` 2454），22 个原有测试保持原样通过 + 15 个新子系统测试 = 37 个 session 测试 |
+| 代码质量 | ✅ 生产代码零 unwrap（229 个全部位于 `mod tests` 块内；tenant 3 个生产代码 unwrap 已修复为 `.expect()`）。`SessionActor` 已拆分（`history.rs` 332 / `event_hub.rs` 212 / `state.rs` 185 / `tests.rs` 927 / `mod.rs` 1546），22 个原有测试保持原样通过 + 15 个新子系统测试 = 37 个 session 测试 |
 | TUI 客户端 | 🟡 核心功能已重构（ratatui + REST client + SSE 订阅），新增：输入队列（steer/followUp）、Bash 模式（`!command`/`!!command`）、外部编辑器（Ctrl+X）、命令面板解耦（Ctrl+Shift+P 任意状态）、模型循环切换（Ctrl+P/N）、Redo（Ctrl+Shift+-）、字符跳转（Ctrl+]）、CompactionSummary 消息类型。持续迭代中 |
 | PromptBuilder 设计 | ✅ Phase 1 & 2 已完成。核心类型 + SessionActor/AgentLoop 集成 + Hook 系统 `PromptBuilder` 接入。`BeforeAgentStartMutation` / `ProviderRequestMutation` 新增 `prompt_mutation: Option<PromptMutation>` 字段；legacy `system_prompt: Option<PromptBuilder>` 保留向后兼容，替换后框架自动重新注入 `SkillsDirectory`。`inject_skills_into_builder` 辅助函数提取至 `skills/injector.rs`。 |
 | AgentSpace 统一目录 | ✅ 已实现（`agent-core/src/space.rs`）。统一根目录（默认 `~/.pandaria/`），含 config/cache/logs/temp/skills/workspaces 子目录。PathGuard、Skills Scanner、TUI 均已接入。`PANDARIA_SPACE_ROOT` 环境变量可覆盖根目录。 |
