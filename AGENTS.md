@@ -256,7 +256,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | 生成型多模态（MediaProvider + MediaGenerationTool） | ✅ 已支持 |
 | pawbun-toolkit（Agent 工具抽象） | ✅ 已实现（Tool trait、ToolKit registry、MCP client adapter、async tool 支持） |
 | pawbun-files（多模态文件处理） | ✅ 已实现（text/image/PDF/audio/video、Local/URL/Bytes source、OpenAI/Anthropic/Gemini/Azure format） |
-| pawbun-mcp-server（MCP 协议适配） | ✅ 已实现（stdio + SSE transport、toolkit 桥接、file loader 集成、`request_timeout_ms` 接入 `handle_call_tool` 超时映射 JSON-RPC `-32003`） |
+| pawbun-mcp-server（MCP 协议适配） | ✅ 已实现（stdio + SSE transport、toolkit 桥接、file loader 集成、`request_timeout_ms` 接入 `handle_call_tool` 超时映射 JSON-RPC `-32003`、SSE `message_handler` 提取 `respond_or_error_on_close` helper 在 handler drop response 时向客户端 emit JSON-RPC `-32603` 错误避免客户端挂死到 session TTL） |
 | tavern（Agent Team 编排层） | 🟡 核心组件已实现（WorkflowEngine/SquadEngine、StepExecutor、EventStore + PG/SQLite/Memory backend、replay、DAG 校验、Webhook、Timer、Agent Team 类型系统（Team/Squad/Role/Mission/Handoff/TeamContext）、SquadEngine（DAG + Hierarchical）、PandariaAgentExecutor（agent-core 桥接：usage 计量、execute_stream、全 skill 类型工具化）、SquadEngine 真流式输出（run_stream + StreamHandle + SSE 端点 + 11 个 SquadEvent→ServerEvent 映射测试）、SessionCache（LRU + idle timeout + 后台清理）已替代原 HashMap 并配套 integration tests）。持续迭代中 |
 | Circuit Breaker（LLM 调用熔断） | ✅ 已实现（agent-core/src/circuit_breaker.rs，Closed→Open→HalfOpen 状态机） |
 | CombinedDispatcher（Hook 组合） | ✅ 已实现（agent-core/src/hook/combined.rs，多 HookDispatcher 链式组合） |

@@ -371,6 +371,9 @@ async fn message_handler(
 
     // Clone before moving query.session_id into TaggedRequest.
     let session_id_for_spawn = query.session_id.clone();
+    // Capture the request id before moving req into TaggedRequest — needed
+    // for emitting a JSON-RPC error if the handler drops the response channel.
+    let req_id = req.id.clone();
 
     // Send the tagged request to the transport's recv() queue.
     state
@@ -385,23 +388,186 @@ async fn message_handler(
         })?;
 
     // Wait for the handler to produce a response (via oneshot from send()),
-    // then forward it to the SSE session channel.
+    // then forward it to the SSE session channel. If the handler drops the
+    // response_tx without sending (panic, transport close), emit a
+    // JSON-RPC error to the SSE session so the client doesn't hang.
     let state_for_response = state.clone();
-    tokio::spawn(async move {
-        match response_rx.await {
-            Ok(resp) => {
-                let mut sessions_guard = state_for_response.sessions.write().await;
-                if let Some(session) = sessions_guard.get_mut(&session_id_for_spawn) {
-                    session.last_activity = Instant::now();
-                    let _ = session.sender.send(resp);
-                }
-            }
-            Err(_) => {
-                // Response channel closed — handler may have shut down.
-            }
-        }
-    });
+    tokio::spawn(respond_or_error_on_close(
+        state_for_response,
+        session_id_for_spawn,
+        req_id,
+        response_rx,
+    ));
 
     // Return 202 Accepted — the actual response comes through SSE.
     Ok("Accepted".into())
+}
+
+/// Forwards a handler response to the SSE session channel.
+///
+/// If the response channel closes without a value (handler panic, transport
+/// close, shutdown), emits a JSON-RPC `-32603` error response to the SSE
+/// session so the client gets a timely failure instead of hanging until the
+/// session TTL expires.
+///
+/// Notifications (`req_id == None`) emit nothing on close, per the MCP spec.
+async fn respond_or_error_on_close(
+    state: Arc<AppState>,
+    session_id: String,
+    req_id: Option<pawbun_toolkit::mcp::JsonRpcId>,
+    response_rx: oneshot::Receiver<JsonRpcResponse>,
+) {
+    match response_rx.await {
+        Ok(resp) => {
+            let mut sessions_guard = state.sessions.write().await;
+            if let Some(session) = sessions_guard.get_mut(&session_id) {
+                session.last_activity = Instant::now();
+                let _ = session.sender.send(resp);
+            }
+        }
+        Err(_) => {
+            // Handler dropped response_tx without sending — could be a panic
+            // (caught by hook::with_timeout returning default), an explicit
+            // early return, or transport.close(). Either way, surface a
+            // JSON-RPC error so the client doesn't wait until session TTL.
+            if let Some(id) = req_id {
+                let error_resp = JsonRpcResponse::error(
+                    Some(id),
+                    -32603,
+                    "Handler closed without response (panic, shutdown, or timeout)",
+                );
+                let mut sessions_guard = state.sessions.write().await;
+                if let Some(session) = sessions_guard.get_mut(&session_id) {
+                    session.last_activity = Instant::now();
+                    let _ = session.sender.send(error_resp);
+                }
+            }
+        }
+    }
+}
+
+// ── Tests for respond_or_error_on_close ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pawbun_toolkit::mcp::JsonRpcId;
+    use tokio::sync::oneshot;
+
+    async fn make_test_state() -> (Arc<AppState>, String, mpsc::UnboundedReceiver<JsonRpcResponse>) {
+        let (request_tx, _request_rx) = mpsc::unbounded_channel();
+        let (session_tx, session_rx) = mpsc::unbounded_channel();
+        let state = Arc::new(AppState {
+            request_tx,
+            sessions: RwLock::new(HashMap::new()),
+            max_connections: 10,
+            heartbeat_interval_ms: 1000,
+            heartbeat_text: "ping".into(),
+        });
+        let session_id = "test-session".to_string();
+        state.sessions.write().await.insert(
+            session_id.clone(),
+            SseSession {
+                last_activity: Instant::now(),
+                sender: session_tx,
+            },
+        );
+        (state, session_id, session_rx)
+    }
+
+    #[tokio::test]
+    async fn test_respond_or_error_on_close_forwards_response() {
+        let (state, session_id, mut session_rx) = make_test_state().await;
+        let (tx, rx) = oneshot::channel();
+
+        // Send a response, then close the channel.
+        let resp = JsonRpcResponse::ok_result(
+            Some(JsonRpcId::Number(42)),
+            serde_json::json!({"hello": "world"}),
+        );
+        tx.send(resp.clone()).unwrap();
+
+        respond_or_error_on_close(state, session_id, Some(JsonRpcId::Number(42)), rx).await;
+
+        let received = session_rx.recv().await.expect("session should receive response");
+        assert_eq!(received.id, Some(JsonRpcId::Number(42)));
+        assert!(received.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_respond_or_error_on_close_emits_error_on_drop() {
+        // Channel closes (response_tx dropped) without sending — simulates
+        // handler panic or transport close.
+        let (state, session_id, mut session_rx) = make_test_state().await;
+        let (tx, rx) = oneshot::channel::<JsonRpcResponse>();
+        drop(tx); // simulate handler panic/drop
+
+        respond_or_error_on_close(
+            state,
+            session_id,
+            Some(JsonRpcId::Number(7)),
+            rx,
+        )
+        .await;
+
+        let received = session_rx
+            .recv()
+            .await
+            .expect("session should receive error response");
+        assert_eq!(received.id, Some(JsonRpcId::Number(7)));
+        let err = received.error.expect("error should be present");
+        assert_eq!(err.code, -32603);
+        assert!(
+            err.message.to_lowercase().contains("closed")
+                || err.message.to_lowercase().contains("panic")
+                || err.message.to_lowercase().contains("shutdown"),
+            "error message should explain the cause: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
+    async fn test_respond_or_error_on_close_silent_on_notification() {
+        // Notifications have no id, so no error response is emitted even
+        // if the channel closes — the MCP spec says notifications get no reply.
+        let (state, session_id, mut session_rx) = make_test_state().await;
+        let (tx, rx) = oneshot::channel::<JsonRpcResponse>();
+        drop(tx);
+
+        respond_or_error_on_close(state, session_id, None, rx).await;
+
+        // Channel should be empty (no message emitted for notification).
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(50), session_rx.recv()).await;
+        assert!(
+            result.is_err() || result.unwrap().is_none(),
+            "notification path should not emit any response"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_respond_or_error_on_close_handles_missing_session() {
+        // Session has been removed (client disconnected) — should not panic.
+        let (state, _session_id, mut session_rx) = make_test_state().await;
+        let (tx, rx) = oneshot::channel::<JsonRpcResponse>();
+        drop(tx);
+
+        // Use a session_id that doesn't exist in the map.
+        respond_or_error_on_close(
+            state,
+            "nonexistent-session".into(),
+            Some(JsonRpcId::Number(1)),
+            rx,
+        )
+        .await;
+
+        // The test's session_rx was registered under "test-session" — no
+        // message should be routed there either.
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(50), session_rx.recv()).await;
+        assert!(
+            result.is_err() || result.unwrap().is_none(),
+            "no message should be routed to a session that no longer exists"
+        );
+    }
 }
