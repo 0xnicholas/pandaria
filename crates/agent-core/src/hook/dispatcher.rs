@@ -18,6 +18,17 @@ use crate::hook::mutations::{
 /// Observational hooks are fire-and-forget.
 #[async_trait]
 pub trait HookDispatcher: Send + Sync {
+    /// Per-hook-call timeout in milliseconds.
+    ///
+    /// Used by [`crate::hook::timeout::with_timeout_from`] to bound each call
+    /// to any individual hook method. On expiry, the call returns its default
+    /// value and the dispatcher chain continues.
+    ///
+    /// Defaults to 500ms. Override to expose configurable timeouts (e.g. via
+    /// `HookConfig::hook_timeout_ms`).
+    fn hook_timeout_ms(&self) -> u64 {
+        500
+    }
     // ═══ Blocking hooks — first-block-wins ═══
 
     /// Blocking hook with input mutation support.

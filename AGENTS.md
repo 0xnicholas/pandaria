@@ -260,7 +260,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | tavern（Agent Team 编排层） | 🟡 核心组件已实现（WorkflowEngine/SquadEngine、StepExecutor、EventStore + PG/SQLite/Memory backend、replay、DAG 校验、Webhook、Timer、Agent Team 类型系统（Team/Squad/Role/Mission/Handoff/TeamContext）、SquadEngine（DAG + Hierarchical）、PandariaAgentExecutor（agent-core 桥接：usage 计量、execute_stream、全 skill 类型工具化）、SquadEngine 真流式输出（run_stream + StreamHandle + SSE 端点 + 11 个 SquadEvent→ServerEvent 映射测试）、SessionCache（LRU + idle timeout + 后台清理）已替代原 HashMap 并配套 integration tests）。持续迭代中 |
 | Circuit Breaker（LLM 调用熔断） | ✅ 已实现（agent-core/src/circuit_breaker.rs，Closed→Open→HalfOpen 状态机） |
 | CombinedDispatcher（Hook 组合） | ✅ 已实现（agent-core/src/hook/combined.rs，多 HookDispatcher 链式组合） |
-| Hook 超时保护 | ✅ 已实现（agent-core/src/hook/timeout.rs，panic 捕获 + 超时兜底） |
+| Hook 超时保护 | ✅ 已实现（agent-core/src/hook/timeout.rs，panic 捕获 + 超时兜底）。`HookConfig::hook_timeout_ms`（默认 500ms，env `PANDARIA_HOOK_TIMEOUT_MS` 可覆盖）通过 `HookDispatcher::hook_timeout_ms()` trait 方法 + `with_timeout_from` helper 端到端可配置。5 个 fire-and-forget 观测 hook（on_agent_end × 3 + on_turn_end × 2 + on_session_start）保留硬编码 100ms 快速取消语义 |
 
 ---
 

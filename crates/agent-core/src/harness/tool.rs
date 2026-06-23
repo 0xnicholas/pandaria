@@ -8,7 +8,7 @@ use crate::error::AgentError;
 use crate::hook::context::{ToolCallCtx, ToolResultCtx};
 use crate::hook::dispatcher::HookDispatcher;
 use crate::hook::mutations::HookDecision;
-use crate::hook::timeout::with_timeout;
+use crate::hook::timeout::with_timeout_from;
 use crate::types::{AgentToolProgressUpdate, AgentToolRef};
 use crate::utils::helpers::catch_panic;
 use ai_provider::ToolResultMessage as ToolResultMsg;
@@ -55,9 +55,9 @@ impl ToolExecutor {
             tool_call_id: tool_call.id.clone(),
             input: tool_call.arguments.clone(),
         };
-        let (decision, mutation) = with_timeout(
+        let (decision, mutation) = with_timeout_from(
+            &*self.hook_dispatcher,
             self.hook_dispatcher.on_tool_call(&tool_call_ctx),
-            500,
             (
                 HookDecision::Continue,
                 crate::mutations::ToolCallMutation::default(),
@@ -119,9 +119,9 @@ impl ToolExecutor {
             details: result.details.clone(),
             is_error: result.is_error,
         };
-        let mutation = with_timeout(
+        let mutation = with_timeout_from(
+            &*self.hook_dispatcher,
             self.hook_dispatcher.on_tool_result(&tool_result_ctx),
-            500,
             crate::mutations::ToolResultMutation::default(),
             "on_tool_result",
         )

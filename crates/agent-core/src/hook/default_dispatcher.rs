@@ -45,6 +45,11 @@ pub struct DefaultHookDispatcher {
     /// Optional callback for media cost tracking: (tenant_id, cost_cny).
     #[allow(clippy::type_complexity)]
     pub cost_callback: Option<std::sync::Arc<dyn Fn(&str, f64) + Send + Sync>>,
+    /// Per-hook-call timeout in milliseconds.
+    ///
+    /// Sourced from `HookConfig::hook_timeout_ms` at construction. Used by
+    /// `with_timeout_from` to bound each hook call.
+    pub hook_timeout_ms: u64,
 }
 
 impl std::fmt::Debug for DefaultHookDispatcher {
@@ -58,6 +63,7 @@ impl std::fmt::Debug for DefaultHookDispatcher {
             .field("max_turns_per_session", &self.max_turns_per_session)
             .field("session_turn_counts", &self.session_turn_counts)
             .field("cost_callback", &self.cost_callback.is_some())
+            .field("hook_timeout_ms", &self.hook_timeout_ms)
             .finish()
     }
 }
@@ -85,6 +91,7 @@ impl DefaultHookDispatcher {
             max_turns_per_session: 0,
             session_turn_counts: DashMap::new(),
             cost_callback: None,
+            hook_timeout_ms: crate::harness::config::DEFAULT_HOOK_TIMEOUT_MS,
         }
     }
 
@@ -99,6 +106,7 @@ impl DefaultHookDispatcher {
             max_turns_per_session: config.max_turns_per_session,
             session_turn_counts: DashMap::new(),
             cost_callback: config.cost_callback.clone(),
+            hook_timeout_ms: config.hook_timeout_ms,
         }
     }
 
@@ -194,6 +202,9 @@ impl DefaultHookDispatcher {
 
 #[async_trait]
 impl HookDispatcher for DefaultHookDispatcher {
+    fn hook_timeout_ms(&self) -> u64 {
+        self.hook_timeout_ms
+    }
     // ═══ Blocking hooks ═══
 
     async fn on_tool_call(&self, ctx: &ToolCallCtx) -> (HookDecision, ToolCallMutation) {

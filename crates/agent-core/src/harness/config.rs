@@ -3,8 +3,16 @@ use std::sync::Arc;
 
 use crate::space::AgentSpace;
 
+/// Default per-hook-call timeout in milliseconds.
+///
+/// Each individual hook method (`on_tool_call`, `on_context`, etc.) is bounded
+/// by this timeout via [`crate::hook::timeout::with_timeout_from`]. When the
+/// bound is exceeded the hook returns its default value and the dispatcher
+/// chain continues — a slow hook cannot stall the agent loop.
+pub const DEFAULT_HOOK_TIMEOUT_MS: u64 = 500;
+
 /// Configurable policy fields for `DefaultHookDispatcher`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct HookConfig {
     pub denied_tools: Vec<String>,
     pub allowed_tools: Vec<String>,
@@ -15,6 +23,26 @@ pub struct HookConfig {
     /// second is the cost in dollars.
     #[allow(clippy::type_complexity)]
     pub cost_callback: Option<Arc<dyn Fn(&str, f64) + Send + Sync>>,
+    /// Per-hook-call timeout in milliseconds.
+    ///
+    /// Bounds the wall-clock time of any single `HookDispatcher` method call
+    /// (e.g. `on_tool_call`, `on_context`). On expiry, the hook returns its
+    /// default value. See [`DEFAULT_HOOK_TIMEOUT_MS`] for the default.
+    pub hook_timeout_ms: u64,
+}
+
+impl Default for HookConfig {
+    fn default() -> Self {
+        Self {
+            denied_tools: Vec::new(),
+            allowed_tools: Vec::new(),
+            path_guard_fields: HashMap::new(),
+            path_guard_scan_unknown: false,
+            max_turns_per_session: 0,
+            cost_callback: None,
+            hook_timeout_ms: DEFAULT_HOOK_TIMEOUT_MS,
+        }
+    }
 }
 
 impl HookConfig {
@@ -31,6 +59,16 @@ impl HookConfig {
             .insert("code_execute".into(), vec!["work_dir".into()]);
         self
     }
+
+    /// Override the per-hook-call timeout.
+    ///
+    /// Use a larger value if your hook chain includes hooks that legitimately
+    /// need more time (e.g. a remote webhook). Use a smaller value for
+    /// latency-sensitive workloads.
+    pub fn with_hook_timeout(mut self, ms: u64) -> Self {
+        self.hook_timeout_ms = ms;
+        self
+    }
 }
 
 impl std::fmt::Debug for HookConfig {
@@ -42,6 +80,7 @@ impl std::fmt::Debug for HookConfig {
             .field("path_guard_scan_unknown", &self.path_guard_scan_unknown)
             .field("max_turns_per_session", &self.max_turns_per_session)
             .field("cost_callback", &self.cost_callback.is_some())
+            .field("hook_timeout_ms", &self.hook_timeout_ms)
             .finish()
     }
 }
@@ -123,6 +162,7 @@ impl HarnessConfig {
     /// | `PANDARIA_COMPACTION_ENABLED` | `true` | Enable automatic compaction |
     /// | `PANDARIA_COMPACTION_RESERVE_TOKENS` | `4096` | Tokens reserved for response |
     /// | `PANDARIA_COMPACTION_KEEP_RECENT_TOKENS` | `8192` | Recent context tokens to keep |
+    /// | `PANDARIA_HOOK_TIMEOUT_MS` | `500` | Per-hook-call timeout in milliseconds |
     pub fn from_env(provider: Arc<dyn ai_provider::LlmProvider>) -> Self {
         let default_model = std::env::var("PANDARIA_DEFAULT_MODEL")
             .unwrap_or_else(|_| "deepseek/deepseek-v4-pro".to_string());
@@ -167,6 +207,11 @@ impl HarnessConfig {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(24);
 
+        let hook_timeout_ms = std::env::var("PANDARIA_HOOK_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_HOOK_TIMEOUT_MS);
+
         Self {
             provider,
             default_model,
@@ -183,7 +228,7 @@ impl HarnessConfig {
                 compaction_keep,
             ),
             agent_space: AgentSpace::from_env_or_default(),
-            hook_config: HookConfig::default(),
+            hook_config: HookConfig::default().with_hook_timeout(hook_timeout_ms),
             memory_store: None,
             session_retention_days,
             session_cleanup_interval_hours,
@@ -253,5 +298,28 @@ mod tests {
 
         assert!(config.path_guard_fields.contains_key("custom"));
         assert!(config.path_guard_fields.contains_key("file_read"));
+    }
+
+    #[test]
+    fn test_hook_config_default_timeout() {
+        // Default value matches the documented DEFAULT_HOOK_TIMEOUT_MS constant
+        // so any change to the default is caught here.
+        assert_eq!(
+            HookConfig::default().hook_timeout_ms,
+            DEFAULT_HOOK_TIMEOUT_MS
+        );
+        assert_eq!(DEFAULT_HOOK_TIMEOUT_MS, 500);
+    }
+
+    #[test]
+    fn test_hook_config_with_hook_timeout_overrides() {
+        let config = HookConfig::default().with_hook_timeout(2_000);
+        assert_eq!(config.hook_timeout_ms, 2_000);
+
+        // Builder chains with with_pawbun_defaults without losing the timeout.
+        let config = HookConfig::default()
+            .with_hook_timeout(1_000)
+            .with_pawbun_defaults();
+        assert_eq!(config.hook_timeout_ms, 1_000);
     }
 }

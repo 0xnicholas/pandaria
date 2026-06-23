@@ -33,6 +33,7 @@ use crate::harness::strategy::{
 };
 use crate::hook::context::{CompactCtx, CompactReason, SessionCtx};
 use crate::hook::dispatcher::HookDispatcher;
+use crate::hook::with_timeout_from;
 use crate::persistence::entry::{SessionContextBuilder, SessionEntry};
 use crate::persistence::store::SessionStore;
 use crate::prompt::{FragmentKind, FragmentSource, PromptBuilder, PromptFragment};
@@ -796,9 +797,9 @@ impl SessionActor {
             reason: reason.clone(),
         };
 
-        let decision = crate::hook::timeout::with_timeout(
+        let decision = with_timeout_from(
+            &*self.hook_dispatcher,
             self.hook_dispatcher.on_before_compact(&compact_ctx),
-            500,
             crate::mutations::CompactDecision::Continue,
             "on_before_compact",
         )
@@ -863,9 +864,9 @@ impl SessionActor {
             token_savings: 0,
             result: Some(result_for_hook),
         };
-        let _ = crate::hook::timeout::with_timeout(
+        let _ = with_timeout_from(
+            &*self.hook_dispatcher,
             self.hook_dispatcher.on_compact_end(&compact_end_ctx),
-            500,
             (),
             "on_compact_end",
         )

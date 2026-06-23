@@ -15,7 +15,7 @@ use crate::hook::dispatcher::HookDispatcher;
 use crate::hook::mutations::{
     BeforeAgentStartMutation, ProviderRequestMutation, ProviderResponseMutation,
 };
-use crate::hook::timeout::with_timeout;
+use crate::hook::timeout::{with_timeout, with_timeout_from};
 use crate::prompt::PromptBuilder;
 use crate::tools::{build_tool_defs, build_tool_value_defs};
 use crate::types::{AgentMessage, AgentToolRef, ToolExecutionMode};
@@ -224,11 +224,11 @@ impl AgentLoop {
             tools: build_tool_value_defs(&self.config.tools),
             model: self.config.model.clone(),
         };
-        let agent_start_mutation = crate::hook::timeout::with_timeout(
+        let agent_start_mutation = with_timeout_from(
+            &*self.config.hook_dispatcher,
             self.config
                 .hook_dispatcher
                 .on_before_agent_start(&agent_start_ctx),
-            500,
             BeforeAgentStartMutation::default(),
             "on_before_agent_start",
         )
@@ -368,9 +368,9 @@ impl AgentLoop {
             session_id: self.config.session_id.clone(),
             messages: messages.clone(),
         };
-        let ctx_mutation = with_timeout(
+        let ctx_mutation = with_timeout_from(
+            &*self.config.hook_dispatcher,
             self.config.hook_dispatcher.on_context(&ctx_ctx),
-            500,
             crate::mutations::ContextMutation::default(),
             "on_context",
         )
@@ -396,11 +396,11 @@ impl AgentLoop {
             tools: ctx.tools.clone(),
             options: ProviderStreamOptions::from_options(&self.config.stream_options),
         };
-        let provider_req_mutation = with_timeout(
+        let provider_req_mutation = with_timeout_from(
+            &*self.config.hook_dispatcher,
             self.config
                 .hook_dispatcher
                 .on_before_provider_request(&provider_req_ctx),
-            500,
             ProviderRequestMutation::default(),
             "on_before_provider_request",
         )
@@ -470,11 +470,11 @@ impl AgentLoop {
             content: assistant_msg.content.clone(),
             stop_reason: assistant_msg.stop_reason.clone(),
         };
-        let provider_resp_mutation = with_timeout(
+        let provider_resp_mutation = with_timeout_from(
+            &*self.config.hook_dispatcher,
             self.config
                 .hook_dispatcher
                 .on_after_provider_response(&provider_resp_ctx),
-            500,
             ProviderResponseMutation::default(),
             "on_after_provider_response",
         )

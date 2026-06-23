@@ -18,17 +18,37 @@ use super::mutations::*;
 ///   fire-and-forget.
 pub struct CombinedDispatcher {
     chain: Vec<Arc<dyn HookDispatcher>>,
+    /// Per-hook-call timeout in milliseconds.
+    ///
+    /// Exposed to callers via [`HookDispatcher::hook_timeout_ms`]. Defaults to
+    /// 500ms; can be overridden with [`CombinedDispatcher::with_hook_timeout`].
+    hook_timeout_ms: u64,
 }
 
 impl CombinedDispatcher {
     /// Create a new `CombinedDispatcher` from a chain of dispatchers.
+    ///
+    /// Uses the default 500ms hook timeout. Call [`Self::with_hook_timeout`]
+    /// to customize.
     pub fn new(chain: Vec<Arc<dyn HookDispatcher>>) -> Self {
-        Self { chain }
+        Self {
+            chain,
+            hook_timeout_ms: crate::harness::config::DEFAULT_HOOK_TIMEOUT_MS,
+        }
+    }
+
+    /// Override the per-hook-call timeout reported by this dispatcher.
+    pub fn with_hook_timeout(mut self, ms: u64) -> Self {
+        self.hook_timeout_ms = ms;
+        self
     }
 }
 
 #[async_trait]
 impl HookDispatcher for CombinedDispatcher {
+    fn hook_timeout_ms(&self) -> u64 {
+        self.hook_timeout_ms
+    }
     // ------------------------------------------------------------------
     // Blocking hooks — first-block-wins
     // ------------------------------------------------------------------
@@ -360,5 +380,83 @@ mod tests {
         let mutation = combined.on_context(&ctx).await;
         assert!(mutation.messages.is_some());
         assert!(mutation.messages.unwrap().is_empty());
+    }
+
+    // ── configurable hook_timeout_ms ──
+
+    use crate::hook::timeout::with_timeout_from;
+
+    /// Dispatcher that sleeps before responding, used to exercise the timeout path.
+    struct SlowDispatcher {
+        delay: std::time::Duration,
+    }
+
+    #[async_trait]
+    impl HookDispatcher for SlowDispatcher {
+        async fn on_tool_call(&self, _ctx: &ToolCallCtx) -> (HookDecision, ToolCallMutation) {
+            tokio::time::sleep(self.delay).await;
+            (HookDecision::Continue, ToolCallMutation::default())
+        }
+
+        fn hook_timeout_ms(&self) -> u64 {
+            // Self-reported timeout — used by `with_timeout_from` to bound the call.
+            50
+        }
+    }
+
+    #[tokio::test]
+    async fn test_default_hook_timeout_ms_is_500() {
+        // Trait default impl returns 500ms — user-provided dispatchers get
+        // this for free without any changes.
+        let passthrough = PassThroughDispatcher;
+        assert_eq!(passthrough.hook_timeout_ms(), 500);
+    }
+
+    #[tokio::test]
+    async fn test_with_timeout_from_uses_dispatcher_timeout() {
+        // SlowDispatcher reports 50ms via hook_timeout_ms(); its on_tool_call
+        // sleeps for 200ms. with_timeout_from should fire and return the default.
+        let slow = SlowDispatcher {
+            delay: std::time::Duration::from_millis(200),
+        };
+        let default = (HookDecision::Continue, ToolCallMutation::default());
+        let ctx = ToolCallCtx::new("t1", "s1", "tool", "tc1");
+
+        let (decision, mutation) = with_timeout_from(
+            &slow,
+            slow.on_tool_call(&ctx),
+            default,
+            "on_tool_call",
+        )
+        .await;
+
+        // Default returned because the dispatcher took longer than its self-reported timeout.
+        assert!(matches!(decision, HookDecision::Continue));
+        // Mutation is the default value (empty), confirming the default was returned.
+        assert!(mutation.input.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_with_timeout_from_succeeds_when_within_timeout() {
+        // Same dispatcher, but the sleep (50ms) is within its reported timeout (50ms).
+        // We use a dispatcher whose sleep matches its reported timeout exactly.
+        struct ExactFitDispatcher;
+        #[async_trait]
+        impl HookDispatcher for ExactFitDispatcher {
+            async fn on_tool_call(&self, _ctx: &ToolCallCtx) -> (HookDecision, ToolCallMutation) {
+                // No sleep — fast enough to not exceed the default 500ms timeout.
+                (HookDecision::Continue, ToolCallMutation::default())
+            }
+        }
+
+        let d = ExactFitDispatcher;
+        let ctx = ToolCallCtx::new("t1", "s1", "tool", "tc1");
+        let default = (HookDecision::Block {
+            reason: "should not appear".into(),
+        }, ToolCallMutation::default());
+
+        let (decision, _) = with_timeout_from(&d, d.on_tool_call(&ctx), default, "on_tool_call").await;
+        // Real result (Continue), not the default (Block).
+        assert!(matches!(decision, HookDecision::Continue));
     }
 }
