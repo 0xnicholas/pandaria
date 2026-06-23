@@ -243,7 +243,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | Session 持久化 schema | ✅ 已实现（PostgreSQL adapter + Redis adapter，支持 auto-restore + 增量保存 `append_entries`） |
 | LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral/DeepSeek + Bedrock feature-gated） |
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST） |
-| tenant crate | 🟡 核心功能已实现（并发配额、token/tool call 计量、session 生命周期） |
+| tenant crate | ✅ 核心功能已实现（并发配额、token/tool call 计量、session 生命周期、后台过期清理任务）。`SessionStore::cleanup_expired_sessions` 在 agent-core trait + PostgreSQL/Redis adapter 全部落地，integration tests 已通过 |
 | Memory 系统 | ✅ MemoryStore trait + MemoryHookDispatcher + Conversation Formatter + `EmeraldMemoryStore` HTTP adapter（`agent-core/src/memory/emerald.rs`，7 单元测试通过） |
 | observability crate | ❌ 已删除（v0.1.3）。sanitize 移至 agent-core，metrics/tracing 暂无需求 |
 | api-gateway | ✅ 核心功能已实现（REST API + SSE + HMAC 认证 + 限流 + persist store 接入 + Squad streaming SSE endpoint）。E2E 测试矩阵 9 个 suite 全部通过 |
@@ -257,7 +257,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | pawbun-toolkit（Agent 工具抽象） | ✅ 已实现（Tool trait、ToolKit registry、MCP client adapter、async tool 支持） |
 | pawbun-files（多模态文件处理） | ✅ 已实现（text/image/PDF/audio/video、Local/URL/Bytes source、OpenAI/Anthropic/Gemini/Azure format） |
 | pawbun-mcp-server（MCP 协议适配） | ✅ 已实现（stdio + SSE transport、toolkit 桥接、file loader 集成） |
-| tavern（Agent Team 编排层） | 🟡 核心组件已实现（WorkflowEngine/SquadEngine、StepExecutor、EventStore + PG/SQLite/Memory backend、replay、DAG 校验、Webhook、Timer、Agent Team 类型系统（Team/Squad/Role/Mission/Handoff/TeamContext）、SquadEngine（DAG + Hierarchical）、PandariaAgentExecutor（agent-core 桥接：usage 计量、execute_stream、全 skill 类型工具化）、SquadEngine 真流式输出（run_stream + StreamHandle + SSE 端点 + 11 个 SquadEvent→ServerEvent 映射测试））。下一阶段：session cache 淘汰策略 |
+| tavern（Agent Team 编排层） | 🟡 核心组件已实现（WorkflowEngine/SquadEngine、StepExecutor、EventStore + PG/SQLite/Memory backend、replay、DAG 校验、Webhook、Timer、Agent Team 类型系统（Team/Squad/Role/Mission/Handoff/TeamContext）、SquadEngine（DAG + Hierarchical）、PandariaAgentExecutor（agent-core 桥接：usage 计量、execute_stream、全 skill 类型工具化）、SquadEngine 真流式输出（run_stream + StreamHandle + SSE 端点 + 11 个 SquadEvent→ServerEvent 映射测试）、SessionCache（LRU + idle timeout + 后台清理）已替代原 HashMap 并配套 integration tests）。持续迭代中 |
 | Circuit Breaker（LLM 调用熔断） | ✅ 已实现（agent-core/src/circuit_breaker.rs，Closed→Open→HalfOpen 状态机） |
 | CombinedDispatcher（Hook 组合） | ✅ 已实现（agent-core/src/hook/combined.rs，多 HookDispatcher 链式组合） |
 | Hook 超时保护 | ✅ 已实现（agent-core/src/hook/timeout.rs，panic 捕获 + 超时兜底） |
