@@ -37,8 +37,20 @@ pub struct RequestHandler {
     server_info: ServerInfo,
     capabilities: Value,
     protocol_version: String,
-    /// TODO: wire request_timeout wrapping into handle() for SSE/stdio transports.
-    #[allow(dead_code)]
+    /// Per-request timeout in milliseconds.
+    ///
+    /// When set, bounds the wall-clock time of a single `tools/call` request by
+    /// dispatching tool execution through [`ToolKit::execute_with_timeout`].
+    /// In practice this covers the only non-trivial work in `handle()` — other
+    /// paths (initialize, tools/list, JSON parsing) complete in microseconds.
+    ///
+    /// Applies to both SSE and stdio transports since both route through
+    /// `handle()`.
+    ///
+    /// Note: [`ToolKit::execute_with_timeout`] does not forcibly kill a hanging
+    /// tool; the worker thread continues running in the background after the
+    /// timeout error is returned. Cooperative cancellation requires a separate
+    /// change to the `Tool` trait.
     request_timeout_ms: Option<u64>,
     initialized: bool,
 }
@@ -157,7 +169,12 @@ impl RequestHandler {
             .map(|v| v.to_string())
             .unwrap_or_default();
 
-        match self.toolkit.execute(&params.name, &input_str) {
+        let exec_result = match self.request_timeout_ms {
+            Some(ms) => self.toolkit.execute_with_timeout(&params.name, &input_str, ms),
+            None => self.toolkit.execute(&params.name, &input_str),
+        };
+
+        match exec_result {
             Ok(result) => {
                 let call_result = CallToolResult {
                     content: vec![ToolContent::Text {
@@ -171,6 +188,9 @@ impl RequestHandler {
                 let (code, msg) = match &e {
                     pawbun_toolkit::ToolError::NotFound(_) => {
                         (-32602, format!("Tool not found: {e}"))
+                    }
+                    pawbun_toolkit::ToolError::Timeout(ms) => {
+                        (-32003, format!("Request timed out after {ms}ms"))
                     }
                     _ => (-32603, e.to_string()),
                 };
@@ -409,5 +429,99 @@ mod tests {
         let resp = h.handle(req);
         // After init, unknown methods get -32601
         assert_eq!(resp.error.unwrap().code, -32601);
+    }
+
+    // ── request_timeout ──
+
+    /// A tool that sleeps before returning, used to exercise the timeout path.
+    #[derive(Debug)]
+    struct SlowTool {
+        delay: std::time::Duration,
+    }
+
+    impl Tool for SlowTool {
+        fn name(&self) -> &str {
+            "slow"
+        }
+        fn description(&self) -> &str {
+            "Sleeps before returning."
+        }
+        fn parameters(&self) -> Cow<'static, [ToolParameter]> {
+            Cow::Borrowed(&[])
+        }
+        fn execute(&self, _input: &str) -> Result<ToolResult, ToolError> {
+            std::thread::sleep(self.delay);
+            Ok(ToolResult {
+                success: true,
+                content: "done".into(),
+                metadata: None,
+                elapsed_ms: None,
+            })
+        }
+    }
+
+    fn make_handler_with_timeout(tool: Box<dyn Tool>, timeout_ms: Option<u64>) -> RequestHandler {
+        let mut toolkit = ToolKit::new();
+        toolkit.register(tool);
+        RequestHandler::new(
+            toolkit,
+            ServerInfo {
+                name: "test".into(),
+                version: "0.1.0".into(),
+            },
+            json!({"tools": {}}),
+            "2024-11-05".into(),
+            timeout_ms,
+        )
+    }
+
+    #[test]
+    fn test_request_timeout_returns_error_response() {
+        let mut h = make_handler_with_timeout(
+            Box::new(SlowTool {
+                delay: std::time::Duration::from_millis(300),
+            }),
+            Some(50),
+        );
+        do_initialize(&mut h);
+
+        let req = JsonRpcRequest::new(
+            7i64,
+            "tools/call",
+            Some(json!({"name": "slow", "arguments": {}})),
+        );
+        let resp = h.handle(req);
+        assert!(resp.is_error(), "expected timeout error, got {resp:?}");
+        let err = resp.error.unwrap();
+        // -32003 = JSON-RPC server-defined error (request timeout)
+        assert_eq!(err.code, -32003);
+        assert!(
+            err.message.contains("50") || err.message.to_lowercase().contains("timeout"),
+            "error message should reference timeout: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_no_request_timeout_means_no_enforcement() {
+        let mut h = make_handler_with_timeout(
+            Box::new(SlowTool {
+                delay: std::time::Duration::from_millis(50),
+            }),
+            None,
+        );
+        do_initialize(&mut h);
+
+        let req = JsonRpcRequest::new(
+            8i64,
+            "tools/call",
+            Some(json!({"name": "slow", "arguments": {}})),
+        );
+        let resp = h.handle(req);
+        assert!(
+            resp.error.is_none(),
+            "no timeout configured — tool should succeed: {:?}",
+            resp.error
+        );
     }
 }
