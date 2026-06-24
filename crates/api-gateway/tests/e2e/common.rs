@@ -63,11 +63,14 @@ pub async fn build_test_app_with_store_and_compaction(
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["gpt-4".to_string()],
         compaction_config,
         agent_space: agent_core::AgentSpace::default(),
         hook_config: agent_core::HookConfig::default(),
         memory_store: None,
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
         tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
@@ -270,9 +273,7 @@ pub async fn ensure_test_containers() {
         .unwrap_or_else(|_| "redis://:redis@localhost:16379".to_string());
 
     let pg_ok = sqlx::PgPool::connect(&pg_url).await.is_ok();
-    let redis_ok = redis::Client::open(redis_url.as_str())
-        .map(|_| ())
-        .is_ok();
+    let redis_ok = redis::Client::open(redis_url.as_str()).map(|_| ()).is_ok();
 
     if !pg_ok || !redis_ok {
         panic!(
@@ -317,8 +318,8 @@ impl AspectusMock {
     pub async fn mock_active_tenant(&self, tenant_id: &str) {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/introspect"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "active": true,
                     "tenant_id": tenant_id,
                     "user_id": "test-user",
@@ -331,22 +332,18 @@ impl AspectusMock {
                             "cpu_time_budget_ms_per_day": 3600000
                         }
                     }
-                }),
-            ))
+                })),
+            )
             .mount(&self.server)
             .await;
     }
 
     /// Mock a successful introspection with custom quota.
-    pub async fn mock_tenant_with_quota(
-        &self,
-        tenant_id: &str,
-        max_sessions: u32,
-    ) {
+    pub async fn mock_tenant_with_quota(&self, tenant_id: &str, max_sessions: u32) {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/introspect"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "active": true,
                     "tenant_id": tenant_id,
                     "user_id": "test-user",
@@ -359,8 +356,8 @@ impl AspectusMock {
                             "cpu_time_budget_ms_per_day": 3600000
                         }
                     }
-                }),
-            ))
+                })),
+            )
             .mount(&self.server)
             .await;
     }
@@ -381,14 +378,14 @@ impl AspectusMock {
     pub async fn mock_no_pandaria_quota(&self, tenant_id: &str) {
         wiremock::Mock::given(wiremock::matchers::method("POST"))
             .and(wiremock::matchers::path("/introspect"))
-            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
-                serde_json::json!({
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
                     "active": true,
                     "tenant_id": tenant_id,
                     "user_id": "test-user",
                     "scope": "pandaria:session:create",
-                }),
-            ))
+                })),
+            )
             .mount(&self.server)
             .await;
     }
@@ -405,29 +402,29 @@ impl AspectusMock {
     /// Mock introspection that returns different tenants based on the token value.
     /// Takes a map of token → (tenant_id, max_sessions).
     /// Each request's `token` form field is matched against the map keys.
-    pub async fn mock_tenants(
-        &self,
-        tenants: &[(&str, &str, u32)],
-    ) {
+    pub async fn mock_tenants(&self, tenants: &[(&str, &str, u32)]) {
         use std::collections::HashMap;
 
         let responses: HashMap<String, serde_json::Value> = tenants
             .iter()
             .map(|(token, tenant_id, max_sessions)| {
-                (token.to_string(), serde_json::json!({
-                    "active": true,
-                    "tenant_id": tenant_id,
-                    "user_id": "test-user",
-                    "scope": "pandaria:session:create pandaria:session:read",
-                    "quotas": {
-                        "pandaria": {
-                            "max_concurrent_sessions": max_sessions,
-                            "max_tokens_per_day": 1000000,
-                            "max_tool_calls_per_minute": 60,
-                            "cpu_time_budget_ms_per_day": 3600000
+                (
+                    token.to_string(),
+                    serde_json::json!({
+                        "active": true,
+                        "tenant_id": tenant_id,
+                        "user_id": "test-user",
+                        "scope": "pandaria:session:create pandaria:session:read",
+                        "quotas": {
+                            "pandaria": {
+                                "max_concurrent_sessions": max_sessions,
+                                "max_tokens_per_day": 1000000,
+                                "max_tool_calls_per_minute": 60,
+                                "cpu_time_budget_ms_per_day": 3600000
+                            }
                         }
-                    }
-                }))
+                    }),
+                )
             })
             .collect();
 
@@ -474,11 +471,14 @@ pub async fn build_test_app_with_aspectus_url(
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
         hook_config: agent_core::HookConfig::default(),
         memory_store: None,
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
         tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
@@ -521,11 +521,14 @@ async fn build_test_app_with_aspectus_impl(
         media_provider: None,
         media_registry: None,
         http_client: http_client.unwrap_or_else(reqwest::Client::new),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
         hook_config: agent_core::HookConfig::default(),
         memory_store: None,
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
         tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),

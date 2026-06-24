@@ -35,11 +35,14 @@ async fn build_app_with_path_guard(
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: space,
         hook_config,
         memory_store: None,
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     };
     common::build_test_app_with_config(provider, harness_config).await
 }
@@ -112,7 +115,8 @@ async fn test_path_guard_blocks_file_outside_workspace() {
                 .uri("/api/v1/sessions")
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{
+                .body(Body::from(
+                    r#"{
                     "title": "pathguard",
                     "tools": [{
                         "name": "read_file",
@@ -124,13 +128,17 @@ async fn test_path_guard_blocks_file_outside_workspace() {
                             "required": ["path"]
                         }
                     }]
-                }"#))
+                }"#,
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(create.status(), StatusCode::CREATED);
-    let sid = common::json_body(create).await["id"].as_str().unwrap().to_string();
+    let sid = common::json_body(create).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Subscribe SSE
     let sse_app = app.clone();
@@ -201,9 +209,11 @@ async fn test_path_guard_blocks_file_outside_workspace() {
         .await
         .unwrap();
     let msgs = common::json_body(msgs_response).await;
-    let tool_result = msgs.as_array().unwrap().iter().find(|m| {
-        m.get("tool_call_id").is_some() && m.get("details").is_some()
-    });
+    let tool_result = msgs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m.get("tool_call_id").is_some() && m.get("details").is_some());
     assert!(tool_result.is_some(), "expected tool_result in history");
     let details = tool_result.unwrap()["details"].clone();
     assert!(
@@ -218,7 +228,11 @@ async fn test_path_guard_blocks_file_outside_workspace() {
         reason
     );
 
-    assert_eq!(call_count.load(Ordering::SeqCst), 2, "expected 2 LLM calls (tool call + final response)");
+    assert_eq!(
+        call_count.load(Ordering::SeqCst),
+        2,
+        "expected 2 LLM calls (tool call + final response)"
+    );
 }
 
 #[tokio::test]
@@ -229,7 +243,9 @@ async fn test_path_guard_allows_file_inside_workspace() {
     let workspace = space.workspace_for("test-tenant");
     tokio::fs::create_dir_all(&workspace).await.unwrap();
     let safe_file = workspace.join("safe.txt");
-    tokio::fs::write(&safe_file, "hello workspace").await.unwrap();
+    tokio::fs::write(&safe_file, "hello workspace")
+        .await
+        .unwrap();
 
     let mut path_fields = HashMap::new();
     path_fields.insert("read_file".to_string(), vec!["path".to_string()]);
@@ -260,7 +276,8 @@ async fn test_path_guard_allows_file_inside_workspace() {
                 .uri("/api/v1/sessions")
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{
+                .body(Body::from(
+                    r#"{
                     "title": "pathguard-safe",
                     "tools": [{
                         "name": "read_file",
@@ -272,12 +289,16 @@ async fn test_path_guard_allows_file_inside_workspace() {
                             "required": ["path"]
                         }
                     }]
-                }"#))
+                }"#,
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
-    let sid = common::json_body(create).await["id"].as_str().unwrap().to_string();
+    let sid = common::json_body(create).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let sse_app = app.clone();
     let sse_token = token.clone();
@@ -347,9 +368,11 @@ async fn test_path_guard_allows_file_inside_workspace() {
         .await
         .unwrap();
     let msgs = common::json_body(msgs_response).await;
-    let tool_result = msgs.as_array().unwrap().iter().find(|m| {
-        m.get("tool_call_id").is_some() && m.get("details").is_some()
-    });
+    let tool_result = msgs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m.get("tool_call_id").is_some() && m.get("details").is_some());
     assert!(tool_result.is_some(), "expected tool_result in history");
     let details = tool_result.unwrap()["details"].clone();
     assert!(
@@ -406,7 +429,8 @@ data: [DONE]
                 .uri("/api/v1/sessions")
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{
+                .body(Body::from(
+                    r#"{
                     "title": "scan-unknown",
                     "tools": [{
                         "name": "custom_tool",
@@ -418,12 +442,16 @@ data: [DONE]
                             "required": ["target"]
                         }
                     }]
-                }"#))
+                }"#,
+                ))
                 .unwrap(),
         )
         .await
         .unwrap();
-    let sid = common::json_body(create).await["id"].as_str().unwrap().to_string();
+    let sid = common::json_body(create).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let sse_app = app.clone();
     let sse_token = token.clone();
@@ -475,7 +503,10 @@ data: [DONE]
     assert!(tool_done.is_some());
 
     if let api_gateway::types::ServerEvent::ToolCallDone { is_error, .. } = tool_done.unwrap() {
-        assert!(*is_error, "unknown tool with illegal path should be blocked when scan_unknown=true");
+        assert!(
+            *is_error,
+            "unknown tool with illegal path should be blocked when scan_unknown=true"
+        );
     }
 
     // Verify message history contains blocked details
@@ -491,9 +522,11 @@ data: [DONE]
         .await
         .unwrap();
     let msgs = common::json_body(msgs_response).await;
-    let tool_result = msgs.as_array().unwrap().iter().find(|m| {
-        m.get("tool_call_id").is_some() && m.get("details").is_some()
-    });
+    let tool_result = msgs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m.get("tool_call_id").is_some() && m.get("details").is_some());
     assert!(tool_result.is_some(), "expected tool_result in history");
     let details = tool_result.unwrap()["details"].clone();
     assert!(

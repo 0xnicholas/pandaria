@@ -76,11 +76,14 @@ async fn build_app_with_media(
         media_provider,
         media_registry,
         http_client: reqwest::Client::new(),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
         hook_config: agent_core::HarnessConfig::default().hook_config,
         memory_store: None,
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     };
     common::build_test_app_with_config(provider, harness_config).await
 }
@@ -163,7 +166,10 @@ async fn test_media_generation_returns_inline_image() {
         .await
         .unwrap();
     assert_eq!(create.status(), StatusCode::CREATED);
-    let sid = common::json_body(create).await["id"].as_str().unwrap().to_string();
+    let sid = common::json_body(create).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let sse_app = app.clone();
     let sse_token = token.clone();
@@ -236,10 +242,8 @@ async fn test_media_generation_saves_large_image_to_workspace() {
     // Large base64 data (> 1MB raw after decode ≈ > 1.33MB base64 string)
     // Generate ~2MB of base64 data
     let large_bytes = vec![0u8; 2 * 1024 * 1024];
-    let large_base64 = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        &large_bytes,
-    );
+    let large_base64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &large_bytes);
 
     let media_response = ai_provider::media::MediaResponse::Inline {
         data: large_base64,
@@ -279,7 +283,10 @@ async fn test_media_generation_saves_large_image_to_workspace() {
         )
         .await
         .unwrap();
-    let sid = common::json_body(create).await["id"].as_str().unwrap().to_string();
+    let sid = common::json_body(create).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let sse_app = app.clone();
     let sse_token = token.clone();

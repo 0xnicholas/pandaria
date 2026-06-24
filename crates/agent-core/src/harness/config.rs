@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::space::AgentSpace;
+use crate::utils::ssrf::{SharedSsrfPolicy, SsrfPolicy};
 
 /// Default per-hook-call timeout in milliseconds.
 ///
@@ -106,6 +107,10 @@ pub struct HarnessConfig {
     // Shared HTTP client for external tool proxies and webhooks.
     pub http_client: reqwest::Client,
 
+    /// SSRF policy consulted by `HttpProxyTool` and webhook delivery.
+    /// Default-loaded from `PANDARIA_SSRF_ALLOWLIST`. Strict deny by default.
+    pub ssrf_policy: SharedSsrfPolicy,
+
     /// Models available for this runtime (returned in quota queries).
     pub available_models: Vec<String>,
 
@@ -131,6 +136,11 @@ impl std::fmt::Debug for HarnessConfig {
             .field("media_provider", &self.media_provider.is_some())
             .field("media_registry", &self.media_registry.is_some())
             .field("http_client", &self.http_client)
+            .field(
+                "ssrf_allowlist_enabled",
+                &self.ssrf_policy.allowlist_enabled(),
+            )
+            .field("ssrf_allowlist_size", &self.ssrf_policy.allowlist_size())
             .field("available_models", &self.available_models)
             .field("compaction_config", &self.compaction_config)
             .field("agent_space", &self.agent_space)
@@ -212,6 +222,8 @@ impl HarnessConfig {
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_HOOK_TIMEOUT_MS);
 
+        let ssrf_policy: SharedSsrfPolicy = Arc::new(SsrfPolicy::from_env());
+
         Self {
             provider,
             default_model,
@@ -221,6 +233,7 @@ impl HarnessConfig {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy,
             available_models,
             compaction_config: crate::harness::compaction::CompactionConfig::new(
                 compaction_enabled,
@@ -247,6 +260,7 @@ impl Default for HarnessConfig {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(SsrfPolicy::strict()),
             available_models: Vec::new(),
             compaction_config: crate::harness::compaction::CompactionConfig::default(),
             agent_space: AgentSpace::default(),

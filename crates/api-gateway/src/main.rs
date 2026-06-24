@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 4. Tenant Manager ---
     let tenant_manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config.clone()),
     );
 
     // --- 5. Server Config + Aspectus ---
@@ -56,7 +56,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?);
 
     // --- 6. Tavern Workflow Engine ---
-    let tavern_runtime = Arc::new(tavern_comp::AgentRuntime::new());
+    // SSRF policy: reuse the one loaded by HarnessConfig (from
+    // PANDARIA_SSRF_ALLOWLIST). Strict by default; set the env var to allow
+    // specific CIDR ranges and domains (e.g. for pandaria ↔ DayPaw integration).
+    let ssrf_policy = runtime_config.ssrf_policy.clone();
+    let tavern_runtime = Arc::new(tavern_comp::AgentRuntime::new_with_ssrf_policy(
+        ssrf_policy.clone(),
+    ));
     let hero = tavern_comp::TavernHero::new(tavern_runtime);
     let agent_config_dir = std::path::Path::new("./configs/agents");
     if agent_config_dir.exists()
@@ -73,7 +79,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::error!("failed to load workflow configs: {}", e);
     }
     let workflow_registry = Arc::new(tokio::sync::RwLock::new(workflow_registry));
-    let event_store: Arc<dyn tavern_comp::EventStore> = Arc::new(tavern_comp::MemoryEventStore::new());
+    let event_store: Arc<dyn tavern_comp::EventStore> =
+        Arc::new(tavern_comp::MemoryEventStore::new());
     let tool_registry = tavern_core::ToolRegistry::new();
     tool_registry.register(
         "web_search".into(),
@@ -93,6 +100,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  pandaria-server ready");
     println!("  bind: {}", config.bind_addr);
     println!("  auth:  Aspectus ({})", aspectus_config.base_url);
+    println!(
+        "  ssrf:  allowlist_enabled={} entries={}",
+        ssrf_policy.allowlist_enabled(),
+        ssrf_policy.allowlist_size(),
+    );
     println!("========================================");
 
     serve(state, Some(tavern_state)).await

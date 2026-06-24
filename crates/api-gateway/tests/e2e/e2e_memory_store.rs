@@ -31,11 +31,14 @@ async fn test_memory_store_remember_on_turn() {
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
         hook_config: agent_core::HookConfig::default(),
         memory_store: Some(memory_store.clone()),
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     };
     let app = common::build_test_app_with_config(provider.clone(), harness_config).await;
 
@@ -91,8 +94,14 @@ async fn test_memory_store_remember_on_turn() {
         session_started_at: std::time::SystemTime::now(),
     };
     let results = memory_store.recall(&mem_ctx, "remember").await.unwrap();
-    assert!(!results.is_empty(), "memory should contain the turn content");
-    assert!(results[0].contains("remember"), "memory content should include user message");
+    assert!(
+        !results.is_empty(),
+        "memory should contain the turn content"
+    );
+    assert!(
+        results[0].contains("remember"),
+        "memory content should include user message"
+    );
 }
 
 /// End-to-end test: Pandaria runtime → MemoryHookDispatcher → EmeraldMemoryStore.
@@ -128,11 +137,14 @@ async fn test_memory_store_emerald_persistence_e2e() {
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
         hook_config: agent_core::HookConfig::default(),
         memory_store: Some(memory_store.clone()),
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     };
     let app = common::build_test_app_with_config(provider.clone(), harness_config).await;
 
@@ -153,7 +165,10 @@ async fn test_memory_store_emerald_persistence_e2e() {
         .await
         .unwrap();
     assert_eq!(create.status(), StatusCode::CREATED);
-    let sid = common::json_body(create).await["id"].as_str().unwrap().to_string();
+    let sid = common::json_body(create).await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // Send message
     let send = app
@@ -198,5 +213,8 @@ async fn test_memory_store_emerald_persistence_e2e() {
         }
     }
 
-    assert!(found, "Pandaria runtime turn content should be persisted in Emerald");
+    assert!(
+        found,
+        "Pandaria runtime turn content should be persisted in Emerald"
+    );
 }

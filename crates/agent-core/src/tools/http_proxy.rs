@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::AgentError;
 use crate::types::{AgentTool, AgentToolProgressUpdate, AgentToolResult};
-use crate::utils::ssrf::is_internal_endpoint;
+use crate::utils::ssrf::SharedSsrfPolicy;
 
 /// Configuration for an external HTTP tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,21 +45,29 @@ pub struct HttpProxyTool {
     tenant_id: String,
     session_id: String,
     client: reqwest::Client,
+    ssrf_policy: SharedSsrfPolicy,
 }
 
 impl HttpProxyTool {
     /// Create a new `HttpProxyTool`.
+    ///
+    /// `ssrf_policy` is consulted on each `execute()` call. Use
+    /// [`SsrfPolicy::strict`] for the default deny-all-internal behavior, or
+    /// [`SsrfPolicy::from_env`] / [`SsrfPolicy::from_csv`] to allow specific
+    /// CIDR ranges and domains (e.g. for service-to-service integrations).
     pub fn new(
         config: ToolConfig,
         tenant_id: String,
         session_id: String,
         client: reqwest::Client,
+        ssrf_policy: SharedSsrfPolicy,
     ) -> Self {
         Self {
             config,
             tenant_id,
             session_id,
             client,
+            ssrf_policy,
         }
     }
 }
@@ -107,8 +115,8 @@ impl AgentTool for HttpProxyTool {
         on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
         signal: CancellationToken,
     ) -> Result<AgentToolResult, AgentError> {
-        // 1. SSRF guard
-        if is_internal_endpoint(&self.config.endpoint) {
+        // 1. SSRF guard (uses injected policy)
+        if self.ssrf_policy.is_internal_endpoint(&self.config.endpoint) {
             return Ok(AgentToolResult {
                 content: vec![ai_provider::Content::Text {
                     text: "SSRF: internal endpoint forbidden".into(),
@@ -229,10 +237,15 @@ impl HttpProxyTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::ssrf::SsrfPolicy;
     use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_tool(endpoint: String) -> HttpProxyTool {
+        make_tool_with_policy(endpoint, std::sync::Arc::new(SsrfPolicy::strict()))
+    }
+
+    fn make_tool_with_policy(endpoint: String, policy: SharedSsrfPolicy) -> HttpProxyTool {
         HttpProxyTool::new(
             ToolConfig {
                 name: "test_tool".into(),
@@ -250,6 +263,7 @@ mod tests {
             "tenant-1".into(),
             "session-1".into(),
             reqwest::Client::new(),
+            policy,
         )
     }
 
@@ -270,6 +284,26 @@ mod tests {
 
         assert!(result.is_error);
         assert_eq!(content_text(&result), "SSRF: internal endpoint forbidden");
+    }
+
+    #[tokio::test]
+    async fn test_ssrf_allowed_via_policy() {
+        // Same private IP, but allowlist includes the CIDR — should NOT be blocked.
+        let policy: SharedSsrfPolicy =
+            std::sync::Arc::new(SsrfPolicy::from_csv("10.0.0.0/8").unwrap());
+        let tool = make_tool_with_policy("http://10.0.0.1:9999/invoke".into(), policy);
+        let result = tool
+            .execute(
+                "call_001",
+                serde_json::json!({}),
+                None,
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        // Will get a connection error (no server), but should NOT be SSRF-blocked.
+        assert!(result.is_error);
+        assert!(!content_text(&result).contains("SSRF"));
     }
 
     #[tokio::test]

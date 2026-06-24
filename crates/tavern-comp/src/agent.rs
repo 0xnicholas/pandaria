@@ -41,7 +41,10 @@ fn default_tool_timeout() -> u64 {
 
 /// 内置工具 handler 类型。
 pub type NativeToolHandler = Arc<
-    dyn Fn(Value) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, AgentError>> + Send>>
+    dyn Fn(
+            Value,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, AgentError>> + Send>>
         + Send
         + Sync,
 >;
@@ -62,6 +65,10 @@ pub struct AgentRuntime {
     native_tools: RwLock<HashMap<String, NativeTool>>,
     /// LLM provider（None = 测试模式，execute 返回错误）
     provider: Arc<dyn ai_provider::LlmProvider>,
+    /// SSRF policy consulted by HttpProxyTool.
+    /// Default: strict deny-all-internal. Override via
+    /// [`AgentRuntime::new_with_ssrf_policy`] in production code.
+    ssrf_policy: std::sync::Arc<agent_core::utils::ssrf::SsrfPolicy>,
 }
 
 impl Default for AgentRuntime {
@@ -72,24 +79,54 @@ impl Default for AgentRuntime {
 
 impl AgentRuntime {
     /// 创建运行时（直接模式，使用 RouterProvider 自动路由 LLM provider）。
+    /// 默认 SSRF policy = strict（拒绝所有内网）。
     pub fn new() -> Self {
         Self {
             native_tools: RwLock::new(HashMap::new()),
             provider: Arc::new(ai_provider::RouterProvider::new()),
+            ssrf_policy: std::sync::Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         }
     }
 
     /// 创建运行时，使用自定义 provider（测试用）。
+    /// 默认 SSRF policy = strict。
     pub fn new_with_provider(provider: Arc<dyn ai_provider::LlmProvider>) -> Self {
         Self {
             native_tools: RwLock::new(HashMap::new()),
             provider,
+            ssrf_policy: std::sync::Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
+        }
+    }
+
+    /// 生产用：注入从 env 解析的 SSRF policy（允许特定内网 CIDR / 域名）。
+    pub fn new_with_ssrf_policy(
+        ssrf_policy: std::sync::Arc<agent_core::utils::ssrf::SsrfPolicy>,
+    ) -> Self {
+        Self {
+            native_tools: RwLock::new(HashMap::new()),
+            provider: Arc::new(ai_provider::RouterProvider::new()),
+            ssrf_policy,
+        }
+    }
+
+    /// 生产用：注入 provider + ssrf_policy。
+    pub fn new_with_provider_and_ssrf_policy(
+        provider: Arc<dyn ai_provider::LlmProvider>,
+        ssrf_policy: std::sync::Arc<agent_core::utils::ssrf::SsrfPolicy>,
+    ) -> Self {
+        Self {
+            native_tools: RwLock::new(HashMap::new()),
+            provider,
+            ssrf_policy,
         }
     }
 
     /// 注册内置工具。
     pub async fn register_native_tool(&self, tool: NativeTool) {
-        self.native_tools.write().await.insert(tool.name.clone(), tool);
+        self.native_tools
+            .write()
+            .await
+            .insert(tool.name.clone(), tool);
     }
 
     /// 执行 Agent 任务。
@@ -104,7 +141,8 @@ impl AgentRuntime {
         model: &str,
         tools: &[ToolDef],
     ) -> Result<String, AgentError> {
-        self.execute_direct(agent_id, task, system_prompt, model, tools).await
+        self.execute_direct(agent_id, task, system_prompt, model, tools)
+            .await
     }
 
     /// 直接模式：通过 agent-core 执行任务（无 HTTP、纯函数调用）。
@@ -122,14 +160,13 @@ impl AgentRuntime {
         model: &str,
         tools: &[ToolDef],
     ) -> Result<String, AgentError> {
-        use std::sync::Arc;
-        use std::time::SystemTime;
         use agent_core::{
-            AgentLoop, AgentLoopConfig,
-            hook::default_dispatcher::DefaultHookDispatcher,
+            AgentLoop, AgentLoopConfig, hook::default_dispatcher::DefaultHookDispatcher,
             prompt::PromptBuilder,
         };
         use ai_provider::{Content, Message, UserMessage};
+        use std::sync::Arc;
+        use std::time::SystemTime;
         use tokio_util::sync::CancellationToken;
         use uuid::Uuid;
 
@@ -205,9 +242,11 @@ impl AgentRuntime {
         remote_tools: &[ToolDef],
         native_tools: &HashMap<String, NativeTool>,
     ) -> Vec<agent_core::AgentToolRef> {
-        use std::sync::Arc;
-        use agent_core::tools::{AgentTool, AgentToolRef, AgentToolResult, AgentToolProgressUpdate, ToolExecutionMode};
         use agent_core::tools::http_proxy::{HttpProxyTool, ToolConfig};
+        use agent_core::tools::{
+            AgentTool, AgentToolProgressUpdate, AgentToolRef, AgentToolResult, ToolExecutionMode,
+        };
+        use std::sync::Arc;
         use tokio_util::sync::CancellationToken;
 
         let mut refs: Vec<AgentToolRef> = Vec::new();
@@ -228,10 +267,18 @@ impl AgentRuntime {
 
             #[async_trait::async_trait]
             impl AgentTool for NativeToolAdapter {
-                fn name(&self) -> &str { &self.name }
-                fn description(&self) -> &str { &self.description }
-                fn parameters(&self) -> serde_json::Value { self.parameters.clone() }
-                fn execution_mode(&self) -> ToolExecutionMode { ToolExecutionMode::Sequential }
+                fn name(&self) -> &str {
+                    &self.name
+                }
+                fn description(&self) -> &str {
+                    &self.description
+                }
+                fn parameters(&self) -> serde_json::Value {
+                    self.parameters.clone()
+                }
+                fn execution_mode(&self) -> ToolExecutionMode {
+                    ToolExecutionMode::Sequential
+                }
 
                 async fn execute(
                     &self,
@@ -277,11 +324,7 @@ impl AgentRuntime {
         let client = reqwest::Client::new();
         for t in remote_tools {
             let endpoint = if t.endpoint.is_empty() {
-                format!(
-                    "{}/api/tools/{}",
-                    public_url.trim_end_matches('/'),
-                    t.id
-                )
+                format!("{}/api/tools/{}", public_url.trim_end_matches('/'), t.id)
             } else {
                 t.endpoint.clone()
             };
@@ -297,7 +340,11 @@ impl AgentRuntime {
                 parameters: t.parameters.clone(),
                 endpoint,
                 timeout_ms: Some(t.timeout_ms),
-                headers: if headers.is_empty() { None } else { Some(headers) },
+                headers: if headers.is_empty() {
+                    None
+                } else {
+                    Some(headers)
+                },
             };
 
             let proxy = HttpProxyTool::new(
@@ -305,6 +352,7 @@ impl AgentRuntime {
                 "tavern".into(),
                 uuid::Uuid::new_v4().to_string(),
                 client.clone(),
+                self.ssrf_policy.clone(),
             );
             refs.push(Arc::new(proxy));
         }
@@ -319,14 +367,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_direct_agent_loop_integration_poc() {
-        use std::sync::Arc;
-        use std::time::SystemTime;
+        use agent_core::{
+            AgentLoop, AgentLoopConfig, hook::default_dispatcher::DefaultHookDispatcher,
+        };
         use ai_provider::test_utils::MockProvider;
         use ai_provider::{AssistantMessage, Content, Message, UserMessage};
-        use agent_core::{
-            AgentLoop, AgentLoopConfig,
-            hook::default_dispatcher::DefaultHookDispatcher,
-        };
+        use std::sync::Arc;
+        use std::time::SystemTime;
         use tokio_util::sync::CancellationToken;
 
         // 1. Create mock LLM provider — returns "Hello from Pandaria agent-core!"
@@ -358,7 +405,10 @@ mod tests {
         // 4. Verify direct in-process call succeeds (no HTTP involved)
         assert!(result.is_ok(), "AgentLoop.run() failed: {:?}", result.err());
         let messages = result.unwrap();
-        assert!(!messages.is_empty(), "Expected at least one response message");
+        assert!(
+            !messages.is_empty(),
+            "Expected at least one response message"
+        );
 
         // Find the assistant message with our expected text
         let found = messages.iter().any(|m| {
@@ -375,8 +425,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_tool_adapter_conversion() {
-        use std::sync::Arc;
         use ai_provider::test_utils::MockProvider;
+        use std::sync::Arc;
 
         // Create runtime with mock provider
         let mock = Arc::new(MockProvider::text("ok"));
@@ -407,7 +457,11 @@ mod tests {
         let agent_tools = runtime.build_agent_tool_refs(&[remote_tool], &native);
         drop(native);
 
-        assert_eq!(agent_tools.len(), 2, "Expected 2 tools (1 native + 1 remote)");
+        assert_eq!(
+            agent_tools.len(),
+            2,
+            "Expected 2 tools (1 native + 1 remote)"
+        );
         assert_eq!(agent_tools[0].name(), "echo");
         assert_eq!(agent_tools[1].name(), "search");
     }

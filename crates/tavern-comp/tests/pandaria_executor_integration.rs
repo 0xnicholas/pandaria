@@ -7,8 +7,7 @@ use std::sync::Arc;
 use ai_provider::test_utils::MockProvider;
 use async_trait::async_trait;
 use tavern_comp::{
-    AgentResolver, HandoffMode, Mission, PandariaAgentExecutor, Role,
-    SquadEngine, Team, Visibility,
+    AgentResolver, HandoffMode, Mission, PandariaAgentExecutor, Role, SquadEngine, Team, Visibility,
 };
 use tavern_core::{AgentConfig, ModelConfig, PlanningConfig, Process};
 
@@ -61,6 +60,7 @@ fn make_harness_config(provider: Arc<MockProvider>) -> agent_core::HarnessConfig
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["mock/mock-v1".to_string()],
         compaction_config: agent_core::CompactionConfig {
             enabled: false,
@@ -80,7 +80,9 @@ fn make_harness_config(provider: Arc<MockProvider>) -> agent_core::HarnessConfig
 #[tokio::test]
 async fn single_mission_smoke() {
     // Provider returns a fixed response to the LLM call
-    let provider = Arc::new(MockProvider::text("research complete: AI is transformative"));
+    let provider = Arc::new(MockProvider::text(
+        "research complete: AI is transformative",
+    ));
 
     let agent = make_agent("researcher", "You are a researcher.");
     let resolver = Arc::new(HashMapAgentResolver::new(vec![agent]));
@@ -123,10 +125,7 @@ async fn single_mission_smoke() {
         .await
         .expect("deploy squad");
 
-    let result = engine
-        .run(&team, &mut squad)
-        .await
-        .expect("run squad");
+    let result = engine.run(&team, &mut squad).await.expect("run squad");
 
     assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
     assert_eq!(
@@ -210,10 +209,7 @@ async fn two_mission_sequential_pipeline() {
         .await
         .expect("deploy squad");
 
-    let result = engine
-        .run(&team, &mut squad)
-        .await
-        .expect("run squad");
+    let result = engine.run(&team, &mut squad).await.expect("run squad");
 
     assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
     assert_eq!(result.outputs.get("notes").unwrap(), "raw research notes");
@@ -321,16 +317,19 @@ async fn dag_parallel_branches() {
         .await
         .expect("deploy squad");
 
-    let result = engine
-        .run(&team, &mut squad)
-        .await
-        .expect("run squad");
+    let result = engine.run(&team, &mut squad).await.expect("run squad");
 
     assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
     assert_eq!(result.outputs.get("root_out").unwrap(), "root result");
     // Parallel branches: order is non-deterministic, so just check both exist
-    assert!(result.outputs.get("left_out").is_some(), "left_out should be present");
-    assert!(result.outputs.get("right_out").is_some(), "right_out should be present");
+    assert!(
+        result.outputs.get("left_out").is_some(),
+        "left_out should be present"
+    );
+    assert!(
+        result.outputs.get("right_out").is_some(),
+        "right_out should be present"
+    );
     assert_eq!(result.outputs.get("final").unwrap(), "merged result");
 }
 
@@ -394,10 +393,7 @@ async fn session_reuse_across_missions() {
         .await
         .expect("deploy squad");
 
-    let result = engine
-        .run(&team, &mut squad)
-        .await
-        .expect("run squad");
+    let result = engine.run(&team, &mut squad).await.expect("run squad");
 
     assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
     assert_eq!(result.outputs.get("out1").unwrap(), "first result");
@@ -405,7 +401,10 @@ async fn session_reuse_across_missions() {
 
     // Verify session was cached (same role, same model = one cache entry)
     let session_count = executor.session_count();
-    assert_eq!(session_count, 1, "expected one cached session for worker:mock/mock-v1");
+    assert_eq!(
+        session_count, 1,
+        "expected one cached session for worker:mock/mock-v1"
+    );
 }
 
 /// Model override creates a separate session.
@@ -446,10 +445,7 @@ async fn model_override_creates_separate_session() {
         memory: Default::default(),
     };
 
-    let resolver = Arc::new(HashMapAgentResolver::new(vec![
-        agent_default,
-        agent_claude,
-    ]));
+    let resolver = Arc::new(HashMapAgentResolver::new(vec![agent_default, agent_claude]));
 
     let harness_config = make_harness_config(provider);
     let executor = Arc::new(PandariaAgentExecutor::new(
@@ -509,10 +505,7 @@ async fn model_override_creates_separate_session() {
         .await
         .expect("deploy squad");
 
-    let result = engine
-        .run(&team, &mut squad)
-        .await
-        .expect("run squad");
+    let result = engine.run(&team, &mut squad).await.expect("run squad");
 
     assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
 
@@ -624,13 +617,13 @@ async fn hierarchical_manager_delegates() {
         .await
         .expect("deploy squad");
 
-    let result = engine
-        .run(&team, &mut squad)
-        .await
-        .expect("run squad");
+    let result = engine.run(&team, &mut squad).await.expect("run squad");
 
     assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
-    assert_eq!(result.outputs.get("notes").unwrap(), "research notes about AI");
+    assert_eq!(
+        result.outputs.get("notes").unwrap(),
+        "research notes about AI"
+    );
     assert_eq!(result.outputs.get("article").unwrap(), "final article text");
 }
 
@@ -742,12 +735,12 @@ async fn planning_phase_injects_context() {
         .await
         .expect("deploy squad");
 
-    let result = engine
-        .run(&team, &mut squad)
-        .await
-        .expect("run squad");
+    let result = engine.run(&team, &mut squad).await.expect("run squad");
 
     assert_eq!(result.status, tavern_comp::SquadStatus::Completed);
-    assert_eq!(result.outputs.get("notes").unwrap(), "research notes about AI");
+    assert_eq!(
+        result.outputs.get("notes").unwrap(),
+        "research notes about AI"
+    );
     assert_eq!(result.outputs.get("article").unwrap(), "final article text");
 }

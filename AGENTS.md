@@ -185,11 +185,12 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 
 ### 安全约束
 
-- `tenant_id` 必须在所有 tracing span 和日志中出现，禁止无 tenant 上下文的操作日志。
+- `tenant_id` 必须在所有 tracing span 和日志中出现，禁止无租户上下文的操作日志。
 - 工具执行时的文件系统访问必须经过路径校验（由 `path_guard` 在 `on_tool_call` 中拦截），禁止访问 `AgentSpace::workspace_for(tenant_id)` 以外的路径。
 - 生成型多模态工具（generate_media）的文件输出必须经过 PathGuard 校验，禁止写入 workspace 以外的路径。
 - 媒体生成任务的 tracing span 必须携带 tenant_id 和 session_id。
 - LLM API Key 不得出现在任何日志、tracing span、错误消息或 panic 信息中。
+- 外部 HTTP 工具（`HttpProxyTool`）和 webhook 投递地址必须经 SSRF 策略校验：默认严格拒绝内网地址，可通过 `PANDARIA_SSRF_ALLOWLIST` 显式放行特定 CIDR/域名。
 
 ### 代码规范
 

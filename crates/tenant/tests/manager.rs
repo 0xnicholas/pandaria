@@ -100,7 +100,7 @@ async fn test_manager_create_session() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-            let runtime_config = Arc::new(HarnessConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -109,11 +109,14 @@ async fn test_manager_create_session() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry, runtime_config)
     };
@@ -135,7 +138,7 @@ async fn test_manager_create_session_unknown_tenant() {
     let registry = Arc::new(TenantRegistry::new());
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-            let runtime_config = Arc::new(HarnessConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -144,11 +147,14 @@ async fn test_manager_create_session_unknown_tenant() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry, runtime_config)
     };
@@ -171,7 +177,7 @@ async fn test_manager_list_and_get_session() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-            let runtime_config = Arc::new(HarnessConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -180,11 +186,14 @@ async fn test_manager_list_and_get_session() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry, runtime_config)
     };
@@ -216,7 +225,7 @@ async fn test_manager_send_message() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-            let runtime_config = Arc::new(HarnessConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -225,11 +234,14 @@ async fn test_manager_send_message() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry, runtime_config)
     };
@@ -266,7 +278,7 @@ async fn test_manager_subscribe_events() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-            let runtime_config = Arc::new(HarnessConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -275,11 +287,14 @@ async fn test_manager_subscribe_events() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry, runtime_config)
     };
@@ -330,7 +345,7 @@ async fn test_manager_delete_session_releases_slot() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-            let runtime_config = Arc::new(HarnessConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -339,11 +354,14 @@ async fn test_manager_delete_session_releases_slot() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry.clone(), runtime_config)
     };
@@ -377,7 +395,7 @@ async fn test_manager_interrupt_does_not_deadlock() {
 
     let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
     let manager = {
-            let runtime_config = Arc::new(HarnessConfig {
+        let runtime_config = Arc::new(HarnessConfig {
             provider: provider.clone(),
             default_model: "echo".to_string(),
             default_system_prompt: "You are helpful.".to_string(),
@@ -386,11 +404,14 @@ async fn test_manager_interrupt_does_not_deadlock() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry, runtime_config)
     };
@@ -402,6 +423,108 @@ async fn test_manager_interrupt_does_not_deadlock() {
 
     // Interrupt should complete immediately without needing the actor lock
     manager.interrupt("t1", &info.id).await.unwrap();
+
+    manager.delete_session("t1", &info.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_manager_webhook_internal_blocked() {
+    let _ = tracing_subscriber::fmt().try_init();
+
+    let registry = Arc::new(TenantRegistry::new());
+    let tenant = Tenant::new("t1", TenantQuota::default());
+    registry.register(tenant).unwrap();
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
+    let manager = {
+        let runtime_config = Arc::new(HarnessConfig {
+            provider: provider.clone(),
+            default_model: "echo".to_string(),
+            default_system_prompt: "You are helpful.".to_string(),
+            default_context_window: 128_000,
+            store: None,
+            media_provider: None,
+            media_registry: None,
+            http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
+            available_models: vec!["echo".to_string()],
+            compaction_config: CompactionConfig::default(),
+            agent_space: AgentSpace::default(),
+            hook_config: HookConfig::default(),
+            memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
+        });
+        TenantManagerImpl::new(registry, runtime_config)
+    };
+
+    let params = CreateSessionParams {
+        webhook: Some(tenant::WebhookConfig {
+            url: "http://10.0.0.1/webhook".to_string(),
+            events: vec![],
+            secret: None,
+        }),
+        ..Default::default()
+    };
+
+    let err = manager
+        .create_session("t1", params)
+        .await
+        .expect_err("internal webhook should be blocked by strict SSRF policy");
+    assert!(
+        err.to_string().contains("webhook_url_forbidden"),
+        "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn test_manager_webhook_allowed_via_allowlist() {
+    let _ = tracing_subscriber::fmt().try_init();
+
+    let registry = Arc::new(TenantRegistry::new());
+    let tenant = Tenant::new("t1", TenantQuota::default());
+    registry.register(tenant).unwrap();
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(EchoProvider::new());
+    let manager = {
+        let runtime_config = Arc::new(HarnessConfig {
+            provider: provider.clone(),
+            default_model: "echo".to_string(),
+            default_system_prompt: "You are helpful.".to_string(),
+            default_context_window: 128_000,
+            store: None,
+            media_provider: None,
+            media_registry: None,
+            http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(
+                agent_core::utils::ssrf::SsrfPolicy::from_csv("10.0.0.0/8").unwrap(),
+            ),
+            available_models: vec!["echo".to_string()],
+            compaction_config: CompactionConfig::default(),
+            agent_space: AgentSpace::default(),
+            hook_config: HookConfig::default(),
+            memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
+        });
+        TenantManagerImpl::new(registry, runtime_config)
+    };
+
+    let params = CreateSessionParams {
+        webhook: Some(tenant::WebhookConfig {
+            url: "http://10.0.0.1/webhook".to_string(),
+            events: vec![],
+            secret: None,
+        }),
+        ..Default::default()
+    };
+
+    // Should succeed (webhook listener registers, though delivery will fail at runtime).
+    let info = manager
+        .create_session("t1", params)
+        .await
+        .expect("allowlisted webhook should be permitted");
+    assert_eq!(info.tenant_id, "t1");
 
     manager.delete_session("t1", &info.id).await.unwrap();
 }

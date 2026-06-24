@@ -129,11 +129,14 @@ async fn test_end_to_end_tenant_isolation() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry.clone(), runtime_config)
     };
@@ -208,11 +211,14 @@ async fn test_tenant_session_limit_enforced() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry.clone(), runtime_config)
     };
@@ -249,11 +255,14 @@ async fn test_delete_session_not_found() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry, runtime_config)
     };
@@ -282,11 +291,14 @@ async fn test_shutdown_cleans_all_sessions() {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["echo".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
             hook_config: HookConfig::default(),
             memory_store: None,
+            session_retention_days: 7,
+            session_cleanup_interval_hours: 24,
         });
         TenantManagerImpl::new(registry.clone(), runtime_config)
     };

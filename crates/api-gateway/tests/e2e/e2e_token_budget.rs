@@ -29,11 +29,14 @@ async fn build_app_with_token_budget(
         media_provider: None,
         media_registry: None,
         http_client: reqwest::Client::new(),
+        ssrf_policy: Arc::new(agent_core::utils::ssrf::SsrfPolicy::strict()),
         available_models: vec!["gpt-4".to_string()],
         compaction_config: agent_core::CompactionConfig::default(),
         agent_space: agent_core::AgentSpace::default(),
         hook_config,
         memory_store: None,
+        session_retention_days: 7,
+        session_cleanup_interval_hours: 24,
     };
     common::build_test_app_with_config(provider, harness_config).await
 }
@@ -76,7 +79,9 @@ async fn test_token_budget_does_not_block() {
                 .uri(format!("/api/v1/sessions/{}/messages", sid))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"first"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"first"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -92,7 +97,9 @@ async fn test_token_budget_does_not_block() {
                 .uri(format!("/api/v1/sessions/{}/messages", sid))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"second"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"second"}]}"#,
+                ))
                 .unwrap(),
         )
         .await
@@ -108,7 +115,9 @@ async fn test_token_budget_does_not_block() {
                 .uri(format!("/api/v1/sessions/{}/messages", sid))
                 .header("Authorization", format!("Bearer {}", token))
                 .header("Content-Type", "application/json")
-                .body(Body::from(r#"{"content": [{"type":"text","text":"third"}]}"#))
+                .body(Body::from(
+                    r#"{"content": [{"type":"text","text":"third"}]}"#,
+                ))
                 .unwrap(),
         )
         .await

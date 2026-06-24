@@ -170,6 +170,7 @@ impl SessionBuilder {
                 tenant_id.clone(),
                 session_id.clone(),
                 self.config.http_client.clone(),
+                self.config.ssrf_policy.clone(),
             ));
             let name = proxy.name().to_string();
             if seen.contains(&name) {
@@ -213,11 +214,8 @@ impl SessionBuilder {
         // 2d. Pawbun built-in tools (auto-registered, lowest priority)
         if self.builtin_enabled {
             let workspace = self.resolve_workspace();
-            let pawbun_tools = build_pawbun_tool_refs(
-                &workspace,
-                &self.disabled_tools,
-                &self.config.http_client,
-            );
+            let pawbun_tools =
+                build_pawbun_tool_refs(&workspace, &self.disabled_tools, &self.config.http_client);
             for tool in pawbun_tools {
                 let name = tool.name().to_string();
                 if seen.contains(&name) {
@@ -352,6 +350,7 @@ mod tests {
             media_provider: None,
             media_registry: None,
             http_client: reqwest::Client::new(),
+            ssrf_policy: Arc::new(crate::utils::ssrf::SsrfPolicy::strict()),
             available_models: vec!["gpt-4".to_string()],
             compaction_config: CompactionConfig::default(),
             agent_space: AgentSpace::default(),
@@ -482,7 +481,10 @@ mod tests {
             names.contains(&"directory_list"),
             "expected directory_list tool"
         );
-        assert!(names.contains(&"code_execute"), "expected code_execute tool");
+        assert!(
+            names.contains(&"code_execute"),
+            "expected code_execute tool"
+        );
     }
 
     #[tokio::test]

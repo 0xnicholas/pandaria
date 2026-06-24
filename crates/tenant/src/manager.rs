@@ -287,6 +287,7 @@ impl TenantManagerImpl {
 
     /// Validate external tool endpoints for SSRF and URL format.
     fn validate_external_tool_endpoints(
+        &self,
         tools: &[agent_core::ToolConfig],
     ) -> Result<(), TenantError> {
         for tool_config in tools {
@@ -296,7 +297,11 @@ impl TenantManagerImpl {
                     tool_config.endpoint
                 )));
             }
-            if agent_core::utils::ssrf::is_internal_endpoint(&tool_config.endpoint) {
+            if self
+                .runtime_config
+                .ssrf_policy
+                .is_internal_endpoint(&tool_config.endpoint)
+            {
                 return Err(TenantError::BadRequest(format!(
                     "tool_endpoint_forbidden: {}",
                     tool_config.endpoint
@@ -323,7 +328,11 @@ impl TenantManagerImpl {
                 webhook.url
             )));
         }
-        if agent_core::utils::ssrf::is_internal_endpoint(&webhook.url) {
+        if self
+            .runtime_config
+            .ssrf_policy
+            .is_internal_endpoint(&webhook.url)
+        {
             return Err(TenantError::BadRequest(format!(
                 "webhook_url_forbidden: {}",
                 webhook.url
@@ -420,9 +429,11 @@ impl TenantManager for TenantManagerImpl {
             .reserve_session()?;
         let session_id = Uuid::new_v4();
 
-        Self::validate_external_tool_endpoints(&params.tools)?;
+        self.validate_external_tool_endpoints(&params.tools)?;
 
-        let system_prompt = params.system_prompt.clone()
+        let system_prompt = params
+            .system_prompt
+            .clone()
             .unwrap_or_else(|| self.runtime_config.default_system_prompt.clone());
         let mut built = SessionBuilder::new(&self.runtime_config)
             .tenant_id(tenant_id)
@@ -539,7 +550,11 @@ impl TenantManager for TenantManagerImpl {
         // Cancel the token without holding the actor lock — this allows
         // abort to reach the in-flight LLM stream even while prompt()
         // is running.
-        entry.abort_token.lock().expect("abort_token lock poisoned").cancel();
+        entry
+            .abort_token
+            .lock()
+            .expect("abort_token lock poisoned")
+            .cancel();
 
         warn!(
             tenant_id = %tenant_id,
@@ -592,7 +607,10 @@ impl TenantManager for TenantManagerImpl {
         }
 
         // Cancel any in-flight operation.
-        abort_token.lock().expect("abort_token lock poisoned").cancel();
+        abort_token
+            .lock()
+            .expect("abort_token lock poisoned")
+            .cancel();
 
         // Notify external memory system of session deletion (optional).
         if let Some(ref mem) = self.runtime_config.memory_store {
