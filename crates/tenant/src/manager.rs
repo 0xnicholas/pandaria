@@ -38,6 +38,8 @@ pub struct CreateSessionParams {
     pub builtin_tools_enabled: bool,
     /// Pawbun tool names to exclude.
     pub builtin_tools_disabled: Vec<String>,
+    /// Execution strategy for this session.
+    pub strategy: agent_core::SessionStrategy,
 }
 
 impl Default for CreateSessionParams {
@@ -49,6 +51,7 @@ impl Default for CreateSessionParams {
             webhook: None,
             builtin_tools_enabled: true,
             builtin_tools_disabled: Vec::new(),
+            strategy: agent_core::SessionStrategy::default(),
         }
     }
 }
@@ -393,6 +396,7 @@ impl TenantManagerImpl {
                 original_tools: params.tools.clone(),
                 builtin_tools_enabled: params.builtin_tools_enabled,
                 builtin_tools_disabled: params.builtin_tools_disabled.clone(),
+                strategy: params.strategy.clone(),
             },
         );
 
@@ -445,6 +449,7 @@ impl TenantManager for TenantManagerImpl {
                 params.builtin_tools_enabled,
                 params.builtin_tools_disabled.clone(),
             )
+            .with_strategy(params.strategy.clone())
             .build()
             .await
             .map_err(|e| TenantError::Internal {
@@ -813,6 +818,7 @@ impl TenantManager for TenantManagerImpl {
             webhook: entry.webhook.clone(),
             builtin_tools_enabled: entry.builtin_tools_enabled,
             builtin_tools_disabled: entry.builtin_tools_disabled.clone(),
+            strategy: entry.strategy.clone(),
         };
 
         self.create_session(tenant_id, template).await

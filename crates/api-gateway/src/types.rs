@@ -81,18 +81,40 @@ pub enum ServerEvent {
         error: Option<String>,
     },
 
+    /// Background loop iteration completed successfully.
+    #[serde(rename = "loop_iteration_complete")]
+    LoopIterationComplete {
+        iteration: u32,
+        messages: Vec<serde_json::Value>,
+    },
+
+    /// Background loop iteration failed (loop continues).
+    #[serde(rename = "loop_iteration_error")]
+    LoopIterationError { iteration: u32, error: String },
+
     // ── Squad lifecycle events ──
     #[serde(rename = "squad_started")]
     SquadStarted { squad_id: String, team_id: String },
 
     #[serde(rename = "squad_mission_scheduled")]
-    SquadMissionScheduled { squad_id: String, mission_id: String, attempt: u64 },
+    SquadMissionScheduled {
+        squad_id: String,
+        mission_id: String,
+        attempt: u64,
+    },
 
     #[serde(rename = "squad_mission_started")]
-    SquadMissionStarted { squad_id: String, mission_id: String },
+    SquadMissionStarted {
+        squad_id: String,
+        mission_id: String,
+    },
 
     #[serde(rename = "squad_mission_completed")]
-    SquadMissionCompleted { squad_id: String, mission_id: String, output: serde_json::Value },
+    SquadMissionCompleted {
+        squad_id: String,
+        mission_id: String,
+        output: serde_json::Value,
+    },
 
     #[serde(rename = "squad_mission_failed")]
     SquadMissionFailed {
@@ -112,10 +134,17 @@ pub enum ServerEvent {
     },
 
     #[serde(rename = "squad_mission_waiting_signal")]
-    SquadMissionWaitingSignal { squad_id: String, mission_id: String, signal_name: String },
+    SquadMissionWaitingSignal {
+        squad_id: String,
+        mission_id: String,
+        signal_name: String,
+    },
 
     #[serde(rename = "squad_completed")]
-    SquadCompleted { squad_id: String, outputs: serde_json::Value },
+    SquadCompleted {
+        squad_id: String,
+        outputs: serde_json::Value,
+    },
 
     #[serde(rename = "squad_failed")]
     SquadFailed { squad_id: String, reason: String },
@@ -180,6 +209,9 @@ pub struct CreateSessionRequest {
     /// Built-in Pawbun tools configuration.
     #[serde(default)]
     pub builtin_tools: BuiltinToolsConfig,
+    /// Execution strategy for this session.
+    #[serde(default)]
+    pub strategy: SessionStrategyRequest,
 }
 
 /// Configuration for built-in Pawbun tools auto-registration.
@@ -198,6 +230,172 @@ impl Default for BuiltinToolsConfig {
         Self {
             enabled: true,
             disabled: Vec::new(),
+        }
+    }
+}
+
+/// Execution strategy for a session.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct SessionStrategyRequest {
+    #[serde(default)]
+    pub termination: TerminationStrategyRequest,
+    #[serde(default)]
+    pub rhythm: RhythmStrategyRequest,
+    #[serde(default)]
+    pub context: ContextStrategyRequest,
+}
+
+impl From<SessionStrategyRequest> for agent_core::SessionStrategy {
+    fn from(req: SessionStrategyRequest) -> Self {
+        Self {
+            termination: req.termination.into(),
+            rhythm: req.rhythm.into(),
+            context: req.context.into(),
+        }
+    }
+}
+
+/// Termination strategy.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TerminationStrategyRequest {
+    /// Stop after a single agent run.
+    #[default]
+    Once,
+    /// Verify acceptance criteria after each run.
+    Goal {
+        criteria: Vec<GoalCriterionRequest>,
+        max_attempts: u32,
+        on_exhausted: GoalExhaustedActionRequest,
+    },
+}
+
+impl From<TerminationStrategyRequest> for agent_core::TerminationStrategy {
+    fn from(req: TerminationStrategyRequest) -> Self {
+        match req {
+            TerminationStrategyRequest::Once => Self::Once,
+            TerminationStrategyRequest::Goal {
+                criteria,
+                max_attempts,
+                on_exhausted,
+            } => Self::Goal {
+                criteria: criteria.into_iter().map(Into::into).collect(),
+                max_attempts,
+                on_exhausted: on_exhausted.into(),
+            },
+        }
+    }
+}
+
+/// Acceptance criterion for a Goal strategy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoalCriterionRequest {
+    pub id: String,
+    pub description: String,
+    pub verification: GoalVerificationRequest,
+}
+
+impl From<GoalCriterionRequest> for agent_core::GoalCriterion {
+    fn from(req: GoalCriterionRequest) -> Self {
+        Self {
+            id: req.id,
+            description: req.description,
+            verification: req.verification.into(),
+        }
+    }
+}
+
+/// How a criterion is verified.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GoalVerificationRequest {
+    /// Agent self-assesses via `[CRITERION_RESULT: id: PASS|FAIL]`.
+    SelfAssessment,
+    /// Run a shell command; exit 0 means pass.
+    Command { command: String },
+    /// Check that the assistant response contains the given text.
+    OutputContains { text: String },
+}
+
+impl From<GoalVerificationRequest> for agent_core::GoalVerification {
+    fn from(req: GoalVerificationRequest) -> Self {
+        match req {
+            GoalVerificationRequest::SelfAssessment => Self::SelfAssessment,
+            GoalVerificationRequest::Command { command } => Self::Command { command },
+            GoalVerificationRequest::OutputContains { text } => Self::OutputContains { text },
+        }
+    }
+}
+
+/// What to do when Goal attempts are exhausted.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalExhaustedActionRequest {
+    /// Return an error.
+    #[default]
+    Abort,
+    /// Run one more time with the original task and return the result.
+    ReturnLast,
+}
+
+impl From<GoalExhaustedActionRequest> for agent_core::GoalExhaustedAction {
+    fn from(req: GoalExhaustedActionRequest) -> Self {
+        match req {
+            GoalExhaustedActionRequest::Abort => Self::Abort,
+            GoalExhaustedActionRequest::ReturnLast => Self::ReturnLast,
+        }
+    }
+}
+
+/// Rhythm strategy.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RhythmStrategyRequest {
+    /// Execute immediately, once.
+    #[default]
+    Once,
+    /// Run in the background on a fixed interval.
+    Loop {
+        interval_ms: Option<u64>,
+        max_iterations: Option<u32>,
+    },
+}
+
+impl From<RhythmStrategyRequest> for agent_core::RhythmStrategy {
+    fn from(req: RhythmStrategyRequest) -> Self {
+        match req {
+            RhythmStrategyRequest::Once => Self::Once,
+            RhythmStrategyRequest::Loop {
+                interval_ms,
+                max_iterations,
+            } => Self::Loop {
+                interval: interval_ms.map(std::time::Duration::from_millis),
+                max_iterations,
+            },
+        }
+    }
+}
+
+/// Context strategy.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContextStrategyRequest {
+    /// Retain all session history.
+    #[default]
+    Accumulate,
+    /// Compact before each run, keeping the most recent N entries.
+    Compact { keep_last_n: usize },
+    /// Clear all history before each run.
+    Clear,
+}
+
+impl From<ContextStrategyRequest> for agent_core::ContextStrategy {
+    fn from(req: ContextStrategyRequest) -> Self {
+        match req {
+            ContextStrategyRequest::Accumulate => Self::Accumulate,
+            ContextStrategyRequest::Compact { keep_last_n } => Self::Compact { keep_last_n },
+            ContextStrategyRequest::Clear => Self::Clear,
         }
     }
 }
@@ -363,5 +561,88 @@ mod tests {
         assert_eq!(info.title, Some("test".into()));
         assert_eq!(info.model, "claude");
         assert_eq!(info.context_window, None);
+    }
+
+    #[test]
+    fn test_session_strategy_request_default() {
+        let req: CreateSessionRequest = serde_json::from_str("{}").unwrap();
+        let strategy: agent_core::SessionStrategy = req.strategy.into();
+        assert!(matches!(
+            strategy.termination,
+            agent_core::TerminationStrategy::Once
+        ));
+        assert!(matches!(strategy.rhythm, agent_core::RhythmStrategy::Once));
+        assert!(matches!(
+            strategy.context,
+            agent_core::ContextStrategy::Accumulate
+        ));
+    }
+
+    #[test]
+    fn test_session_strategy_request_goal_loop_clear() {
+        let json = r#"{
+            "strategy": {
+                "termination": {
+                    "type": "goal",
+                    "criteria": [
+                        {
+                            "id": "deploy-ok",
+                            "description": "Deployment healthy",
+                            "verification": {
+                                "type": "command",
+                                "command": "curl -s deploy/status | grep healthy"
+                            }
+                        }
+                    ],
+                    "max_attempts": 10,
+                    "on_exhausted": "abort"
+                },
+                "rhythm": {
+                    "type": "loop",
+                    "interval_ms": 30000,
+                    "max_iterations": null
+                },
+                "context": {
+                    "type": "clear"
+                }
+            }
+        }"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        let strategy: agent_core::SessionStrategy = req.strategy.into();
+
+        let agent_core::TerminationStrategy::Goal {
+            criteria,
+            max_attempts,
+            on_exhausted,
+        } = strategy.termination
+        else {
+            panic!("expected Goal termination");
+        };
+        assert_eq!(criteria.len(), 1);
+        assert_eq!(criteria[0].id, "deploy-ok");
+        assert!(matches!(
+            criteria[0].verification,
+            agent_core::GoalVerification::Command { .. }
+        ));
+        assert_eq!(max_attempts, 10);
+        assert!(matches!(
+            on_exhausted,
+            agent_core::GoalExhaustedAction::Abort
+        ));
+
+        let agent_core::RhythmStrategy::Loop {
+            interval,
+            max_iterations,
+        } = strategy.rhythm
+        else {
+            panic!("expected Loop rhythm");
+        };
+        assert_eq!(interval, Some(std::time::Duration::from_millis(30000)));
+        assert_eq!(max_iterations, None);
+
+        assert!(matches!(
+            strategy.context,
+            agent_core::ContextStrategy::Clear
+        ));
     }
 }

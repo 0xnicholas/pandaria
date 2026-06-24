@@ -19,8 +19,7 @@ use crate::{
 pub async fn create(
     State(state): State<Arc<AppState>>,
     Extension(tenant_id): Extension<TenantId>,
-    #[cfg(feature = "aspectus-auth")]
-    Extension(tenant_ctx): Extension<tenant::TenantContext>,
+    #[cfg(feature = "aspectus-auth")] Extension(tenant_ctx): Extension<tenant::TenantContext>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<SessionInfo>), GatewayError> {
     let params = tenant::CreateSessionParams {
@@ -45,17 +44,24 @@ pub async fn create(
         }),
         builtin_tools_enabled: req.builtin_tools.enabled,
         builtin_tools_disabled: req.builtin_tools.disabled,
+        strategy: req.strategy.into(),
     };
 
     let info = {
         #[cfg(feature = "aspectus-auth")]
         {
             state.registry.resolve_or_insert(&tenant_ctx)?;
-            state.tenant_manager.create_session(&tenant_id.0, params).await?
+            state
+                .tenant_manager
+                .create_session(&tenant_id.0, params)
+                .await?
         }
         #[cfg(not(feature = "aspectus-auth"))]
         {
-            state.tenant_manager.create_session(&tenant_id.0, params).await?
+            state
+                .tenant_manager
+                .create_session(&tenant_id.0, params)
+                .await?
         }
     };
 
@@ -195,6 +201,7 @@ pub async fn batch_create(
         }),
         builtin_tools_enabled: req.template.builtin_tools.enabled,
         builtin_tools_disabled: req.template.builtin_tools.disabled,
+        strategy: req.template.strategy.into(),
     };
 
     let result = state

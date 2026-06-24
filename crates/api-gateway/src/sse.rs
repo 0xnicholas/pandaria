@@ -86,6 +86,8 @@ fn event_type_name(event: &ServerEvent) -> &'static str {
         ServerEvent::TurnEnd { .. } => "turn_end",
         ServerEvent::AutoRetryStart { .. } => "auto_retry_start",
         ServerEvent::AutoRetryEnd { .. } => "auto_retry_end",
+        ServerEvent::LoopIterationComplete { .. } => "loop_iteration_complete",
+        ServerEvent::LoopIterationError { .. } => "loop_iteration_error",
         ServerEvent::SquadStarted { .. } => "squad_started",
         ServerEvent::SquadMissionScheduled { .. } => "squad_mission_scheduled",
         ServerEvent::SquadMissionStarted { .. } => "squad_mission_started",

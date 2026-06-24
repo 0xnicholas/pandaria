@@ -21,9 +21,11 @@ pub async fn stream(
 ) -> Result<SseStream, GatewayError> {
     // Validate Accept header
     if let Some(accept) = headers.get("accept").and_then(|v| v.to_str().ok())
-        && !accept.contains("text/event-stream") && !accept.contains("*/*") {
-            return Err(GatewayError::NotAcceptable);
-        }
+        && !accept.contains("text/event-stream")
+        && !accept.contains("*/*")
+    {
+        return Err(GatewayError::NotAcceptable);
+    }
     let mut rx = state
         .tenant_manager
         .subscribe_events(&tenant_id.0, &id)
@@ -34,9 +36,10 @@ pub async fn stream(
     let handle = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             if let Some(server_event) = map_agent_event(event)
-                && sse_tx.send(server_event).await.is_err() {
-                    break;
-                }
+                && sse_tx.send(server_event).await.is_err()
+            {
+                break;
+            }
         }
     });
 
@@ -87,6 +90,16 @@ fn map_agent_event(event: agent_core::AgentEvent) -> Option<ServerEvent> {
         }),
         AgentEvent::AutoRetryEnd { success, error } => {
             Some(ServerEvent::AutoRetryEnd { success, error })
+        }
+        AgentEvent::LoopIterationComplete {
+            iteration,
+            messages,
+        } => Some(ServerEvent::LoopIterationComplete {
+            iteration,
+            messages: summarize_messages(&messages),
+        }),
+        AgentEvent::LoopIterationError { iteration, error } => {
+            Some(ServerEvent::LoopIterationError { iteration, error })
         }
         AgentEvent::Error { error } => Some(ServerEvent::Error {
             code: error_variant_name(&error),
@@ -148,6 +161,36 @@ fn extract_turn_end_info(messages: &[agent_core::AgentMessage]) -> (String, Opti
     }
 }
 
+fn summarize_messages(messages: &[agent_core::AgentMessage]) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .map(|m| {
+            let (role, text) = match m {
+                agent_core::AgentMessage::User(u) => ("user", text_from_contents(&u.content)),
+                agent_core::AgentMessage::Assistant(a) => {
+                    ("assistant", text_from_contents(&a.content))
+                }
+                agent_core::AgentMessage::ToolResult(t) => ("tool", text_from_contents(&t.content)),
+            };
+            serde_json::json!({
+                "role": role,
+                "text": text,
+            })
+        })
+        .collect()
+}
+
+fn text_from_contents(contents: &[agent_core::Content]) -> String {
+    contents
+        .iter()
+        .filter_map(|c| match c {
+            agent_core::Content::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
 fn error_variant_name(error: &agent_core::AgentError) -> String {
     error.code().to_string()
 }
@@ -206,5 +249,48 @@ mod tests {
         let err =
             agent_core::AgentError::LlmError(ai_provider::LlmError::ProviderError("test".into()));
         assert_eq!(error_variant_name(&err), "llm_error");
+    }
+
+    #[test]
+    fn test_map_loop_iteration_complete() {
+        let messages = vec![agent_core::AgentMessage::User(ai_provider::UserMessage {
+            content: vec![agent_core::Content::Text {
+                text: "hello".into(),
+                text_signature: None,
+            }],
+            timestamp: std::time::SystemTime::now(),
+        })];
+        let event = agent_core::AgentEvent::LoopIterationComplete {
+            iteration: 2,
+            messages,
+        };
+        let mapped = map_agent_event(event).unwrap();
+        let ServerEvent::LoopIterationComplete {
+            iteration,
+            messages,
+        } = mapped
+        else {
+            panic!("expected LoopIterationComplete, got {:?}", mapped);
+        };
+        assert_eq!(iteration, 2);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["text"], "hello");
+    }
+
+    #[test]
+    fn test_map_loop_iteration_error() {
+        let event = agent_core::AgentEvent::LoopIterationError {
+            iteration: 3,
+            error: "boom".into(),
+        };
+        let mapped = map_agent_event(event).unwrap();
+        assert!(matches!(
+            mapped,
+            ServerEvent::LoopIterationError {
+                iteration: 3,
+                error,
+            } if error == "boom"
+        ));
     }
 }

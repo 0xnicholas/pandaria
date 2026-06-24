@@ -5,6 +5,7 @@ use crate::error::AgentError;
 use crate::file_ops::DefaultFileOperationExtractor;
 use crate::harness::compaction::Compactor;
 use crate::harness::session::{SessionActor, SessionConfig};
+use crate::harness::strategy::SessionStrategy;
 use crate::hook::combined::CombinedDispatcher;
 use crate::hook::default_dispatcher::DefaultHookDispatcher;
 use crate::hook::dispatcher::HookDispatcher;
@@ -50,6 +51,8 @@ pub struct SessionBuilder {
     builtin_enabled: bool,
     /// Pawbun tool names to exclude.
     disabled_tools: Vec<String>,
+    /// Execution strategy for the session.
+    strategy: SessionStrategy,
 }
 
 impl SessionBuilder {
@@ -65,6 +68,7 @@ impl SessionBuilder {
             external_tools: Vec::new(),
             builtin_enabled: true,
             disabled_tools: Vec::new(),
+            strategy: SessionStrategy::default(),
         }
     }
 
@@ -116,6 +120,12 @@ impl SessionBuilder {
     pub fn with_builtin_tools_config(mut self, enabled: bool, disabled: Vec<String>) -> Self {
         self.builtin_enabled = enabled;
         self.disabled_tools = disabled;
+        self
+    }
+
+    /// Set the execution strategy for this session.
+    pub fn with_strategy(mut self, strategy: SessionStrategy) -> Self {
+        self.strategy = strategy;
         self
     }
 
@@ -239,7 +249,7 @@ impl SessionBuilder {
         let skills = Self::load_skills(&self.config.agent_space, &tenant_id).await?;
 
         // 5. Session actor
-        let actor = SessionActor::new(SessionConfig {
+        let mut actor = SessionActor::new(SessionConfig {
             tenant_id,
             session_id: session_id.clone(),
             system_prompt: self.system_prompt,
@@ -251,6 +261,7 @@ impl SessionBuilder {
             store: self.config.store.clone(),
             skills,
         });
+        actor.set_strategy(self.strategy);
 
         Ok(BuiltSession { actor, tools })
     }
@@ -552,6 +563,46 @@ mod tests {
         assert!(
             !names.contains(&"file_read"),
             "Pawbun tools should not be registered when disabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_session_builder_with_strategy() {
+        use crate::harness::strategy::{
+            ContextStrategy, GoalCriterion, GoalExhaustedAction, GoalVerification, RhythmStrategy,
+            TerminationStrategy,
+        };
+
+        let config = dummy_runtime_config();
+        let strategy = SessionStrategy {
+            termination: TerminationStrategy::Goal {
+                criteria: vec![GoalCriterion {
+                    id: "tests-pass".into(),
+                    description: "All tests pass".into(),
+                    verification: GoalVerification::Command {
+                        command: "cargo test".into(),
+                    },
+                }],
+                max_attempts: 3,
+                on_exhausted: GoalExhaustedAction::Abort,
+            },
+            rhythm: RhythmStrategy::Once,
+            context: ContextStrategy::Clear,
+        };
+
+        let built = SessionBuilder::new(&config)
+            .tenant_id("test-tenant")
+            .session_id("sess-strategy")
+            .with_builtin_tools_config(false, vec![])
+            .with_strategy(strategy.clone())
+            .build()
+            .await
+            .expect("build should succeed");
+
+        assert_eq!(
+            format!("{:?}", built.actor.strategy()),
+            format!("{:?}", &strategy),
+            "strategy should be propagated to SessionActor"
         );
     }
 }

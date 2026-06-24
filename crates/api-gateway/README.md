@@ -47,6 +47,51 @@ api-gateway 通过 `tavern-comp` 接入工作流编排能力，通过 `pawbun-to
 | POST | `/api/v1/sessions/{id}/compact` | 触发上下文压缩 |
 | GET | `/api/v1/sessions/{id}/messages` | 获取历史消息 |
 
+## 创建 session 示例
+
+```bash
+curl -X POST http://localhost:8080/api/v1/sessions \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "My Session",
+    "system_prompt": "You are a helpful assistant.",
+    "strategy": {
+      "termination": {
+        "type": "goal",
+        "criteria": [
+          {
+            "id": "tests-pass",
+            "description": "All tests pass",
+            "verification": {"type": "command", "command": "cargo test"}
+          }
+        ],
+        "max_attempts": 5,
+        "on_exhausted": "abort"
+      },
+      "rhythm": {"type": "loop", "interval_ms": 30000, "max_iterations": 10},
+      "context": {"type": "clear"}
+    }
+  }'
+```
+
+`strategy` 字段可选，默认值为：
+
+```json
+{
+  "termination": {"type": "once"},
+  "rhythm": {"type": "once"},
+  "context": {"type": "accumulate"}
+}
+```
+
+策略维度：
+- `termination`: `once`（跑一次） / `goal`（按验收标准重试）。
+- `rhythm`: `once`（立即执行） / `loop`（按 `interval_ms` 后台循环，首次同步返回）。
+- `context`: `accumulate`（保留历史） / `compact`（保留最近 N 条） / `clear`（每次清空）。
+
+后台循环迭代结果通过 SSE `loop_iteration_complete` / `loop_iteration_error` 事件推送。
+
 ## 运行
 
 ```bash

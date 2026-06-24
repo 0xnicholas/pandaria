@@ -32,4 +32,6 @@ pub struct ActiveSession {
     /// Pawbun builtin tools config for clone propagation.
     pub builtin_tools_enabled: bool,
     pub builtin_tools_disabled: Vec<String>,
+    /// Execution strategy for clone propagation.
+    pub strategy: agent_core::SessionStrategy,
 }
