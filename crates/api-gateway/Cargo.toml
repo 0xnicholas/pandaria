@@ -108,6 +108,10 @@ name = "e2e_persistence_fault_injection"
 path = "tests/e2e/e2e_persistence_fault_injection.rs"
 
 [[test]]
+name = "e2e_metrics"
+path = "tests/e2e/e2e_metrics.rs"
+
+[[test]]
 name = "e2e_concurrent_sessions"
 path = "tests/e2e/e2e_concurrent_sessions.rs"
 

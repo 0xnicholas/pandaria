@@ -169,6 +169,14 @@ where
 
 // ── Response parsing helpers ──
 
+/// Extract an HTTP response body as a UTF-8 string.
+pub async fn text_body(response: Response) -> String {
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+
 /// Parse an HTTP response body into a JSON value.
 /// Panics if the status code is not success (2xx).
 pub async fn json_body(response: Response) -> serde_json::Value {
