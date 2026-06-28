@@ -1,0 +1,8 @@
+[package]
+name = "observability"
+version = "0.1.0"
+edition = "2024"
+description = "Lightweight embedded metrics registry with Prometheus export for Pandaria"
+
+[dependencies]
+dashmap = "6"

@@ -14,6 +14,7 @@ members = [
     "crates/pawbun-toolkit-macros",
     "crates/pawbun-files",
     "crates/pawbun-mcp-server",
+    "crates/observability",
 ]
 
 [workspace.package]
