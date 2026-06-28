@@ -259,7 +259,19 @@ api-gateway main.rs
 
 **Session 生命周期** (`tenant/src/manager.rs`):
 
+`TenantManager` trait 已有 `active_session_count() -> usize` 方法，返回精确活跃数。M1 直接用它驱动 gauge。
+
+终端状态埋点分散在三个路径：
+
+| 路径 | status 标签 | 触发点 |
+|---|---|---|
+| `completed` | `complete_session()` 被调用时 | session 正常结束 |
+| `failed` | `delete_session()` 被调用时（含错误清理） | session 异常终止 |
+| `expired` | `cleanup_expired_sessions()` 批量删除时 | 后台过期清理 |
+
 ```rust
+// tenant/src/manager.rs
+
 impl TenantManagerImpl {
     pub async fn create_session(&self, tenant_id: &str, params: CreateSessionParams)
         -> Result<SessionInfo, TenantError>
@@ -268,16 +280,22 @@ impl TenantManagerImpl {
         if let Some(ref m) = self.metrics {
             m.increment_counter("pandaria_sessions_total",
                 &[("tenant_id", tenant_id), ("status", "created")], 1);
-            m.increment_counter("pandaria_sessions_active",
-                &[("tenant_id", tenant_id)], 1);  // 注：这是 gauge，不是 counter
-            // FIXME: 后续改为 set_gauge
         }
         // ...
     }
+
+    /// /metrics 端点调用此方法获取精确活跃数，再通过 set_gauge 写入。
+    /// 不在室内方法中 increment/decrement counter 近似 gauge。
+    pub fn active_session_count(&self) -> usize { /* 现有实现 */ }
+
+    // 在 complete_session / delete_session / cleanup_expired_sessions 的
+    // 相应位置添加：
+    //   m.increment_counter("pandaria_sessions_total",
+    //       &[("tenant_id", tid), ("status", "completed")], 1);
 }
 ```
 
-> **注意**：M1 用 `increment_counter` 近似 gauge（增减操作），未来 M2 可改为 `set_gauge` 提供精确值。
+> **设计决策**：`pandaria_sessions_active` 不通过 increment/decrement 维护，而是在 `/metrics` 端点每次请求时调用 `active_session_count()` + `set_gauge()` 生成精确瞬时值。避免状态不一致。
 
 **Token 消耗** (`agent-core/src/harness/agent_loop.rs`):
 
@@ -302,8 +320,31 @@ impl ToolExecutor {
     pub(crate) async fn execute_tool_call(&self, tool_call: &ToolCall, ...)
         -> Result<ToolResultMsg, AgentError>
     {
+        // Step 1: on_tool_call (blocking hook)
+        let (decision, mutation) = with_timeout_from(
+            &*self.hook_dispatcher,
+            self.hook_dispatcher.on_tool_call(&tool_call_ctx),
+            (HookDecision::Continue, ToolCallMutation::default()),
+            "on_tool_call",
+        ).await;
+
+        // ★ blocked 埋点：hook 决定阻止时立即记录
+        match decision {
+            HookDecision::Block { reason } => {
+                if let Some(ref m) = self.metrics {
+                    m.increment_counter("pandaria_tool_calls_total",
+                        &[("tenant_id", &self.tenant_id),
+                          ("tool", &tool_call.name),
+                          ("status", "blocked")], 1);
+                }
+                // ... 现有 warn! 和返回 AgentError::ToolBlocked 逻辑 ...
+            }
+            HookDecision::Continue => { /* proceed */ }
+        }
+
+        // ... 现有执行 pipeline ...
         let start = Instant::now();
-        // ... 现有 pipeline ...
+        // ... execute tool ...
         let elapsed = start.elapsed();
 
         if let Some(ref m) = self.metrics {
@@ -416,8 +457,7 @@ Phase 2 (未来 M2):
   ├── tracing Layer 自动采集 span 耗时/错误率
   ├── LLM API 延迟/重试指标
   ├── Hook 执行耗时指标
-  ├── Circuit breaker 状态 gauge
-  └── set_gauge 精确实现（替换 increment_counter hack）
+  └── Circuit breaker 状态 gauge
 
 Phase 3 (未来 M3):
   └── OpenTelemetry 集成（可选，按需）
@@ -430,8 +470,15 @@ Phase 3 (未来 M3):
 | 风险 | 缓解 |
 |---|---|
 | dashmap 内存无限增长（每个新 tool name 创建新 entry） | M1 不做清理；M2 加 `max_cardinality` 限制 + LRU 淘汰 |
-| `pandaria_sessions_active` 用 counter 近似 gauge 不精确 | 文档注明；M2 改为 `set_gauge`（需要准确的活跃计数源） |
 | Prometheus 格式手写可能有 edge case | 单元测试覆盖特殊字符（引号、换行）的 label value |
+
+## 11. 兼容性说明
+
+| 变更 | 影响 |
+|---|---|
+| 指标名 `pandaria_active_sessions` → `pandaria_sessions_active` | **Breaking**: 升级后 Prometheus 查询和 dashboard 需更新 metric name。旧名在 registry=None 的 fallback 路径中保留，但启用 registry 后即使用新名 |
+| 新增 tenant label 维度 | 现有查询 `pandaria_active_sessions` 升级后变为 `pandaria_sessions_active{tenant_id="..."}`。多租户部署需按 tenant 聚合或过滤 |
+| `/metrics` 端点行为 | 兼容：未配置 registry 时行为不变。配置后输出内容增加，但仍是合法 Prometheus 格式 |
 
 ---
 
