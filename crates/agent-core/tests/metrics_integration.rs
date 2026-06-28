@@ -15,8 +15,8 @@ fn test_metrics_token_counter_accumulates() {
     reg.increment_counter("pandaria_tokens_consumed_total", &[("tenant_id", "test"), ("direction", "output")], 500);
     reg.increment_counter("pandaria_tokens_consumed_total", &[("tenant_id", "test"), ("direction", "input")], 800);
     let output = reg.export();
-    assert!(output.contains("pandaria_tokens_consumed_total{tenant_id=\"test\",direction=\"input\"} 2300"));
-    assert!(output.contains("pandaria_tokens_consumed_total{tenant_id=\"test\",direction=\"output\"} 500"));
+    assert!(output.contains("pandaria_tokens_consumed_total{direction=\"input\",tenant_id=\"test\"} 2300"));
+    assert!(output.contains("pandaria_tokens_consumed_total{direction=\"output\",tenant_id=\"test\"} 500"));
 }
 
 #[test]
