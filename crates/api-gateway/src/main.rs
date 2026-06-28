@@ -72,15 +72,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.metrics_registry = Some(metrics_registry);
     let state = Arc::new(state);
 
-    // --- 6. Tavern Workflow Engine ---
-    // SSRF policy: reuse the one loaded by HarnessConfig (from
-    // PANDARIA_SSRF_ALLOWLIST). Strict by default; set the env var to allow
-    // specific CIDR ranges and domains (e.g. for pandaria ↔ DayPaw integration).
-    let ssrf_policy = runtime_config.ssrf_policy.clone();
-    let tavern_runtime = Arc::new(tavern_comp::AgentRuntime::new_with_ssrf_policy(
-        ssrf_policy.clone(),
-    ));
-    let hero = tavern_comp::TavernHero::new(tavern_runtime);
+    // --- 6. Tavern Agent Team ---
+    let hero = tavern_comp::TavernHero::new();
     let agent_config_dir = std::path::Path::new("./configs/agents");
     if agent_config_dir.exists()
         && let Err(e) = hero.load_from_dir(agent_config_dir).await
@@ -88,14 +81,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::error!("failed to load agent configs: {}", e);
     }
     let hero = Arc::new(hero);
-    let mut workflow_registry = tavern_comp::WorkflowRegistry::new();
-    let workflow_config_dir = std::path::Path::new("./configs/workflows");
-    if workflow_config_dir.exists()
-        && let Err(e) = workflow_registry.load_from_dir(workflow_config_dir)
-    {
-        tracing::error!("failed to load workflow configs: {}", e);
-    }
-    let workflow_registry = Arc::new(tokio::sync::RwLock::new(workflow_registry));
     let event_store: Arc<dyn tavern_comp::EventStore> =
         Arc::new(tavern_comp::MemoryEventStore::new());
     let tool_registry = tavern_core::ToolRegistry::new();
@@ -106,7 +91,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tool_registry = Arc::new(tool_registry);
     let tavern_state = Arc::new(api_gateway::tavern::TavernState {
         hero: hero.clone(),
-        registry: workflow_registry.clone(),
         event_store,
         tool_registry,
         squads: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -117,10 +101,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  pandaria-server ready");
     println!("  bind: {}", config.bind_addr);
     println!("  auth:  Aspectus ({})", aspectus_config.base_url);
-    println!(
-        "  ssrf:  allowlist_enabled={} entries={}",
-        ssrf_policy.allowlist_enabled(),
-        ssrf_policy.allowlist_size(),
+    println!("  ssrf:  allowlist_enabled={} entries={}",
+        runtime_config.ssrf_policy.allowlist_enabled(),
+        runtime_config.ssrf_policy.allowlist_size(),
     );
     println!("========================================");
 

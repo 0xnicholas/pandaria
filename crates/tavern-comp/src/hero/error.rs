@@ -1,5 +1,3 @@
-use crate::agent::AgentError;
-
 #[derive(Debug, thiserror::Error)]
 pub enum TavernError {
     #[error("agent '{id}' already registered")]
@@ -13,9 +11,6 @@ pub enum TavernError {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
-
-    #[error("agent runtime error: {0}")]
-    Agent(#[from] AgentError),
 }
 
 impl TavernError {

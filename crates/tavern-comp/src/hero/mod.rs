@@ -142,103 +142,22 @@ instructions: test
         assert_eq!(configs.len(), 2);
     }
 
-    // TODO: remove after verifying full test coverage
-
     #[tokio::test]
-    async fn test_hero_execute_agent_not_found() {
-        use std::sync::Arc;
-        let runtime = Arc::new(crate::agent::AgentRuntime::new());
-        let hero = TavernHero::new(runtime);
-
-        let err = hero.execute("unknown", "task", None).await.unwrap_err();
-        assert!(matches!(err, TavernError::AgentNotFound { id } if id == "unknown"));
+    async fn test_hero_resolve_agent_not_found() {
+        use crate::team::executor::AgentResolver;
+        let hero = TavernHero::new();
+        let result = hero.resolve("unknown").await;
+        assert!(result.is_none());
     }
 
     #[tokio::test]
-    async fn test_hero_execute_direct_with_mock_provider() {
-        use std::sync::Arc;
-        use ai_provider::test_utils::MockProvider;
-        use crate::agent::AgentRuntime;
-        use tavern_core::{AgentConfig, MemoryConfig, ModelConfig};
-
-        // 1. Create a direct-mode runtime with a mock LLM
-        let mock_provider = Arc::new(MockProvider::text("Hello from direct mode!"));
-        let runtime = Arc::new(AgentRuntime::new_with_provider(mock_provider));
-        let hero = TavernHero::new(runtime);
-
-        // 2. Register a simple agent
-        let config = AgentConfig {
-            id: "test-agent".into(),
-            name: "Test".into(),
-            description: None,
-            model: ModelConfig {
-                provider: "mock".into(),
-                name: "mock-model".into(),
-                temperature: 0.7,
-            },
-            instructions: "You are a test agent.".into(),
-            skills: vec![],
-            constraints: vec![],
-            memory: MemoryConfig::default(),
-        };
+    async fn test_hero_resolve_after_register() {
+        use crate::team::executor::AgentResolver;
+        let hero = TavernHero::new();
+        let config = agent_with_id("test-agent");
         hero.register_agent(config).await.unwrap();
-
-        // 3. Execute via execute() — auto-routes to direct path
-        let result = hero.execute("test-agent", "Hello!", None).await;
-
-        // 4. Verify response from mock LLM (no HTTP involved)
-        assert!(result.is_ok(), "execute failed: {:?}", result.err());
-        let value = result.unwrap();
-        let text = value.as_str().unwrap();
-        assert!(text.contains("Hello from direct mode!"), "Unexpected response: {}", text);
-    }
-
-    /// Real LLM test — requires DEEPSEEK_API_KEY in environment.
-    /// Skip if key not set (returns Ok without running).
-    #[tokio::test]
-    async fn test_hero_execute_real_deepseek() {
-        // Load .env from workspace root or pandaria dir
-        let _ = dotenvy::from_filename("../../../pandaria/.env");
-        let _ = dotenvy::dotenv();
-
-        let api_key = std::env::var("DEEPSEEK_API_KEY").unwrap_or_default();
-        if api_key.is_empty() {
-            eprintln!("SKIP: DEEPSEEK_API_KEY not set");
-            return;
-        }
-
-        use std::sync::Arc;
-        use crate::agent::AgentRuntime;
-        use tavern_core::{AgentConfig, MemoryConfig, ModelConfig};
-
-        // Create direct-mode runtime (uses real DeepSeek API)
-        let runtime = Arc::new(AgentRuntime::new());
-        let hero = TavernHero::new(runtime);
-
-        // Register a minimal agent
-        let config = AgentConfig {
-            id: "test-deepseek".into(),
-            name: "DeepSeek Test".into(),
-            description: None,
-            model: ModelConfig {
-                provider: "deepseek".into(),
-                name: "deepseek-chat".into(),
-                temperature: 0.3,
-            },
-            instructions: "You are a helpful assistant. Answer concisely.".into(),
-            skills: vec![],
-            constraints: vec![],
-            memory: MemoryConfig::default(),
-        };
-        hero.register_agent(config).await.unwrap();
-
-        // Execute — this calls real DeepSeek API via agent-core
-        let result = hero.execute("test-deepseek", "What is 2+2? Reply with just the number.", None).await;
-
-        assert!(result.is_ok(), "Real LLM call failed: {:?}", result.err());
-        let value = result.unwrap();
-        let text = value.as_str().unwrap();
-        assert!(text.contains("4"), "Expected '4' in response, got: {}", text);
-        eprintln!("Real DeepSeek response: {}", text);
+        let resolved = hero.resolve("test-agent").await;
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap().id, "test-agent");
     }
 }

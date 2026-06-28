@@ -9,7 +9,6 @@ members = [
     "crates/tenant",
     "crates/tavern-core",
     "crates/tavern-comp",
-    "crates/tavern-flow-macros",
     "crates/pawbun-toolkit",
     "crates/pawbun-toolkit-macros",
     "crates/pawbun-files",

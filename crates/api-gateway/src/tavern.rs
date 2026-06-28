@@ -43,7 +43,6 @@ impl Clone for SquadHandle {
 
 pub struct TavernState {
     pub hero: Arc<tavern_comp::TavernHero>,
-    pub registry: Arc<RwLock<tavern_comp::WorkflowRegistry>>,
     pub event_store: Arc<dyn tavern_comp::EventStore>,
     pub tool_registry: Arc<tavern_core::ToolRegistry>,
     pub squads: Arc<RwLock<HashMap<String, SquadHandle>>>,
@@ -76,13 +75,6 @@ pub struct ExecuteRequest {
     pub task: String,
     #[serde(default)]
     pub context: Value,
-}
-
-#[derive(Deserialize)]
-pub struct RunWorkflowRequest {
-    pub inputs: Value,
-    #[serde(default)]
-    pub async_mode: bool,
 }
 
 #[derive(Deserialize)]
@@ -131,22 +123,12 @@ impl tavern_comp::AgentExecutor for LocalHeroExecutor {
 
     async fn execute(
         &self,
-        role_id: &str,
-        input: tavern_comp::AgentInput,
+        _role_id: &str,
+        _input: tavern_comp::AgentInput,
     ) -> Result<tavern_comp::AgentOutput, tavern_comp::AgentExecutorError> {
-        let result = self
-            .hero
-            .execute(role_id, &input.task, Some(input.context.shared))
-            .await
-            .map_err(|e| {
-                tavern_comp::AgentExecutorError::ExecutionFailed(e.to_string())
-            })?;
-        Ok(tavern_comp::AgentOutput {
-            content: result,
-            usage: None,
-            latency: std::time::Duration::from_secs(0),
-            metadata: std::collections::HashMap::new(),
-        })
+        Err(tavern_comp::AgentExecutorError::ExecutionFailed(
+            "LocalHeroExecutor: AgentRuntime removed. Use PandariaAgentExecutor for production.".into(),
+        ))
     }
 
     async fn execute_stream(
@@ -167,10 +149,9 @@ impl tavern_comp::AgentExecutor for LocalHeroExecutor {
 
 pub async fn health(Extension(state): Extension<Arc<TavernState>>) -> impl IntoResponse {
     let agent_count = state.hero.list_agents_summary().await.len();
-    let workflow_count = state.registry.read().await.list_all().len();
     Json(json!({
         "status": "ok", "component": "tavern",
-        "agents": agent_count, "workflows": workflow_count,
+        "agents": agent_count,
     }))
 }
 
@@ -189,70 +170,16 @@ pub async fn get_agent(
 }
 
 pub async fn execute_agent(
-    Extension(state): Extension<Arc<TavernState>>,
+    Extension(_state): Extension<Arc<TavernState>>,
     Path(id): Path<String>,
-    Json(req): Json<ExecuteRequest>,
+    Json(_req): Json<ExecuteRequest>,
 ) -> impl IntoResponse {
-    match state.hero.execute(&id, &req.task, Some(req.context)).await {
-        Ok(result) => Json(json!({"result": result})).into_response(),
-        Err(e) => map_hero_error(e),
-    }
-}
-
-pub async fn list_workflows(Extension(state): Extension<Arc<TavernState>>) -> impl IntoResponse {
-    let registry = state.registry.read().await;
-    Json(registry.list_all())
-}
-
-pub async fn get_workflow(
-    Extension(state): Extension<Arc<TavernState>>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    let registry = state.registry.read().await;
-    match registry.get(&id) {
-        Some(wf) => Json(serde_json::to_value(wf).unwrap_or_default()).into_response(),
-        None => ApiError::new(StatusCode::NOT_FOUND, "WorkflowNotFound", &format!("Workflow '{}' not found", id)).into_response(),
-    }
-}
-
-pub async fn run_workflow(
-    Extension(state): Extension<Arc<TavernState>>,
-    Path(id): Path<String>,
-    Json(req): Json<RunWorkflowRequest>,
-) -> impl IntoResponse {
-    let workflow = {
-        let registry = state.registry.read().await;
-        match registry.get(&id).cloned() {
-            Some(w) => w,
-            None => return ApiError::new(StatusCode::NOT_FOUND, "WorkflowNotFound", &format!("Workflow '{}' not found", id)).into_response(),
-        }
-    };
-    let engine = tavern_comp::WorkflowEngine::new(state.hero.clone())
-        .with_store(state.event_store.clone());
-    match engine.run(&workflow, req.inputs).await {
-        Ok(result) => Json(serde_json::to_value(result).unwrap_or_default()).into_response(),
-        Err(e) => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "WorkflowError", &e.to_string()).into_response(),
-    }
-}
-
-pub async fn start_workflow(
-    Extension(state): Extension<Arc<TavernState>>,
-    Path(id): Path<String>,
-    Json(req): Json<RunWorkflowRequest>,
-) -> impl IntoResponse {
-    let workflow = {
-        let registry = state.registry.read().await;
-        match registry.get(&id).cloned() {
-            Some(w) => w,
-            None => return ApiError::new(StatusCode::NOT_FOUND, "WorkflowNotFound", &format!("Workflow '{}' not found", id)).into_response(),
-        }
-    };
-    let engine = tavern_comp::WorkflowEngine::new(state.hero.clone())
-        .with_store(state.event_store.clone());
-    match engine.start(&workflow, req.inputs).await {
-        Ok(handle) => Json(json!({"execution_id": handle.id})).into_response(),
-        Err(e) => ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "WorkflowError", &e.to_string()).into_response(),
-    }
+    ApiError::new(
+        StatusCode::GONE,
+        "DeprecatedPath",
+        &format!("Direct agent execution removed (id: {}). Use SquadEngine + PandariaAgentExecutor.", id),
+    )
+    .into_response()
 }
 
 pub async fn get_execution(
@@ -275,10 +202,6 @@ pub fn routes() -> axum::Router<()> {
         .route("/agents", get(list_agents))
         .route("/agents/{id}", get(get_agent))
         .route("/agents/{id}/execute", post(execute_agent))
-        .route("/workflows", get(list_workflows))
-        .route("/workflows/{id}", get(get_workflow))
-        .route("/workflows/{id}/run", post(run_workflow))
-        .route("/workflows/{id}/start", post(start_workflow))
         .route("/executions/{id}", get(get_execution))
         .route("/executions/{id}/events", get(get_execution_events))
         .route("/executions/{id}/events/stream", get(execution_events_stream))
@@ -288,7 +211,6 @@ pub fn routes() -> axum::Router<()> {
         .route("/executions/{id}/steps/{step_id}/approve", post(approve_step))
         .route("/executions/{id}/steps/{step_id}/reject", post(reject_step))
         .route("/breakpoints", get(list_breakpoints))
-        .route("/schedules", get(list_schedules))
         .route("/flows", get(list_flows))
         .route("/flows/{id}/start", post(start_flow))
         .route("/flows/{id}/status", get(flow_status))
@@ -410,13 +332,9 @@ pub async fn list_breakpoints(
 }
 
 pub async fn list_schedules(
-    Extension(state): Extension<Arc<TavernState>>,
+    Extension(_state): Extension<Arc<TavernState>>,
 ) -> impl IntoResponse {
-    let registry = state.registry.read().await;
-    let scheduled: Vec<_> = registry.list_all().into_iter()
-        .filter(|w| w.description.as_deref().unwrap_or("").contains("schedule"))
-        .collect();
-    Json(json!({ "scheduled_workflows": scheduled }))
+    Json(json!({ "scheduled_workflows": [] }))
 }
 
 pub async fn list_flows(Extension(_state): Extension<Arc<TavernState>>) -> impl IntoResponse {

@@ -5462,7 +5462,6 @@ dependencies = [
  "sha2",
  "sqlx",
  "tavern-core",
- "tavern-flow-macros",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -5481,15 +5480,6 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "tavern-flow-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]

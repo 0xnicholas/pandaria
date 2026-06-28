@@ -5,7 +5,6 @@ edition.workspace = true
 
 [dependencies]
 tavern-core = { path = "../tavern-core" }
-tavern-flow-macros = { path = "../tavern-flow-macros" }
 agent-core = { path = "../agent-core" }
 ai-provider = { path = "../ai-provider" }
 serde = { workspace = true }

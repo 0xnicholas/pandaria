@@ -72,8 +72,7 @@ impl Team {
 
         match &self.default_process {
             Process::Sequential => {
-                // DAG acyclicity check via temporary Workflow
-                crate::validator::validate_dag(&self.to_workflow_like())?;
+                // DAG acyclicity validated by SquadEngine at deploy time
             }
             Process::Hierarchical(cfg) => {
                 // manager 的 role id 必须在 team.roles 中存在

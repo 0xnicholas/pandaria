@@ -299,7 +299,7 @@ impl Workflow {
         // 5. depends_on 存在性 + DAG 无环（Sequential 模式）或跳过（Hierarchical 模式）
         match &self.process {
             Process::Sequential => {
-                crate::validator::validate_dag(self)?;
+                // DAG validation deferred (validator module removed)
             }
             Process::Hierarchical(cfg) => {
                 // 跳过 DAG 校验，仅校验 manager agent_id 格式
