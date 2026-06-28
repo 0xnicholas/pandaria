@@ -99,6 +99,7 @@ crates/
   # metrics/tracing 功能若未来需要，将重新设计更轻量的集成方案。
   ai-provider/        # LLM provider 抽象、流式 SSE 解析、HTTP 通信协议
     media/             # 生成型多模态抽象（MediaProvider trait、MediaRequest/Response）
+  observability/      # 轻量内嵌指标采集（MetricsRegistry + Prometheus export）
   pawbun-files/       # 多模态文件处理（text/image/PDF/audio/video），统一 FileLoader + ProviderFormat
   pawbun-toolkit/     # Agent 工具抽象层（Tool trait、ToolKit registry、MCP client adapter）
   pawbun-toolkit-macros/ # pawbun-toolkit 过程宏
@@ -246,7 +247,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST） |
 | tenant crate | ✅ 核心功能已实现（并发配额、token/tool call 计量、session 生命周期、后台过期清理任务）。`SessionStore::cleanup_expired_sessions` 在 agent-core trait + PostgreSQL/Redis adapter 全部落地，integration tests 已通过 |
 | Memory 系统 | ✅ MemoryStore trait + MemoryHookDispatcher + Conversation Formatter + `EmeraldMemoryStore` HTTP adapter（`agent-core/src/memory/emerald.rs`，7 单元测试通过） |
-| observability crate | ❌ 已删除（v0.1.3）。sanitize 移至 agent-core，metrics/tracing 暂无需求 |
+| observability crate | ✅ M1 已实现（v0.2.0）。`MetricsRegistry`（counter/gauge/histogram）+ Prometheus export，per-tenant 指标采集（sessions/tokens/tool calls），通过 `Arc<MetricsRegistry>` 注入各组件 |
 | api-gateway | ✅ 核心功能已实现（REST API + SSE + HMAC 认证 + 限流 + persist store 接入 + Squad streaming SSE endpoint）。E2E 测试矩阵 9 个 suite 全部通过 |
 | storage 集成测试 | ✅ 已实现（testcontainers 启动 PostgreSQL + Redis，8 PG + 7 Redis；E2E 持久化恢复/故障注入/并发隔离） |
 | 代码质量 | ✅ 生产代码零 unwrap（229 个全部位于 `mod tests` 块内；tenant 3 个生产代码 unwrap 已修复为 `.expect()`）。`SessionActor` 已拆分（`history.rs` 332 / `event_hub.rs` 212 / `state.rs` 185 / `tests.rs` 927 / `mod.rs` 1546），22 个原有测试保持原样通过 + 15 个新子系统测试 = 37 个 session 测试 |
