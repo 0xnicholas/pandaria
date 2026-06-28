@@ -1076,19 +1076,34 @@ pub async fn create_session(&self, tenant_id: &str, params: CreateSessionParams)
 }
 ```
 
-In the session completion path (where `complete_session()` is handled):
+In the session completion path — add a new `complete_session()` method to `TenantManager` trait:
 
 ```rust
-if let Some(ref m) = self.metrics {
-    m.increment_counter(
-        "pandaria_sessions_total",
-        &[("tenant_id", tenant_id), ("status", "completed")],
-        1,
-    );
+// In #[async_trait] pub trait TenantManager { ... }
+/// Mark a session as completed normally (non-error termination).
+/// Default no-op for implementations that don't track lifecycle.
+async fn complete_session(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError> {
+    Ok(())
 }
 ```
 
-In `delete_session()`:
+In `TenantManagerImpl`'s override of `complete_session()`:
+
+```rust
+async fn complete_session(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError> {
+    // ... existing completion logic (cleanup, etc.) ...
+    if let Some(ref m) = self.metrics {
+        m.increment_counter(
+            "pandaria_sessions_total",
+            &[("tenant_id", tenant_id), ("status", "completed")],
+            1,
+        );
+    }
+    Ok(())
+}
+```
+
+In `delete_session()` — called for error/abnormal termination:
 
 ```rust
 if let Some(ref m) = self.metrics {
