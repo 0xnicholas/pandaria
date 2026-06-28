@@ -188,8 +188,8 @@ pub trait TenantManager: Send + Sync {
     /// Gracefully shut down all sessions.
     async fn shutdown(&self);
 
-    /// Returns per-tenant active session counts.
-    /// Default impl returns single entry with key "__total__".
+    /// Mark a session as completed normally (non-error termination).
+    /// Default no-op for implementations that don't track lifecycle.
     async fn complete_session(&self, _tenant_id: &str, _session_id: &Uuid) -> Result<(), TenantError> {
         Ok(())
     }

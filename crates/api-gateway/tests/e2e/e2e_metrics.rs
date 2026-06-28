@@ -14,6 +14,25 @@ async fn e2e_metrics_endpoint_returns_prometheus() {
     let body = common::openai_text_sse_body("Hello");
     let (_server, provider) = common::start_wiremock_openai(&body).await;
     let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
+
+    // Create a session so the registry has at least one metric.
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sessions")
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"title": "prometheus format test"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let session = common::json_body(create).await;
+    let session_id = session["id"].as_str().unwrap();
 
     let resp = app
         .clone()
@@ -31,7 +50,31 @@ async fn e2e_metrics_endpoint_returns_prometheus() {
     let body = common::text_body(resp).await;
     assert!(body.contains("# HELP "));
     assert!(body.contains("# TYPE "));
-    assert!(body.contains("pandaria_sessions_active"));
+    assert!(body.contains("pandaria_sessions_total"));
+
+    // Cleanup
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/sessions/{}/complete", session_id))
+                .header("Authorization", format!("Bearer {}", token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/sessions/{}", session_id))
+                .header("Authorization", format!("Bearer {}", token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
 }
 
 /// Verify session creation counter appears in metrics.

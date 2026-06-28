@@ -519,6 +519,7 @@ async fn build_test_app_with_aspectus_impl(
     aspectus: &AspectusMock,
 ) -> Router {
     let registry = Arc::new(tenant::TenantRegistry::new());
+    let metrics_registry = Arc::new(observability::MetricsRegistry::new());
 
     let runtime_config = Arc::new(agent_core::HarnessConfig {
         provider,
@@ -539,7 +540,11 @@ async fn build_test_app_with_aspectus_impl(
         session_cleanup_interval_hours: 24,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config, None),
+        tenant::manager::TenantManagerImpl::new(
+            registry.clone(),
+            runtime_config,
+            Some(metrics_registry.clone()),
+        ),
     );
 
     let config = api_gateway::ServerConfig::default();
@@ -548,10 +553,10 @@ async fn build_test_app_with_aspectus_impl(
         service_token: "test-service-token".into(),
         timeout_ms: 2000,
     };
-    let state = Arc::new(
-        api_gateway::AppState::new(manager, config, registry, &aspectus_config)
-            .expect("build test app state"),
-    );
+    let mut state = api_gateway::AppState::new(manager, config, registry, &aspectus_config)
+        .expect("build test app state");
+    state.metrics_registry = Some(metrics_registry);
+    let state = Arc::new(state);
 
     api_gateway::build_router(state)
 }
