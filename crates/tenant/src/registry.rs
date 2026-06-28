@@ -100,6 +100,14 @@ impl TenantRegistry {
             .collect()
     }
 
+    /// Record CPU (wall-clock) time consumed by a turn for the given tenant.
+    /// No-op if the tenant is not registered.
+    pub fn record_cpu_time_ms(&self, tenant_id: &str, ms: u64) {
+        if let Some(supervisor) = self.tenants.get(tenant_id) {
+            supervisor.record_cpu_time_ms(ms);
+        }
+    }
+
     /// Number of registered tenants.
     pub fn len(&self) -> usize {
         self.tenants.len()

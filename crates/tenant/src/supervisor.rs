@@ -159,6 +159,16 @@ impl TenantSupervisor {
                     });
                 }
             }
+            QuotaCheck::CpuBudget => {
+                let consumed = self.cpu_time_meter.sum();
+                if consumed > self.quota.cpu_time_budget_ms_per_day {
+                    return Err(TenantError::CpuBudgetExceeded {
+                        tenant_id: self.tenant_id.clone(),
+                        consumed_ms: consumed,
+                        budget_ms: self.quota.cpu_time_budget_ms_per_day,
+                    });
+                }
+            }
         }
         Ok(())
     }

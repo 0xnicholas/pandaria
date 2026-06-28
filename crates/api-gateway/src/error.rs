@@ -67,6 +67,11 @@ impl IntoResponse for GatewayError {
                     "quota.tool_rate_limit",
                     tenant_err.to_string(),
                 ),
+                tenant::TenantError::CpuBudgetExceeded { .. } => (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "quota.cpu_budget",
+                    tenant_err.to_string(),
+                ),
                 tenant::TenantError::BadRequest(_) => (
                     StatusCode::BAD_REQUEST,
                     "bad_request",

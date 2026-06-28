@@ -45,6 +45,10 @@ pub struct DefaultHookDispatcher {
     /// Optional callback for media cost tracking: (tenant_id, cost_cny).
     #[allow(clippy::type_complexity)]
     pub cost_callback: Option<std::sync::Arc<dyn Fn(&str, f64) + Send + Sync>>,
+    /// Optional callback for CPU time recording: (tenant_id, elapsed_ms).
+    /// Called on each turn end with wall-clock turn duration.
+    #[allow(clippy::type_complexity)]
+    pub cpu_time_callback: Option<std::sync::Arc<dyn Fn(&str, u64) + Send + Sync>>,
     /// Per-hook-call timeout in milliseconds.
     ///
     /// Sourced from `HookConfig::hook_timeout_ms` at construction. Used by
@@ -91,6 +95,7 @@ impl DefaultHookDispatcher {
             max_turns_per_session: 0,
             session_turn_counts: DashMap::new(),
             cost_callback: None,
+            cpu_time_callback: None,
             hook_timeout_ms: crate::harness::config::DEFAULT_HOOK_TIMEOUT_MS,
         }
     }
@@ -106,6 +111,7 @@ impl DefaultHookDispatcher {
             max_turns_per_session: config.max_turns_per_session,
             session_turn_counts: DashMap::new(),
             cost_callback: config.cost_callback.clone(),
+            cpu_time_callback: config.cpu_time_callback.clone(),
             hook_timeout_ms: config.hook_timeout_ms,
         }
     }
@@ -370,6 +376,11 @@ impl HookDispatcher for DefaultHookDispatcher {
     // ═══ Observational hooks ═══
 
     async fn on_turn_end(&self, ctx: &TurnEndCtx) {
+        // ── CPU Time Recording ──
+        if let Some(ref cb) = self.cpu_time_callback {
+            cb(&ctx.tenant_id, ctx.elapsed_ms);
+        }
+
         // ── Audit ──
         tracing::info!(
             target: "pandaria.audit",

@@ -25,6 +25,13 @@ pub enum TenantError {
     #[error("tool call rate limit exceeded for tenant {tenant_id}: {calls} calls in window")]
     ToolCallRateLimitExceeded { tenant_id: String, calls: usize },
 
+    #[error("CPU time budget exceeded for tenant {tenant_id}: consumed {consumed_ms}ms, budget {budget_ms}ms")]
+    CpuBudgetExceeded {
+        tenant_id: String,
+        consumed_ms: u64,
+        budget_ms: u64,
+    },
+
     #[error("session not found: {0}")]
     SessionNotFound(String),
 

@@ -86,6 +86,9 @@ pub struct TurnEndCtx {
     pub turn_index: u64,
     pub messages: Vec<AgentMessage>,
     pub usage: ai_provider::Usage,
+    /// Wall-clock duration of this turn in milliseconds.
+    /// Defaults to 0 if not measured.
+    pub elapsed_ms: u64,
 }
 
 impl TurnEndCtx {
@@ -104,6 +107,7 @@ impl TurnEndCtx {
             turn_index,
             messages: vec![],
             usage,
+            elapsed_ms: 0,
         }
     }
 }

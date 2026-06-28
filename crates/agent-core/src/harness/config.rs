@@ -24,6 +24,10 @@ pub struct HookConfig {
     /// second is the cost in dollars.
     #[allow(clippy::type_complexity)]
     pub cost_callback: Option<Arc<dyn Fn(&str, f64) + Send + Sync>>,
+    /// Optional callback for CPU time recording: (tenant_id, elapsed_ms).
+    /// Called on each turn end with wall-clock turn duration in milliseconds.
+    #[allow(clippy::type_complexity)]
+    pub cpu_time_callback: Option<Arc<dyn Fn(&str, u64) + Send + Sync>>,
     /// Per-hook-call timeout in milliseconds.
     ///
     /// Bounds the wall-clock time of any single `HookDispatcher` method call
@@ -41,6 +45,7 @@ impl Default for HookConfig {
             path_guard_scan_unknown: false,
             max_turns_per_session: 0,
             cost_callback: None,
+            cpu_time_callback: None,
             hook_timeout_ms: DEFAULT_HOOK_TIMEOUT_MS,
         }
     }

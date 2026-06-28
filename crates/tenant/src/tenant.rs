@@ -91,6 +91,7 @@ pub enum QuotaCheck {
     SessionCreation,
     ToolCall,
     TokenUsage { input: u64, output: u64 },
+    CpuBudget,
 }
 
 #[cfg(test)]

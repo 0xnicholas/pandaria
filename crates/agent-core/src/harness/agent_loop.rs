@@ -380,6 +380,7 @@ impl AgentLoop {
         signal: &CancellationToken,
     ) -> TurnResult {
         *turn_index += 1;
+        let turn_start = std::time::Instant::now();
         (self.config.event_sink)(AgentEvent::TurnStart {
             turn_index: *turn_index,
         });
@@ -543,6 +544,7 @@ impl AgentLoop {
                     turn_index: *turn_index,
                     messages: messages.clone(),
                     usage: assistant_msg.usage.clone(),
+                    elapsed_ms: turn_start.elapsed().as_millis() as u64,
                 }),
                 100,
                 (),
@@ -595,6 +597,7 @@ impl AgentLoop {
                 turn_index: *turn_index,
                 messages: messages.clone(),
                 usage: assistant_msg.usage.clone(),
+                elapsed_ms: turn_start.elapsed().as_millis() as u64,
             }),
             100,
             (),

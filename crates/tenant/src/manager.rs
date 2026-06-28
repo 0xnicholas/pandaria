@@ -560,6 +560,7 @@ impl TenantManager for TenantManagerImpl {
             input: estimated_input,
             output: 0,
         })?;
+        supervisor.check_quota(crate::tenant::QuotaCheck::CpuBudget)?;
 
         let turn_index = entry.turn_counter.fetch_add(1, Ordering::SeqCst);
 

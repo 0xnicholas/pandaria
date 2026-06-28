@@ -31,7 +31,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry = Arc::new(tenant::TenantRegistry::new());
 
     // --- 3. Runtime Config (from environment variables) ---
-    let runtime_config = Arc::new(agent_core::HarnessConfig::from_env(provider.clone()));
+    let mut runtime_config = agent_core::HarnessConfig::from_env(provider.clone());
+
+    // Wire CPU time callback: each turn end records wall-clock duration
+    let cpu_registry = registry.clone();
+    runtime_config.hook_config.cpu_time_callback = Some(std::sync::Arc::new(
+        move |tenant_id: &str, ms: u64| {
+            cpu_registry.record_cpu_time_ms(tenant_id, ms);
+        },
+    ));
+
+    let runtime_config = Arc::new(runtime_config);
     info!(
         default_model = %runtime_config.default_model,
         available_models = ?runtime_config.available_models,
