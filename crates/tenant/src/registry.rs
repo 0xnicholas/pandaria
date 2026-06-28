@@ -92,6 +92,14 @@ impl TenantRegistry {
         self.tenants.contains_key(tenant_id)
     }
 
+    /// Returns active session counts keyed by tenant_id.
+    pub fn active_session_counts(&self) -> std::collections::HashMap<String, usize> {
+        self.tenants
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().active_session_count()))
+            .collect()
+    }
+
     /// Number of registered tenants.
     pub fn len(&self) -> usize {
         self.tenants.len()

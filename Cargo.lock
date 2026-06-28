@@ -5514,6 +5514,7 @@ dependencies = [
  "dashmap",
  "hex",
  "hmac",
+ "observability",
  "reqwest",
  "serde",
  "serde_json",

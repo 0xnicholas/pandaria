@@ -138,7 +138,7 @@ async fn test_end_to_end_tenant_isolation() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry.clone(), runtime_config)
+        TenantManagerImpl::new(registry.clone(), runtime_config, None)
     };
 
     // Tenant 1
@@ -220,7 +220,7 @@ async fn test_tenant_session_limit_enforced() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry.clone(), runtime_config)
+        TenantManagerImpl::new(registry.clone(), runtime_config, None)
     };
 
     let info1 = manager
@@ -264,7 +264,7 @@ async fn test_delete_session_not_found() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let fake_id = uuid::Uuid::new_v4();
@@ -300,7 +300,7 @@ async fn test_shutdown_cleans_all_sessions() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry.clone(), runtime_config)
+        TenantManagerImpl::new(registry.clone(), runtime_config, None)
     };
 
     let info1 = manager

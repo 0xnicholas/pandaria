@@ -73,7 +73,7 @@ pub async fn build_test_app_with_store_and_compaction(
         session_cleanup_interval_hours: 24,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config, None),
     );
 
     let config = api_gateway::ServerConfig::default();
@@ -103,7 +103,7 @@ pub async fn build_test_app_with_config(
     let registry = Arc::new(tenant::TenantRegistry::new());
     let runtime_config = Arc::new(harness_config);
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config, None),
     );
 
     let config = api_gateway::ServerConfig::default();
@@ -481,7 +481,7 @@ pub async fn build_test_app_with_aspectus_url(
         session_cleanup_interval_hours: 24,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config, None),
     );
     let config = api_gateway::ServerConfig::default();
     let aspectus_config = api_gateway::config::AspectusConfig {
@@ -531,7 +531,7 @@ async fn build_test_app_with_aspectus_impl(
         session_cleanup_interval_hours: 24,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config, None),
     );
 
     let config = api_gateway::ServerConfig::default();

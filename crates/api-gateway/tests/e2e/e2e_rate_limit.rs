@@ -37,7 +37,7 @@ async fn build_app_with_rate_limit(
         session_cleanup_interval_hours: 24,
     });
     let manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config, None),
     );
 
     let config = api_gateway::ServerConfig {

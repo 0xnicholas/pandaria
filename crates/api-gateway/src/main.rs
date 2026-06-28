@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- 4. Tenant Manager ---
     let tenant_manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config.clone()),
+        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config.clone(), None),
     );
 
     // --- 5. Server Config + Aspectus ---

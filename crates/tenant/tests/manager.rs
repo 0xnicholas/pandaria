@@ -118,7 +118,7 @@ async fn test_manager_create_session() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let info = manager
@@ -156,7 +156,7 @@ async fn test_manager_create_session_unknown_tenant() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let err = manager
@@ -195,7 +195,7 @@ async fn test_manager_list_and_get_session() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let info = manager
@@ -243,7 +243,7 @@ async fn test_manager_send_message() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let info = manager
@@ -296,7 +296,7 @@ async fn test_manager_subscribe_events() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let info = manager
@@ -363,7 +363,7 @@ async fn test_manager_delete_session_releases_slot() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry.clone(), runtime_config)
+        TenantManagerImpl::new(registry.clone(), runtime_config, None)
     };
 
     let info = manager
@@ -413,7 +413,7 @@ async fn test_manager_interrupt_does_not_deadlock() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let info = manager
@@ -455,7 +455,7 @@ async fn test_manager_webhook_internal_blocked() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let params = CreateSessionParams {
@@ -507,7 +507,7 @@ async fn test_manager_webhook_allowed_via_allowlist() {
             session_retention_days: 7,
             session_cleanup_interval_hours: 24,
         });
-        TenantManagerImpl::new(registry, runtime_config)
+        TenantManagerImpl::new(registry, runtime_config, None)
     };
 
     let params = CreateSessionParams {

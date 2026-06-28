@@ -187,6 +187,19 @@ pub trait TenantManager: Send + Sync {
 
     /// Gracefully shut down all sessions.
     async fn shutdown(&self);
+
+    /// Returns per-tenant active session counts.
+    /// Default impl returns single entry with key "__total__".
+    async fn complete_session(&self, _tenant_id: &str, _session_id: &Uuid) -> Result<(), TenantError> {
+        Ok(())
+    }
+
+    /// Returns per-tenant active session counts keyed by tenant_id.
+    async fn active_session_counts(&self) -> Result<std::collections::HashMap<String, usize>, TenantError> {
+        let mut m = std::collections::HashMap::new();
+        m.insert("__total__".into(), self.active_session_count());
+        Ok(m)
+    }
 }
 
 /// Quota information for a tenant.
@@ -239,11 +252,17 @@ pub struct TenantManagerImpl {
     sessions: DashMap<(String, Uuid), ActiveSession>,
     /// Maximum allowed synchronous wait timeout in milliseconds.
     max_sync_wait_ms: u64,
+    /// Optional metrics registry for per-tenant observability.
+    metrics: Option<Arc<observability::MetricsRegistry>>,
 }
 
 impl TenantManagerImpl {
     /// Create a new `TenantManagerImpl`.
-    pub fn new(registry: Arc<TenantRegistry>, runtime_config: Arc<HarnessConfig>) -> Self {
+    pub fn new(
+        registry: Arc<TenantRegistry>,
+        runtime_config: Arc<HarnessConfig>,
+        metrics: Option<Arc<observability::MetricsRegistry>>,
+    ) -> Self {
         // Spawn background session cleanup task
         if let Some(ref store) = runtime_config.store {
             let store = store.clone();
@@ -279,6 +298,7 @@ impl TenantManagerImpl {
             runtime_config,
             sessions: DashMap::new(),
             max_sync_wait_ms: 60_000,
+            metrics,
         }
     }
 
@@ -480,6 +500,14 @@ impl TenantManager for TenantManagerImpl {
             "session created"
         );
 
+        if let Some(ref m) = self.metrics {
+            m.increment_counter(
+                "pandaria_sessions_total",
+                &[("tenant_id", tenant_id), ("status", "created")],
+                1,
+            );
+        }
+
         Ok(info)
     }
 
@@ -641,6 +669,14 @@ impl TenantManager for TenantManagerImpl {
             session_id = %session_id,
             "session deleted"
         );
+
+        if let Some(ref m) = self.metrics {
+            m.increment_counter(
+                "pandaria_sessions_total",
+                &[("tenant_id", tenant_id), ("status", "failed")],
+                1,
+            );
+        }
 
         Ok(())
     }
@@ -894,6 +930,21 @@ impl TenantManager for TenantManagerImpl {
 
     fn active_session_count(&self) -> usize {
         self.sessions.len()
+    }
+
+    async fn complete_session(&self, tenant_id: &str, _session_id: &Uuid) -> Result<(), TenantError> {
+        if let Some(ref m) = self.metrics {
+            m.increment_counter(
+                "pandaria_sessions_total",
+                &[("tenant_id", tenant_id), ("status", "completed")],
+                1,
+            );
+        }
+        Ok(())
+    }
+
+    async fn active_session_counts(&self) -> Result<std::collections::HashMap<String, usize>, TenantError> {
+        Ok(self.registry.active_session_counts())
     }
 }
 
