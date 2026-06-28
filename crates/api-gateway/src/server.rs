@@ -23,6 +23,8 @@ pub struct AppState {
     pub registry: Arc<tenant::TenantRegistry>,
     pub aspectus: aspectus_client::AspectusClient,
     pub tenant_cache: TenantCache,
+    /// Optional metrics registry for Prometheus export.
+    pub metrics_registry: Option<Arc<observability::MetricsRegistry>>,
 }
 
 impl AppState {
@@ -48,6 +50,7 @@ impl AppState {
             registry,
             aspectus,
             tenant_cache: TenantCache::new(),
+            metrics_registry: None,
         })
     }
 
@@ -79,6 +82,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/events", get(events::stream))
         .route("/sessions/{id}/ws", get(crate::routes::ws::session_ws))
         .route("/sessions/{id}/compact", post(sessions::compact))
+        .route("/sessions/{id}/complete", post(sessions::complete))
         .route("/sessions/{id}/messages", get(sessions::messages))
         .route("/sessions/batch", post(sessions::batch_create))
         .route("/tenant/quota", get(sessions::get_quota))

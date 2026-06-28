@@ -20,6 +20,7 @@ dashmap = { workspace = true }
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
+observability = { path = "../observability" }
 secrecy = { version = "0.10", features = ["serde"] }
 dotenvy = "0.15"
 tenant = { path = "../tenant" }

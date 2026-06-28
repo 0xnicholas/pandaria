@@ -40,20 +40,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // --- 4. Tenant Manager ---
+    let metrics_registry = Arc::new(observability::MetricsRegistry::new());
     let tenant_manager: Arc<dyn tenant::TenantManager> = Arc::new(
-        tenant::manager::TenantManagerImpl::new(registry.clone(), runtime_config.clone(), None),
+        tenant::manager::TenantManagerImpl::new(
+            registry.clone(),
+            runtime_config.clone(),
+            Some(metrics_registry.clone()),
+        ),
     );
 
     // --- 5. Server Config + Aspectus ---
     let config = ServerConfig::from_env();
     let aspectus_config = api_gateway::config::AspectusConfig::from_env()?;
 
-    let state = Arc::new(AppState::new(
+    let mut state = AppState::new(
         tenant_manager,
         config.clone(),
         registry,
         &aspectus_config,
-    )?);
+    )?;
+    state.metrics_registry = Some(metrics_registry);
+    let state = Arc::new(state);
 
     // --- 6. Tavern Workflow Engine ---
     // SSRF policy: reuse the one loaded by HarnessConfig (from

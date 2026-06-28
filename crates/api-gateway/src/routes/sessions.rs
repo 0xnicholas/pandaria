@@ -303,3 +303,16 @@ fn downgrade_media_in_message(msg: &mut agent_core::AgentMessage) {
         }
     }
 }
+
+/// Mark a session as completed normally (records metrics counter).
+pub async fn complete(
+    State(state): State<Arc<AppState>>,
+    Extension(tenant_id): Extension<TenantId>,
+    Path(session_id): Path<Uuid>,
+) -> Result<StatusCode, GatewayError> {
+    state
+        .tenant_manager
+        .complete_session(&tenant_id.0, &session_id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
