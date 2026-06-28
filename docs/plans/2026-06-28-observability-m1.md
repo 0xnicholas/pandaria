@@ -103,7 +103,15 @@ pub use registry::MetricsRegistry;
 //! changes when Layer-based collection is added.
 ```
 
-- [ ] **Step 5: Verify crate compiles**
+- [ ] **Step 5: Register crate in workspace members**
+
+Open the root `Cargo.toml`. Find `[workspace.members]` and add:
+
+```toml
+"crates/observability",
+```
+
+- [ ] **Step 6: Verify crate compiles**
 
 ```bash
 cargo check -p observability
@@ -111,11 +119,11 @@ cargo check -p observability
 
 Expected: compiles with no errors.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add crates/observability/
-git commit -m "feat(observability): create crate skeleton"
+git add crates/observability/ Cargo.toml
+git commit -m "feat(observability): create crate skeleton, register workspace member"
 ```
 
 ---
@@ -152,7 +160,8 @@ enum MetricValue {
 struct HistogramInner {
     buckets: Vec<f64>,       // upper bounds
     counts: Vec<AtomicU64>,  // per-bucket count
-    sum: AtomicU64,          // sum encoded as f64 bits
+    inf_count: AtomicU64,    // count of values exceeding all buckets (+Inf)
+    sum: Mutex<f64>,         // sum of all observed values
 }
 
 /// Composite key for metric lookup: (name, label_string).
@@ -305,28 +314,30 @@ impl MetricsRegistry {
                         ));
                     }
                     MetricValue::Histogram(h) => {
-                        let sum = f64::from_bits(h.sum.load(Ordering::Relaxed));
+                        let sum = *h.sum.lock().expect("histogram sum lock poisoned");
+                        let raw_labels = &entry.key().labels;
                         let mut cumulative = 0u64;
                         for (i, bucket) in h.buckets.iter().enumerate() {
                             cumulative += h.counts[i].load(Ordering::Relaxed);
                             output.push_str(&format!(
-                                "{}_bucket{} {{le=\"{}\"}} {}\n",
-                                name, labels_str, bucket, cumulative
+                                "{}_bucket{{{},le=\"{}\"}} {}\n",
+                                name, raw_labels, bucket, cumulative
                             ));
                         }
-                        // +Inf bucket
-                        let total: u64 = h.counts.iter().map(|c| c.load(Ordering::Relaxed)).sum();
+                        // +Inf bucket (includes values above all defined buckets)
+                        let total: u64 = h.counts.iter().map(|c| c.load(Ordering::Relaxed)).sum()
+                            + h.inf_count.load(Ordering::Relaxed);
                         output.push_str(&format!(
-                            "{}_bucket{} {{le=\"+Inf\"}} {}\n",
-                            name, labels_str, total
+                            "{}_bucket{{{},le=\"+Inf\"}} {}\n",
+                            name, raw_labels, total
                         ));
                         output.push_str(&format!(
-                            "{}_count{} {}\n",
-                            name, labels_str, total
+                            "{}_count{{{}}} {}\n",
+                            name, raw_labels, total
                         ));
                         output.push_str(&format!(
-                            "{}_sum{} {}\n",
-                            name, labels_str, sum
+                            "{}_sum{{{}}} {}\n",
+                            name, raw_labels, sum
                         ));
                     }
                 }
@@ -342,23 +353,16 @@ impl HistogramInner {
         Self {
             buckets: buckets.to_vec(),
             counts: buckets.iter().map(|_| AtomicU64::new(0)).collect(),
-            sum: AtomicU64::new(0),
+            inf_count: AtomicU64::new(0),
+            sum: Mutex::new(0.0),
         }
     }
 
     fn record(&self, value: f64) {
-        // Update sum (atomic f64 via to_bits/from_bits with fetch_update)
-        let bits = value.to_bits();
-        let _ = self.sum.fetch_update(
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-            |current| Some(f64::from_bits(current).to_bits() + value.to_bits()),
-        );
-        // Actually, this is wrong for f64 atomics. Use a simple CAS loop.
-        // For M1 simplicity, we use a Mutex-protected sum:
-        // Let's just use the first bucket approach — the actual impl will
-        // be refined during Task 2 implementation.
-
+        // Update sum
+        if let Ok(mut s) = self.sum.lock() {
+            *s += value;
+        }
         // Find the right bucket
         for (i, upper) in self.buckets.iter().enumerate() {
             if value <= *upper {
@@ -366,7 +370,8 @@ impl HistogramInner {
                 return;
             }
         }
-        // Falls in +Inf bucket — handled during export (total - sum of bucket counts)
+        // Value exceeds all defined buckets — record in +Inf
+        self.inf_count.fetch_add(1, Ordering::Relaxed);
     }
 }
 
@@ -470,13 +475,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail (metrics not implemented yet)**
-
-```bash
-cargo test -p observability 2>&1 | tail -20
-```
-
-Expected: compilation errors (no `MetricsRegistry` yet) — actually we wrote the tests and impl together. Let's verify they pass:
+- [ ] **Step 2: Run tests and verify they pass**
 
 ```bash
 cargo test -p observability
@@ -484,62 +483,7 @@ cargo test -p observability
 
 Expected: all 8 tests pass.
 
-- [ ] **Step 3: Review HistogramInner::record sum tracking**
-
-The initial pseudocode uses a broken `fetch_update` for f64. Fix: track sum in a `Mutex<f64>` instead.
-
-Replace `HistogramInner`:
-
-```rust
-struct HistogramInner {
-    buckets: Vec<f64>,
-    counts: Vec<AtomicU64>,
-    sum: Mutex<f64>,
-}
-
-impl HistogramInner {
-    fn new(buckets: &[f64]) -> Self {
-        Self {
-            buckets: buckets.to_vec(),
-            counts: buckets.iter().map(|_| AtomicU64::new(0)).collect(),
-            sum: Mutex::new(0.0),
-        }
-    }
-
-    fn record(&self, value: f64) {
-        // Update sum
-        if let Ok(mut s) = self.sum.lock() {
-            *s += value;
-        }
-        // Find bucket
-        for (i, upper) in self.buckets.iter().enumerate() {
-            if value <= *upper {
-                self.counts[i].fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-        }
-    }
-}
-```
-
-And update `export()` to read sum:
-
-```rust
-MetricValue::Histogram(h) => {
-    let sum = *h.sum.lock().expect("histogram sum lock poisoned");
-    // ... rest unchanged
-}
-```
-
-- [ ] **Step 4: Run tests again after fix**
-
-```bash
-cargo test -p observability
-```
-
-Expected: all 8 tests pass.
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add crates/observability/src/registry.rs
@@ -636,7 +580,45 @@ if let Some(ref usage) = assistant_msg.usage {
 }
 ```
 
-- [ ] **Step 6: Verify compilation**
+- [ ] **Step 6: Thread metrics through SessionConfig → SessionActor → AgentLoopConfig**
+
+Add `metrics` field to `SessionConfig` in `crates/agent-core/src/harness/session/mod.rs`:
+
+```rust
+pub struct SessionConfig {
+    // ... existing fields ...
+    pub metrics: Option<Arc<observability::MetricsRegistry>>,
+}
+```
+
+Add `metrics` field to `SessionActor`:
+
+```rust
+pub struct SessionActor {
+    // ... existing fields ...
+    metrics: Option<Arc<observability::MetricsRegistry>>,
+}
+```
+
+In `SessionActor::new()`, store `config.metrics.clone()`:
+
+```rust
+Self {
+    // ... existing fields ...
+    metrics: config.metrics.clone(),
+}
+```
+
+Update the 3 `AgentLoopConfig { ... }` struct literals in `mod.rs` to include `metrics:`:
+- Around line 424: add `metrics: self.metrics.clone(),`
+- Around line 594: add `metrics: self.metrics.clone(),`
+- Around line 1222 (test helper): add `metrics: None,`
+
+Update the `SessionConfig { ... }` struct literal in `builder.rs` (~line 252) to include `metrics: None,`.
+
+Update all `SessionConfig { ... }` test literals in `session/tests.rs` (~22 occurrences) to include `metrics: None,`.
+
+- [ ] **Step 7: Verify compilation**
 
 ```bash
 cargo check -p agent-core 2>&1 | tail -5
@@ -767,7 +749,7 @@ ToolExecutor::new(
 )
 ```
 
-Find the production call site (likely in `harness/session/mod.rs` or `agent_loop.rs`). Update to pass `self.metrics.clone()`.
+Find the production call site at `crates/agent-core/src/harness/agent_loop.rs` line 827. Update to pass `self.config.metrics.clone()`.
 
 - [ ] **Step 5: Verify compilation**
 
