@@ -50,7 +50,7 @@
 [package]
 name = "observability"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Lightweight embedded metrics registry with Prometheus export for Pandaria"
 
 [dependencies]
@@ -616,7 +616,7 @@ Update the 3 `AgentLoopConfig { ... }` struct literals in `mod.rs` to include `m
 
 Update the `SessionConfig { ... }` struct literal in `builder.rs` (~line 252) to include `metrics: None,`.
 
-Update all `SessionConfig { ... }` test literals in `session/tests.rs` (~22 occurrences) to include `metrics: None,`.
+Update all `SessionConfig { ... }` struct literals across the codebase (~47 occurrences in ~10 files) to include `metrics: None,`. Key files: `session/tests.rs` (~24), `skills_integration_tests.rs` (~7), `e2e_transform_tests.rs` (~3), `compaction_tests.rs` (~3), `e2e_provider_tests.rs` (~3), `e2e_retry_tests.rs` (~2), `recovery_integration_tests.rs` (~2), `loop_integration_tests.rs` (~1), `e2e_tool_use_tests.rs` (~1), `builder.rs` (~1). The compiler will catch any missed sites.
 
 - [ ] **Step 7: Verify compilation**
 
@@ -626,7 +626,7 @@ cargo check -p agent-core 2>&1 | tail -5
 
 Expected: compiles without errors.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add crates/agent-core/Cargo.toml crates/agent-core/src/harness/agent_loop.rs
@@ -1091,7 +1091,7 @@ In `TenantManagerImpl`'s override of `complete_session()`:
 
 ```rust
 async fn complete_session(&self, tenant_id: &str, session_id: &Uuid) -> Result<(), TenantError> {
-    // ... existing completion logic (cleanup, etc.) ...
+    // Record completed metric (no existing cleanup logic — this is a new method)
     if let Some(ref m) = self.metrics {
         m.increment_counter(
             "pandaria_sessions_total",
@@ -1131,7 +1131,26 @@ if let Some(ref m) = self.metrics {
 
 If per-tenant expired counts are not tracked in the cleanup path, record a single increment per cleanup with a sentinel or skip the per-tenant breakdown for expired status.
 
-- [ ] **Step 4: Update TenantManagerImpl::new() call site**
+- [ ] **Step 4: Add POST /sessions/{id}/complete endpoint to api-gateway**
+
+Create a new route in `crates/api-gateway/src/routes/sessions.rs`:
+
+```rust
+pub async fn complete_session(
+    State(state): State<Arc<AppState>>,
+    Extension(tenant_id): Extension<TenantId>,
+    Path(session_id): Path<Uuid>,
+) -> Result<impl IntoResponse, GatewayError> {
+    state.tenant_manager.complete_session(&tenant_id.0, &session_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+```
+
+Register in the router: `.route("/sessions/{id}/complete", post(complete_session))`.
+
+This is the call site for `complete_session()` — API consumers invoke `POST /api/v1/sessions/{id}/complete` before `DELETE` to distinguish normal completion from failure.
+
+- [ ] **Step 5: Update TenantManagerImpl::new() call site**
 
 Find where `TenantManagerImpl::new()` is called (likely in `api-gateway/src/main.rs` or a test helper). Add `None` for the metrics parameter for now (will be wired in Task 10).
 
@@ -1338,101 +1357,193 @@ git commit -m "feat(api-gateway): wire MetricsRegistry into startup and AppState
 **Files:**
 - Create: `crates/api-gateway/tests/e2e/e2e_metrics.rs`
 
+Use the existing E2E pattern: `common::build_test_app(provider)` returns an `axum::Router`, tests use `app.clone().oneshot(Request::builder()...)`. No fictional `TestServer`.
+
 - [ ] **Step 1: Create E2E test file**
 
 ```rust
-use crate::common::*;
+//! E2E tests for the /metrics endpoint with per-tenant observability.
+
+mod common;
+
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use tower::ServiceExt;
 
 /// Verify GET /metrics returns 200 and valid Prometheus format.
 #[tokio::test]
 async fn e2e_metrics_endpoint_returns_prometheus() {
-    let server = TestServer::start().await;
+    let _ = tracing_subscriber::fmt().try_init();
 
-    let resp = server.get("/metrics").await;
-    assert_eq!(resp.status(), 200);
+    let body = common::openai_text_sse_body("Hello");
+    let (_server, provider) = common::start_wiremock_openai(&body).await;
+    let app = common::build_test_app(provider).await;
 
-    let body = resp.text().await;
-    // Must contain HELP and TYPE lines for each metric
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = common::text_body(resp).await;
     assert!(body.contains("# HELP "));
     assert!(body.contains("# TYPE "));
-    // Must contain the active sessions gauge
     assert!(body.contains("pandaria_sessions_active"));
 }
 
-/// Verify metrics include session data after creating a session.
+/// Verify session creation counter appears in metrics.
 #[tokio::test]
 async fn e2e_metrics_after_session_creation() {
-    let server = TestServer::start().await;
+    let _ = tracing_subscriber::fmt().try_init();
+
+    let body = common::openai_text_sse_body("Hello");
+    let (_server, provider) = common::start_wiremock_openai(&body).await;
+    let app = common::build_test_app(provider).await;
+    let token = "pk_live_test-tenant";
 
     // Create a session
-    let session = server
-        .create_session("test-tenant", "Test session", &[])
-        .await;
+    let create = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/sessions")
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"title": "metrics test"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(create.status(), StatusCode::CREATED);
+    let session = common::json_body(create).await;
+    let session_id = session["id"].as_str().unwrap();
 
-    let resp = server.get("/metrics").await;
-    let body = resp.text().await;
-
-    // Should have session creation counter
+    // Check metrics
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = common::text_body(resp).await;
     assert!(body.contains("pandaria_sessions_total"));
     assert!(body.contains("created"));
 
-    // Clean up
-    server.complete_session("test-tenant", &session.id).await;
+    // Cleanup: complete then delete
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/sessions/{}/complete", session_id))
+                .header("Authorization", format!("Bearer {}", token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    let _ = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri(format!("/api/v1/sessions/{}", session_id))
+                .header("Authorization", format!("Bearer {}", token))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
 }
 
 /// Verify per-tenant metric isolation.
 #[tokio::test]
 async fn e2e_metrics_multi_tenant_isolation() {
-    let server = TestServer::start().await;
+    let _ = tracing_subscriber::fmt().try_init();
 
-    // Create sessions for two tenants
-    let s1 = server
-        .create_session("tenant-a", "Session A", &[])
-        .await;
-    let s2 = server
-        .create_session("tenant-b", "Session B", &[])
-        .await;
+    let body = common::openai_text_sse_body("Hello");
+    let (_server, provider) = common::start_wiremock_openai(&body).await;
+    let app = common::build_test_app(provider).await;
+    let token_a = "pk_live_test-tenant";
 
-    let body = server.get("/metrics").await.text().await;
+    // Build a second app with a different tenant
+    let body2 = common::openai_text_sse_body("Hello");
+    let (_server2, provider2) = common::start_wiremock_openai(&body2).await;
+    let app2 = common::build_test_app(provider2).await;
 
-    // Both tenants should have their own session counter entries
-    assert!(body.contains("tenant_id=\"tenant-a\""));
-    assert!(body.contains("tenant_id=\"tenant-b\""));
+    // Create sessions for both tenants on their respective apps
+    for (app, token) in [(&app, token_a), (&app2, "pk_live_test-tenant-b")] {
+        let create = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/sessions")
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"title": "iso test"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(create.status(), StatusCode::CREATED);
+    }
 
-    // Active sessions per tenant should be distinct
-    let lines_a: Vec<&str> = body
-        .lines()
-        .filter(|l| l.contains("tenant-a"))
-        .collect();
-    let lines_b: Vec<&str> = body
-        .lines()
-        .filter(|l| l.contains("tenant-b"))
-        .collect();
-    assert!(!lines_a.is_empty());
-    assert!(!lines_b.is_empty());
-
-    // Clean up
-    server.complete_session("tenant-a", &s1.id).await;
-    server.complete_session("tenant-b", &s2.id).await;
+    // Each app's /metrics should only show its own tenant
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = common::text_body(resp).await;
+    assert!(body.contains("test-tenant"));
 }
 ```
 
-- [ ] **Step 2: Implement test helpers if needed**
+- [ ] **Step 2: Add `text_body` helper if missing**
 
-Check if `TestServer` already has `create_session()` and `complete_session()` methods. If not, add minimal versions to the test common module. Alternatively, adapt to existing E2E test patterns (use existing helper functions from `e2e/common.rs`).
+Check `crates/api-gateway/tests/e2e/common.rs` for a `text_body` helper. If absent, add:
+
+```rust
+pub async fn text_body(response: axum::response::Response) -> String {
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
+}
+```
+
+If `json_body` already exists, `text_body` is a simpler variant (no JSON parsing).
 
 - [ ] **Step 3: Run E2E tests**
 
 ```bash
-cargo test -p api-gateway --test e2e_metrics 2>&1 | tail -20
+cargo test -p api-gateway --test e2e_session_lifecycle -- e2e_metrics 2>&1 | tail -20
 ```
 
-Expected: all 3 tests pass.
+Note: E2E tests in api-gateway share a single test binary (`e2e_session_lifecycle`). Use test name filter.
+
+Expected: all 3 tests pass (or skip if external dependencies unavailable).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/api-gateway/tests/e2e/e2e_metrics.rs
+git add crates/api-gateway/tests/e2e/e2e_metrics.rs crates/api-gateway/tests/e2e/common.rs
 git commit -m "test(api-gateway): add E2E tests for /metrics endpoint"
 ```
 
