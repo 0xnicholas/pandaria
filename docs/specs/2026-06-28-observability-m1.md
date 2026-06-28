@@ -249,7 +249,8 @@ api-gateway main.rs
 | `agent-core` | `harness/agent_loop.rs` | `AgentLoopConfig` 新增 `pub metrics: Option<Arc<MetricsRegistry>>`；每 turn 结束后调用 `record_turn_metrics()` |
 | `agent-core` | `harness/tool.rs` | `ToolExecutor::new()` 新增 `metrics: Option<Arc<MetricsRegistry>>` 参数；`execute_tool_call()` 返回前埋点 |
 | `tenant` | `Cargo.toml` | 新增 `observability = { path = "../observability" }` |
-| `tenant` | `manager.rs` | `TenantManagerImpl` 新增 `metrics` 字段；create/complete/fail/expire 时埋点 |
+| `tenant` | `manager.rs` | `TenantManagerImpl` 新增 `metrics` 字段；create/complete/fail/expire 时埋点；覆写 `active_session_counts()` |
+| `tenant` | `manager.rs` | `TenantManager` trait 新增 `async fn active_session_counts(&self) -> HashMap<String, usize>` 默认方法 |
 | `api-gateway` | `Cargo.toml` | 新增 `observability = { path = "../observability" }` |
 | `api-gateway` | `server.rs` | `AppState` 新增 `pub metrics_registry: Option<Arc<MetricsRegistry>>` |
 | `api-gateway` | `routes/metrics.rs` | 重写：优先使用 `registry.export()`，fallback 到旧裸 gauge |
@@ -296,6 +297,20 @@ impl TenantManagerImpl {
 ```
 
 > **设计决策**：`pandaria_sessions_active` 不通过 increment/decrement 维护，而是在 `/metrics` 端点每次请求时调用 `active_session_count()` + `set_gauge()` 生成精确瞬时值。避免状态不一致。
+>
+> `TenantManager` trait 需新增方法以支持 per-tenant 分解：
+>
+> ```rust
+> /// Returns active session counts keyed by tenant_id.
+> /// Default impl delegates to active_session_count() with tenant_id="__total__".
+> async fn active_session_counts(&self) -> HashMap<String, usize> {
+>     let mut m = HashMap::new();
+>     m.insert("__total__".into(), self.active_session_count());
+>     m
+> }
+> ```
+>
+> `TenantManagerImpl` 覆写此方法，从 `TenantRegistry` 遍历租户获取各自计数。
 
 **Token 消耗** (`agent-core/src/harness/agent_loop.rs`):
 
@@ -377,6 +392,16 @@ pub async fn get(
     state: axum::extract::State<Arc<AppState>>,
 ) -> impl IntoResponse {
     if let Some(ref registry) = state.metrics_registry {
+        // ★ 先写入 per-tenant 活跃 session gauge（每次 scrape 时取瞬时值）
+        if let Ok(counts) = state.tenant_manager.active_session_counts().await {
+            for (tenant_id, count) in &counts {
+                registry.set_gauge(
+                    "pandaria_sessions_active",
+                    &[("tenant_id", tenant_id)],
+                    *count as i64,
+                );
+            }
+        }
         let body = registry.export();
         return ([("content-type", "text/plain; charset=utf-8")], body);
     }
@@ -384,9 +409,9 @@ pub async fn get(
     // Fallback: 兼容未配置 registry 的场景（测试环境 / 最小部署）
     let active = state.tenant_manager.active_session_count();
     let body = format!(
-        "# HELP pandaria_sessions_active Active sessions\n\
-         # TYPE pandaria_sessions_active gauge\n\
-         pandaria_sessions_active {}\n",
+        "# HELP pandaria_active_sessions Active sessions\n\
+         # TYPE pandaria_active_sessions gauge\n\
+         pandaria_active_sessions {}\n",
         active
     );
     ([("content-type", "text/plain; charset=utf-8")], body)
