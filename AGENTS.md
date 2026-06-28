@@ -244,7 +244,7 @@ pawbun-mcp-server → pawbun-toolkit, pawbun-files
 | Session 隔离粒度（tokio task） | ✅ 已确定 |
 | Session 持久化 schema | ✅ 已实现（PostgreSQL adapter + Redis adapter，支持 auto-restore + 增量保存 `append_entries`） |
 | LLM provider 抽象接口 | ✅ 已实现（Anthropic/OpenAI/Google/Mistral/DeepSeek + Bedrock feature-gated） |
-| API Gateway 协议选型 | 🟡 初步确定（客户端 API 采用 SSE + REST） |
+| API Gateway 协议选型 | ✅ SSE + REST + WebSocket，已完整实现并投产 |
 | tenant crate | ✅ 核心功能已实现（并发配额、token/tool call 计量、CPU 时间预算强制、session 生命周期、后台过期清理任务）。`SessionStore::cleanup_expired_sessions` 在 agent-core trait + PostgreSQL/Redis adapter 全部落地，integration tests 已通过 |
 | Memory 系统 | ✅ MemoryStore trait + MemoryHookDispatcher + Conversation Formatter + `EmeraldMemoryStore` HTTP adapter（`agent-core/src/memory/emerald.rs`，7 单元测试通过） |
 | observability crate | ✅ M1 已实现（v0.2.0）。`MetricsRegistry`（counter/gauge/histogram）+ Prometheus export，per-tenant 指标采集（sessions/tokens/tool calls），通过 `Arc<MetricsRegistry>` 注入各组件 |
