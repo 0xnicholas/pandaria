@@ -35,3 +35,8 @@ tracing-subscriber = { workspace = true }
 tempfile = "3"
 wiremock = "0.6"
 secrecy = "0.10"
+observability = { path = "../observability" }
+
+[[test]]
+name = "metrics_integration"
+path = "tests/metrics_integration.rs"
