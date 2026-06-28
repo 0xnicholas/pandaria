@@ -76,6 +76,7 @@ data: [DONE]
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     // Cap retry delay so the test finishes quickly.
@@ -151,6 +152,7 @@ async fn test_non_retryable_error_no_retry() {
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     let mut opts = StreamOptions::default();

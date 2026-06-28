@@ -18,6 +18,7 @@ dependencies = [
  "base64",
  "dashmap",
  "futures",
+ "observability",
  "pawbun-toolkit",
  "regex",
  "reqwest",

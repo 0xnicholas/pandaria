@@ -153,6 +153,7 @@ data: [DONE]
         tools,
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     let results = session

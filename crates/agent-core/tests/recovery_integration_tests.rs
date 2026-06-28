@@ -76,6 +76,7 @@ async fn test_recovery_overflow_then_compact_and_retry() {
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     // Fill with enough entries to trigger compaction
@@ -167,6 +168,7 @@ async fn test_recovery_double_overflow_aborts() {
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     // Fill with enough entries

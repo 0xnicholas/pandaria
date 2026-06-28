@@ -20,6 +20,7 @@ pub(crate) struct ToolExecutor {
     session_id: String,
     hook_dispatcher: Arc<dyn HookDispatcher>,
     tool: AgentToolRef,
+    metrics: Option<Arc<observability::MetricsRegistry>>,
 }
 
 impl ToolExecutor {
@@ -28,12 +29,14 @@ impl ToolExecutor {
         session_id: String,
         hook_dispatcher: Arc<dyn HookDispatcher>,
         tool: AgentToolRef,
+        metrics: Option<Arc<observability::MetricsRegistry>>,
     ) -> Self {
         Self {
             tenant_id,
             session_id,
             hook_dispatcher,
             tool,
+            metrics,
         }
     }
 
@@ -47,6 +50,7 @@ impl ToolExecutor {
         on_progress: Option<&(dyn Fn(AgentToolProgressUpdate) + Send + Sync)>,
         signal: CancellationToken,
     ) -> Result<ToolResultMsg, AgentError> {
+        let start = std::time::Instant::now();
         // Step 1: Dispatch on_tool_call (blocking hook)
         let tool_call_ctx = ToolCallCtx {
             tenant_id: self.tenant_id.clone(),
@@ -73,6 +77,17 @@ impl ToolExecutor {
 
         match decision {
             HookDecision::Block { reason } => {
+                if let Some(ref m) = self.metrics {
+                    m.increment_counter(
+                        "pandaria_tool_calls_total",
+                        &[
+                            ("tenant_id", &self.tenant_id),
+                            ("tool", &tool_call.name),
+                            ("status", "blocked"),
+                        ],
+                        1,
+                    );
+                }
                 warn!(
                     tenant_id = %self.tenant_id,
                     session_id = %self.session_id,
@@ -150,6 +165,23 @@ impl ToolExecutor {
             Some(d)
         };
 
+        let elapsed = start.elapsed();
+        if let Some(ref m) = self.metrics {
+            let tid = &self.tenant_id;
+            let tool = &tool_call.name;
+            let status = if result.is_error { "error" } else { "success" };
+            m.increment_counter(
+                "pandaria_tool_calls_total",
+                &[("tenant_id", tid), ("tool", tool), ("status", status)],
+                1,
+            );
+            m.observe_duration(
+                "pandaria_tool_call_duration_seconds",
+                &[("tenant_id", tid), ("tool", tool)],
+                elapsed.as_secs_f64(),
+            );
+        }
+
         Ok(ToolResultMsg {
             tool_call_id: tool_call.id.clone(),
             tool_name: tool_call.name.clone(),
@@ -208,7 +240,7 @@ mod tests {
     async fn test_tool_executor_normal_flow() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -245,7 +277,7 @@ mod tests {
     async fn test_tool_executor_blocked() {
         let dispatcher = Arc::new(BlockAllDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -310,7 +342,7 @@ mod tests {
     async fn test_tool_progress_callback() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(ProgressTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -360,7 +392,7 @@ mod tests {
     async fn test_tool_result_mutation() {
         let dispatcher = Arc::new(MutatingDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -412,7 +444,7 @@ mod tests {
     async fn test_tool_execution_error() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(ErrorTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -468,7 +500,7 @@ mod tests {
     async fn test_tool_terminate_flag_propagation() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(TerminateTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -503,7 +535,7 @@ mod tests {
     async fn test_on_tool_call_panic_uses_default() {
         let dispatcher = Arc::new(PanicOnToolCallDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -534,7 +566,7 @@ mod tests {
     async fn test_on_tool_result_panic_uses_default() {
         let dispatcher = Arc::new(PanicOnToolResultDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -583,7 +615,7 @@ mod tests {
     async fn test_tool_execute_panic_is_caught() {
         let dispatcher = Arc::new(AllowAllDispatcher);
         let tool = Arc::new(PanicTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),
@@ -617,7 +649,7 @@ mod tests {
     async fn test_tool_result_mutation_terminate_flag() {
         let dispatcher = Arc::new(TerminateMutatingDispatcher);
         let tool = Arc::new(MockTool);
-        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool);
+        let executor = ToolExecutor::new("t1".to_string(), "s1".to_string(), dispatcher, tool, None);
 
         let tool_call = ToolCall {
             id: "call_1".to_string(),

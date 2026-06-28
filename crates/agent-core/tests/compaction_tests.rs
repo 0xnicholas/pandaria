@@ -639,6 +639,7 @@ async fn test_compact_via_session_actor_writes_entry() {
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     // Fill entries with sufficient text to trigger summarization
@@ -695,6 +696,7 @@ async fn test_compact_truncates_old_entries() {
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     let entries = build_many_entries(10);
@@ -754,6 +756,7 @@ async fn test_multiple_compactions_truncate_incrementally() {
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     // First batch

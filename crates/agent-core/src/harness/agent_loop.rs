@@ -51,6 +51,10 @@ pub struct AgentLoopConfig {
     /// When set, each `TextDelta` is forwarded before accumulation.
     #[doc(hidden)]
     pub text_stream_tx: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    /// Optional metrics registry for per-tenant observability.
+    /// When None, all metric recording is skipped (zero overhead).
+    #[doc(hidden)]
+    pub metrics: Option<Arc<observability::MetricsRegistry>>,
 }
 
 impl AgentLoopConfig {
@@ -78,6 +82,7 @@ impl AgentLoopConfig {
             circuit_breaker: None,
             skills: Vec::new(),
             text_stream_tx: None,
+            metrics: None,
         }
     }
 }
@@ -200,6 +205,23 @@ pub struct AgentLoop {
 impl AgentLoop {
     pub fn new(config: AgentLoopConfig) -> Self {
         Self { config }
+    }
+
+    /// Record per-turn token consumption metrics.
+    fn record_turn_metrics(&self, usage: &ai_provider::Usage) {
+        if let Some(ref m) = self.config.metrics {
+            let tid = &self.config.tenant_id;
+            m.increment_counter(
+                "pandaria_tokens_consumed_total",
+                &[("tenant_id", tid), ("direction", "input")],
+                usage.input_tokens,
+            );
+            m.increment_counter(
+                "pandaria_tokens_consumed_total",
+                &[("tenant_id", tid), ("direction", "output")],
+                usage.output_tokens,
+            );
+        }
     }
 
     #[instrument(
@@ -527,6 +549,7 @@ impl AgentLoop {
                 "on_turn_end",
             )
             .await;
+            self.record_turn_metrics(&assistant_msg.usage);
             return TurnResult::Stop;
         }
 
@@ -578,6 +601,8 @@ impl AgentLoop {
             "on_turn_end",
         )
         .await;
+
+        self.record_turn_metrics(&assistant_msg.usage);
 
         if all_terminate {
             return TurnResult::Stop;
@@ -829,6 +854,7 @@ impl AgentLoop {
                     self.config.session_id.clone(),
                     self.config.hook_dispatcher.clone(),
                     tool,
+                    self.config.metrics.clone(),
                 );
                 let event_sink = self.config.event_sink.clone();
                 let tool_call_id = tc.id.clone();
@@ -958,6 +984,7 @@ mod tests {
             circuit_breaker: None,
             skills: Vec::new(),
             text_stream_tx: None,
+        metrics: None,
         }
     }
 
@@ -1808,6 +1835,7 @@ mod tests {
             circuit_breaker: None,
             skills: Vec::new(),
             text_stream_tx: None,
+        metrics: None,
         };
         let loop_ = AgentLoop::new(config);
 
@@ -1861,6 +1889,7 @@ mod tests {
             circuit_breaker: None,
             skills: Vec::new(),
             text_stream_tx: None,
+        metrics: None,
         };
         let loop_ = AgentLoop::new(config);
 

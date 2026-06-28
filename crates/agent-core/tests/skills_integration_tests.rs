@@ -52,6 +52,7 @@ async fn test_skill_invocation_expands_to_steer_message() {
         tools: vec![],
         store: None,
         skills: vec![skill],
+        metrics: None,
     });
 
     let result = session
@@ -99,6 +100,7 @@ async fn test_skill_invocation_not_found_returns_error() {
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     let result = session.prompt("/skill:nonexistent".to_string()).await;
@@ -230,6 +232,7 @@ async fn test_skills_xml_injected_into_system_prompt() {
         tools: vec![],
         store: None,
         skills: vec![skill],
+        metrics: None,
     });
 
     let result = session.prompt("hello".to_string()).await;
@@ -360,6 +363,7 @@ async fn test_disabled_skill_not_in_system_prompt() {
         tools: vec![],
         store: None,
         skills: vec![visible, hidden],
+        metrics: None,
     });
 
     let result = session.prompt("hello".to_string()).await;
@@ -504,6 +508,7 @@ async fn test_legacy_system_prompt_replacement_preserves_skills() {
         tools: vec![],
         store: None,
         skills: vec![skill],
+        metrics: None,
     });
 
     let result = session.prompt("hello".to_string()).await;
@@ -655,6 +660,7 @@ async fn test_prompt_mutation_upsert_preserves_skills() {
         tools: vec![],
         store: None,
         skills: vec![skill],
+        metrics: None,
     });
 
     let result = session.prompt("hello".to_string()).await;
@@ -793,6 +799,7 @@ async fn test_prompt_mutation_can_remove_skills() {
         tools: vec![],
         store: None,
         skills: vec![skill],
+        metrics: None,
     });
 
     let result = session.prompt("hello".to_string()).await;

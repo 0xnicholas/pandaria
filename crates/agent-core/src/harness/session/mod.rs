@@ -87,6 +87,8 @@ pub struct SessionActor {
     event_hub: event_hub::SessionEventHub,
     /// State machine + error reason + recovery + abort token.
     state_machine: state::SessionStateMachine,
+    /// Optional metrics registry.
+    metrics: Option<Arc<observability::MetricsRegistry>>,
 }
 
 /// Configuration for creating a new [`SessionActor`].
@@ -104,6 +106,8 @@ pub struct SessionConfig {
     pub tools: Vec<AgentToolRef>,
     pub store: Option<Arc<dyn SessionStore>>,
     pub skills: Vec<crate::skills::Skill>,
+    /// Optional metrics registry for per-tenant observability.
+    pub metrics: Option<Arc<observability::MetricsRegistry>>,
 }
 
 impl std::fmt::Debug for SessionConfig {
@@ -119,6 +123,7 @@ impl std::fmt::Debug for SessionConfig {
             .field("tools", &format!("{} tools", self.tools.len()))
             .field("store", &self.store.is_some())
             .field("skills", &format!("{} skills", self.skills.len()))
+            .field("metrics", &self.metrics.is_some())
             .finish()
     }
 }
@@ -208,6 +213,7 @@ impl SessionActor {
             history,
             event_hub: event_hub::SessionEventHub::new(),
             state_machine: state::SessionStateMachine::new(3),
+            metrics: config.metrics.clone(),
         }
     }
 
@@ -436,6 +442,7 @@ impl SessionActor {
                 circuit_breaker: None,
                 skills: self.skills.clone(),
                 text_stream_tx: Some(text_tx),
+                metrics: self.metrics.clone(),
             };
 
             let result = AgentLoop::new(config)
@@ -606,6 +613,7 @@ impl SessionActor {
                 circuit_breaker: None,
                 skills: self.skills.clone(),
                 text_stream_tx: None,
+                metrics: self.metrics.clone(),
             };
 
             match AgentLoop::new(config)
@@ -1234,6 +1242,7 @@ impl SessionActor {
             circuit_breaker: None,
             skills: skills.to_vec(),
             text_stream_tx: None,
+            metrics: None,
         };
 
         AgentLoop::new(config)
@@ -1407,6 +1416,7 @@ impl SessionActor {
             tools: vec![],
             store: None,
             skills: vec![],
+            metrics: None,
         })
     }
 }

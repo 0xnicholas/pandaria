@@ -21,6 +21,7 @@ dashmap = { workspace = true }
 url = "2"
 reqwest = { version = "0.12", features = ["json"] }
 pawbun-toolkit = { path = "../pawbun-toolkit", default-features = false, features = ["tokio"] }
+observability = { path = "../observability" }
 
 [features]
 testing = []

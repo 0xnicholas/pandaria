@@ -260,6 +260,7 @@ impl SessionBuilder {
             tools: tools.clone(),
             store: self.config.store.clone(),
             skills,
+            metrics: None,
         });
         actor.set_strategy(self.strategy);
 

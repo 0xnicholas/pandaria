@@ -120,6 +120,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let restored = session.restore().await.unwrap();
@@ -142,6 +143,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         // Queue a steer message
@@ -189,6 +191,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         // Queue a follow_up message
@@ -225,6 +228,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         // Test that abort() works by verifying the token propagates cancellation.
@@ -267,6 +271,7 @@ mod tests {
             tools: vec![],
             store: Some(store.clone()),
             skills: vec![],
+        metrics: None,
         });
 
         // No messages yet, flush should save empty
@@ -301,6 +306,7 @@ mod tests {
                 tools: vec![],
                 store: Some(store.clone()),
                 skills: vec![],
+        metrics: None,
             });
             s.prompt("hello".to_string()).await.unwrap();
             s.flush().await.unwrap();
@@ -325,6 +331,7 @@ mod tests {
             tools: vec![],
             store: Some(store.clone()),
             skills: vec![],
+        metrics: None,
         });
 
         // Before first prompt, messages are empty (restore hasn't happened yet).
@@ -363,6 +370,7 @@ mod tests {
             tools: vec![],
             store: Some(store.clone()),
             skills: vec![],
+        metrics: None,
         });
 
         // Two consecutive prompts — each triggers a fire-and-forget save.
@@ -396,6 +404,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         // Add a compaction entry manually
@@ -442,6 +451,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         // Queue both steer and follow-up
@@ -531,6 +541,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         session.prompt("hello".to_string()).await.unwrap();
@@ -566,6 +577,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let result1 = session.prompt("hello".to_string()).await.unwrap();
@@ -602,6 +614,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let mut s2 = SessionActor::new(SessionConfig {
@@ -615,6 +628,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let (r1, r2) = tokio::join!(
@@ -670,6 +684,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let cw = session.model_context_window();
@@ -694,6 +709,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let cw_openai = session.model_context_window();
@@ -729,6 +745,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: skills,
+            metrics: None,
         });
 
         let prompt = session.system_prompt();
@@ -766,6 +783,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: skills,
+            metrics: None,
         });
 
         session.set_system_prompt("New persona.".to_string());
@@ -797,6 +815,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         assert_eq!(session.state(), SessionState::Idle);
@@ -818,6 +837,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let _ = session.prompt("hello".to_string()).await.unwrap();
@@ -840,6 +860,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let result = session.prompt("hello".to_string()).await;
@@ -863,6 +884,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let _ = session.prompt("hello".to_string()).await;
@@ -890,6 +912,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         let _ = session.prompt("hello".to_string()).await;
@@ -916,6 +939,7 @@ mod tests {
             tools: vec![],
             store: None,
             skills: vec![],
+        metrics: None,
         });
 
         session.prompt("hello".to_string()).await.unwrap();

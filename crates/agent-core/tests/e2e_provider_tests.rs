@@ -77,6 +77,7 @@ data: {"type":"message_stop"}
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     let result: String = session.complete("hi".to_string()).await.unwrap();
@@ -154,6 +155,7 @@ data: [DONE]
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     let result: String = session.complete("hi".to_string()).await.unwrap();
@@ -242,6 +244,7 @@ data: [DONE]
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     let turn1 = session.prompt("Say something".to_string()).await.unwrap();

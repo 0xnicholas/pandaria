@@ -157,6 +157,7 @@ data: [DONE]
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     session.push_message(AgentMessage::from(user_msg_with_image()));
@@ -258,6 +259,7 @@ data: {"type":"message_stop"}
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     session.push_message(AgentMessage::from(user_msg_with_image()));
@@ -332,6 +334,7 @@ data: [DONE]
         tools: vec![],
         store: None,
         skills: vec![],
+        metrics: None,
     });
 
     session.push_message(AgentMessage::from(user_msg_with_image()));
