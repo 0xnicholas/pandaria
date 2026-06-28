@@ -751,7 +751,17 @@ ToolExecutor::new(
 
 Find the production call site at `crates/agent-core/src/harness/agent_loop.rs` line 827. Update to pass `self.config.metrics.clone()`.
 
-- [ ] **Step 5: Verify compilation**
+- [ ] **Step 5: Add [[test]] entry for e2e_metrics**
+
+Open `crates/api-gateway/Cargo.toml`. Find the last `[[test]]` entry and add:
+
+```toml
+[[test]]
+name = "e2e_metrics"
+path = "tests/e2e/e2e_metrics.rs"
+```
+
+- [ ] **Step 6: Verify compilation**
 
 ```bash
 cargo check -p agent-core 2>&1 | tail -5
@@ -1154,7 +1164,7 @@ This is the call site for `complete_session()` — API consumers invoke `POST /a
 
 Find where `TenantManagerImpl::new()` is called (likely in `api-gateway/src/main.rs` or a test helper). Add `None` for the metrics parameter for now (will be wired in Task 10).
 
-- [ ] **Step 5: Verify compilation and tests**
+- [ ] **Step 6: Verify compilation and tests**
 
 ```bash
 cargo check -p tenant 2>&1 | tail -5
@@ -1177,6 +1187,7 @@ git commit -m "feat(tenant): add metrics to TenantManagerImpl with session lifec
 **Files:**
 - Modify: `crates/api-gateway/Cargo.toml`
 - Modify: `crates/api-gateway/src/server.rs`
+- Modify: `crates/api-gateway/tests/e2e/common.rs`
 
 - [ ] **Step 1: Add observability dependency**
 
@@ -1185,9 +1196,9 @@ git commit -m "feat(tenant): add metrics to TenantManagerImpl with session lifec
 observability = { path = "../observability" }
 ```
 
-- [ ] **Step 2: Add field to AppState**
+- [ ] **Step 2: Add field to AppState struct and constructor**
 
-Open `crates/api-gateway/src/server.rs`. Add:
+Open `crates/api-gateway/src/server.rs`. Add to the struct:
 
 ```rust
 pub struct AppState {
@@ -1199,25 +1210,47 @@ pub struct AppState {
 }
 ```
 
-- [ ] **Step 3: Verify compilation**
+Add to `AppState::new()` signature and body:
+
+```rust
+impl AppState {
+    pub fn new(
+        tenant_manager: Arc<dyn TenantManager>,
+        config: Arc<GatewayConfig>,
+        registry: Arc<TenantRegistry>,
+        aspectus_config: Option<Arc<AspectusConfig>>,
+        metrics_registry: Option<Arc<observability::MetricsRegistry>>,  // NEW param
+    ) -> Self {
+        Self {
+            tenant_manager,
+            config,
+            registry,
+            aspectus_config,
+            metrics_registry,  // NEW field
+        }
+    }
+}
+```
+
+- [ ] **Step 3: Update all AppState::new() call sites**
+
+Search for `AppState::new(`:
+
+```bash
+grep -rn "AppState::new(" crates/api-gateway/
+```
+
+Affected sites (at minimum): `main.rs` (1) + `tests/e2e/common.rs` (4). Add `None` for the `metrics_registry` parameter at each test site; pass `Some(metrics_registry.clone())` in `main.rs` (this will be updated in Task 10).
+
+- [ ] **Step 4: Verify compilation**
 
 ```bash
 cargo check -p api-gateway 2>&1 | tail -5
 ```
 
-Expected: may fail if `AppState` is constructed somewhere without the new field. Fix the construction site(s) to add `metrics_registry: None`.
+Expected: may fail if `AppState` is constructed somewhere without the new field. Fix all construction sites.
 
-- [ ] **Step 4: Fix all AppState construction sites**
-
-Search for `AppState {` in the api-gateway crate:
-
-```bash
-grep -rn "AppState\s*{" crates/api-gateway/src/ | grep -v "struct AppState"
-```
-
-Add `metrics_registry: None,` to each.
-
-- [ ] **Step 5: Verify compilation again**
+- [ ] **Step 5: Add [[test]] entry for e2e_metrics**
 
 ```bash
 cargo check -p api-gateway 2>&1 | tail -5
@@ -1533,12 +1566,10 @@ If `json_body` already exists, `text_body` is a simpler variant (no JSON parsing
 - [ ] **Step 3: Run E2E tests**
 
 ```bash
-cargo test -p api-gateway --test e2e_session_lifecycle -- e2e_metrics 2>&1 | tail -20
+cargo test -p api-gateway --test e2e_metrics 2>&1 | tail -20
 ```
 
-Note: E2E tests in api-gateway share a single test binary (`e2e_session_lifecycle`). Use test name filter.
-
-Expected: all 3 tests pass (or skip if external dependencies unavailable).
+Expected: all 3 tests pass.
 
 - [ ] **Step 4: Commit**
 
