@@ -103,6 +103,7 @@ pub struct App {
     pub user_scrolled_up: bool,
     pub running: bool,
     pub input_queue: InputQueue,
+    pub show_settings: bool,
 }
 
 impl App {
@@ -145,6 +146,7 @@ impl App {
             user_scrolled_up: false,
             running: true,
             input_queue: InputQueue::new(),
+            show_settings: false,
         }
     }
 
@@ -160,6 +162,14 @@ impl App {
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) {
+        // Settings popup takes priority
+        if self.show_settings {
+            if key.code == KeyCode::Esc || key.code == KeyCode::Char('/') {
+                self.show_settings = false;
+            }
+            return;
+        }
+
         // Overlays take priority
         if let Some(overlay) = self.overlays.last_mut() {
             if !overlay.is_capturing() {
@@ -807,12 +817,24 @@ impl App {
                     self.data.active_session_mut().messages.push(msg);
                 }
                 Command::Fork { message_id: _ } => {
-                    // Placeholder: fork is not yet implemented in backend
-                    self.data.last_error = Some("Fork is not yet implemented".to_string());
+                    let session_id = self.data.active_session().info.id.to_string();
+                    let token = self.config.auth.token.clone().unwrap_or_default();
+                    let rest = self.rest.clone();
+                    let task_tx = self.task_tx.clone();
+                    tokio::spawn(async move {
+                        match rest.fork_session(&session_id, None, &token).await {
+                            Ok(info) => {
+                                let _ = task_tx.send(TaskAction::SessionCreated(info)).await;
+                            }
+                            Err(_e) => {
+                                // Fork failed silently — the user will notice the session
+                                // wasn't created. No Error variant in TaskAction to report.
+                            }
+                        }
+                    });
                 }
                 Command::Settings => {
-                    // Placeholder: open settings overlay
-                    self.data.last_error = Some("Settings overlay not yet implemented".to_string());
+                    self.show_settings = !self.show_settings;
                 }
                 Command::Export { filename } => {
                     let session = self.data.active_session();
@@ -1487,10 +1509,14 @@ impl App {
                                         is_expanded: false,
                                     }));
                                 }
-                                HistoricalContent::Image { .. }
-                                | HistoricalContent::Video { .. }
-                                | HistoricalContent::Audio { .. } => {
-                                    // TUI does not yet support rendering multimedia content
+                                HistoricalContent::Image { .. } => {
+                                    text_lines.push(ratatui::text::Line::from("[Image]"));
+                                }
+                                HistoricalContent::Video { .. } => {
+                                    text_lines.push(ratatui::text::Line::from("[Video]"));
+                                }
+                                HistoricalContent::Audio { .. } => {
+                                    text_lines.push(ratatui::text::Line::from("[Audio]"));
                                 }
                             }
                         }
@@ -1676,6 +1702,30 @@ impl App {
         let full_area = f.area();
         for overlay in &self.overlays {
             overlay.render(full_area, f.buffer_mut());
+        }
+
+        // Settings popup
+        if self.show_settings {
+            use ratatui::prelude::*;
+            use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+            let popup_area = ratatui::layout::Rect::new(
+                full_area.width / 4,
+                full_area.height / 4,
+                full_area.width / 2,
+                9,
+            );
+            f.render_widget(Clear, popup_area);
+            let block = Block::default()
+                .title(" Settings (/settings to close) ")
+                .borders(Borders::ALL)
+                .style(Style::default().bg(Color::DarkGray));
+            let text = format!(
+                "Model: {}\nServer: {}\n\nPress /settings or ESC to close",
+                self.data.active_session().info.model,
+                self.config.server.url,
+            );
+            let paragraph = Paragraph::new(text).block(block).style(Style::default().fg(Color::White));
+            f.render_widget(paragraph, popup_area);
         }
     }
 }

@@ -169,6 +169,15 @@ pub trait TenantManager: Send + Sync {
         title: Option<String>,
     ) -> Result<SessionInfo, TenantError>;
 
+    /// Fork a session: create a copy with the same config AND message history.
+    /// Returns the new session info.
+    async fn fork_session(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+        title: Option<String>,
+    ) -> Result<SessionInfo, TenantError>;
+
     /// Reset a session (clear history, keep config).
     async fn reset_session(
         &self,
@@ -859,6 +868,54 @@ impl TenantManager for TenantManagerImpl {
         };
 
         self.create_session(tenant_id, template).await
+    }
+
+    async fn fork_session(
+        &self,
+        tenant_id: &str,
+        session_id: &Uuid,
+        title: Option<String>,
+    ) -> Result<SessionInfo, TenantError> {
+        // 1. Clone the session config (same as clone_session)
+        let entry = self
+            .sessions
+            .get(&(tenant_id.to_string(), *session_id))
+            .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, session_id)))?;
+
+        let template = CreateSessionParams {
+            title,
+            system_prompt: Some({
+                let actor = entry.actor.lock().await;
+                actor.system_prompt()
+            }),
+            tools: entry.original_tools.clone(),
+            webhook: entry.webhook.clone(),
+            builtin_tools_enabled: entry.builtin_tools_enabled,
+            builtin_tools_disabled: entry.builtin_tools_disabled.clone(),
+            strategy: entry.strategy.clone(),
+        };
+
+        // 2. Create the new session
+        let new_info = self.create_session(tenant_id, template).await?;
+
+        // 3. Copy message history from source to new session
+        let messages = {
+            let actor = entry.actor.lock().await;
+            actor.messages()
+        };
+
+        if !messages.is_empty() {
+            let new_entry = self
+                .sessions
+                .get(&(tenant_id.to_string(), new_info.id))
+                .ok_or_else(|| TenantError::SessionNotFound(format!("{}:{}", tenant_id, new_info.id)))?;
+            let mut new_actor = new_entry.actor.lock().await;
+            for msg in messages {
+                new_actor.push_message(msg);
+            }
+        }
+
+        Ok(new_info)
     }
 
     async fn reset_session(

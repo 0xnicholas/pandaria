@@ -247,6 +247,25 @@ pub async fn clone(
     Ok((StatusCode::CREATED, Json(state.enrich_session_info(info))))
 }
 
+pub async fn fork(
+    State(state): State<Arc<AppState>>,
+    Extension(tenant_id): Extension<TenantId>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<(StatusCode, Json<SessionInfo>), GatewayError> {
+    let title = body
+        .get("title")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let info = state
+        .tenant_manager
+        .fork_session(&tenant_id.0, &id, title)
+        .await?;
+
+    Ok((StatusCode::CREATED, Json(state.enrich_session_info(info))))
+}
+
 pub async fn reset(
     State(state): State<Arc<AppState>>,
     Extension(tenant_id): Extension<TenantId>,

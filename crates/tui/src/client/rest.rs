@@ -211,4 +211,26 @@ impl RestClient {
         let resp = Self::check_status(resp).await?;
         Ok(resp.json::<SessionInfo>().await?)
     }
+
+    pub async fn fork_session(
+        &self,
+        session_id: &str,
+        title: Option<&str>,
+        token: &str,
+    ) -> Result<SessionInfo, TuiError> {
+        let url = format!("{}/api/v1/sessions/{}/fork", self.base_url, session_id);
+        let mut body = serde_json::json!({});
+        if let Some(t) = title {
+            body["title"] = serde_json::Value::String(t.to_string());
+        }
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&body)
+            .send()
+            .await?;
+        let resp = Self::check_status(resp).await?;
+        Ok(resp.json::<SessionInfo>().await?)
+    }
 }

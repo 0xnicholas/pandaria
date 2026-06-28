@@ -78,6 +78,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/sessions/{id}/state", get(sessions::get_state))
         .route("/sessions/{id}/clone", post(sessions::clone))
+        .route("/sessions/{id}/fork", post(sessions::fork))
         .route("/sessions/{id}/reset", post(sessions::reset))
         .route("/sessions/{id}/events", get(events::stream))
         .route("/sessions/{id}/ws", get(crate::routes::ws::session_ws))
